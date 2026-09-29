@@ -1,0 +1,226 @@
+// Chef Supply data model.
+//
+// Two clearly separated layers:
+//   SUPPLIER DATA  (CjSupplierProduct / CjSupplierVariant) — exactly what CJ's API returned.
+//   STOREFRONT DATA (Product / ProductVariant)            — what we own, curate and show customers.
+// SupplierOffer is the bridge: one storefront variant -> one exact CJ variant (VID).
+// OrderItem keeps an immutable snapshot of that mapping at the moment of purchase.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- SUPPLIER DATA (live CJ API) ----------
+
+model CjSupplierProduct {
+  id              String   @id @default(cuid())
+  cjProductId     String   @unique // CJ PID
+  cjProductSku    String
+  cjProductName   String
+  cjDescription   String?
+  cjImages        String   @default("[]") // JSON array of CJ image URLs
+  cjCategoryName  String?
+  cjProductWeight Float? // grams, as reported by CJ
+  cjSellPrice     String? // raw product-level sell price (can be a range)
+  cjDeliveryCycle String? // CJ processing/delivery cycle (days) from Product List V2, when known
+  rawJson         String // full product/query response `data`, for audit
+  lastSyncedAt    DateTime
+  createdAt       DateTime @default(now())
+
+  variants CjSupplierVariant[]
+  products Product[]
+}
+
+model CjSupplierVariant {
+  id                 String    @id @default(cuid())
+  supplierProductId  String
+  supplierProduct    CjSupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+  cjVariantId        String    @unique // CJ VID
+  cjVariantSku       String
+  variantName        String? // CJ variantNameEn
+  variantKey         String? // CJ variantKey, e.g. "Black-30cm"
+  variantImage       String?
+  supplierPriceCents Int? // CJ variantSellPrice (USD) in cents
+  weightGrams        Float?
+  lengthMm           Float?
+  widthMm            Float?
+  heightMm           Float?
+  inventoryTotal     Int? // sum over CJ warehouses; null = never checked
+  inventoryJson      String? // stock/queryByVid response `data`
+  inventoryCheckedAt DateTime?
+  priceCheckedAt     DateTime?
+  rawJson            String
+  updatedAt          DateTime  @updatedAt
+
+  offers SupplierOffer[]
+}
+
+// ---------- STOREFRONT DATA (ours) ----------
+
+model Product {
+  id                String   @id @default(cuid())
+  slug              String   @unique
+  title             String
+  description       String   @default("")
+  internalSku       String   @unique
+  categories        String   @default("") // comma separated
+  seoTitle          String?
+  seoDescription    String?
+  status            String   @default("DRAFT") // DRAFT | PUBLISHED
+  estimatedDelivery String? // customer-facing text, e.g. "7–12 business days"
+  optionNames       String   @default("[]") // JSON array, e.g. ["Colour","Size"]
+  supplierProductId String?
+  supplierProduct   CjSupplierProduct? @relation(fields: [supplierProductId], references: [id], onDelete: SetNull)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  images   ProductImage[]
+  variants ProductVariant[]
+}
+
+// Customer-facing images are served through /media/<id> so supplier CDN URLs never reach the browser.
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sourceUrl String
+  alt       String  @default("")
+  position  Int     @default(0)
+}
+
+model ProductVariant {
+  id          String  @id @default(cuid())
+  productId   String
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String // e.g. "Black / 30cm"
+  options     String  @default("{}") // JSON: {"Colour":"Black","Size":"30cm"}
+  internalSku String  @unique
+  priceCents  Int
+  imageUrl    String? // source URL; served via /media/v/<variantId>
+  enabled     Boolean @default(true)
+  position    Int     @default(0)
+
+  offer     SupplierOffer?
+  cartItems CartItem[]
+}
+
+// The bridge: exactly one supplier variant behind each storefront variant.
+model SupplierOffer {
+  id                  String            @id @default(cuid())
+  productVariantId    String            @unique
+  productVariant      ProductVariant    @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  supplier            String            @default("CJ")
+  supplierProductId   String // CJ PID
+  supplierProductSku  String // CJ product SKU
+  supplierVariantId   String // CJ VID
+  supplierSku         String // CJ variant SKU
+  cjSupplierVariantId String
+  cjSupplierVariant   CjSupplierVariant @relation(fields: [cjSupplierVariantId], references: [id])
+}
+
+// ---------- CART / ORDERS ----------
+
+model Cart {
+  id        String     @id @default(cuid())
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  items     CartItem[]
+}
+
+model CartItem {
+  id        String         @id @default(cuid())
+  cartId    String
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  quantity  Int
+
+  @@unique([cartId, variantId])
+}
+
+model Order {
+  id                  String    @id @default(cuid())
+  number              String    @unique
+  status              String // PENDING_PAYMENT | AWAITING_MERCHANT_APPROVAL | APPROVED_MOCK_FULFILLMENT | DECLINED_REFUNDED | PAYMENT_FAILED
+  email               String?
+  customerName        String?
+  shippingAddressJson String?
+  subtotalCents       Int
+  currency            String    @default("usd")
+  stripeSessionId     String?   @unique
+  stripePaymentIntent String?
+  stripeRefundId      String?
+  paidAt              DateTime?
+  decidedAt           DateTime?
+  decisionNote        String?
+  mockSupplierOrderId String? // set in SUPPLIER_MODE=mock — never a real CJ order
+  createdAt           DateTime  @default(now())
+
+  items OrderItem[]
+}
+
+// Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.
+model OrderItem {
+  id                         String   @id @default(cuid())
+  orderId                    String
+  order                      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId                  String? // soft references for navigation only
+  productVariantId           String?
+  productTitle               String
+  variantName                String
+  internalSku                String
+  quantity                   Int
+  customerPriceCents         Int
+  supplier                   String
+  supplierProductId          String // CJ PID
+  supplierProductSku         String
+  supplierVariantId          String // CJ VID
+  supplierSku                String // CJ variant SKU
+  supplierPriceAtOrderCents  Int?
+  supplierInventoryAtOrder   Int?
+  supplierInventoryCheckedAt DateTime?
+
+  checks SupplierCheck[]
+}
+
+// Every live re-check against CJ for an order item, kept as evidence.
+model SupplierCheck {
+  id              String    @id @default(cuid())
+  orderItemId     String
+  orderItem       OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  supplierVariantId String
+  priceCents      Int?
+  inventoryTotal  Int?
+  ok              Boolean
+  error           String?
+  checkedAt       DateTime  @default(now())
+}
+
+// ---------- INTEGRATION BOOKKEEPING ----------
+
+// One row per real HTTP call to CJ — the audit trail that proves data came from the official API.
+model CjApiCall {
+  id         String   @id @default(cuid())
+  method     String
+  path       String
+  query      String?
+  httpStatus Int?
+  cjCode     Int?
+  ok         Boolean
+  message    String?
+  requestId  String?
+  durationMs Int
+  createdAt  DateTime @default(now())
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
