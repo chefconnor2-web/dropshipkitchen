@@ -6,3 +6,4 @@ node_modules
 *.db-journal
 next-env.d.ts
 *.tsbuildinfo
+preview/

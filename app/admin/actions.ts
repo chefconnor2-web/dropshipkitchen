@@ -53,6 +53,7 @@ export async function saveProduct(form: FormData) {
   try {
     if (!title) throw new Error("Title is required.");
     if (!internalSku) throw new Error("Internal SKU is required.");
+    const before = await prisma.product.findUniqueOrThrow({ where: { id }, select: { internalSku: true } });
     await prisma.product.update({
       where: { id },
       data: {
@@ -76,6 +77,10 @@ export async function saveProduct(form: FormData) {
           priceCents: price ?? v.priceCents,
           enabled: form.get(`enabled_${v.id}`) === "on",
           name,
+          // Keep variant SKUs under the product SKU when the merchant renames it.
+          ...(before.internalSku !== internalSku && v.internalSku.startsWith(`${before.internalSku}-`)
+            ? { internalSku: internalSku + v.internalSku.slice(before.internalSku.length) }
+            : {}),
         },
       });
     }
