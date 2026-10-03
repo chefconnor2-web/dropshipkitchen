@@ -71,9 +71,12 @@ export default async function AdminOrder({
 
   const costKnown = order.items.every((i) => i.supplierPriceAtOrderCents != null);
   const productCost = order.items.reduce((n, i) => n + (i.supplierPriceAtOrderCents ?? 0) * i.quantity, 0);
-  const shipCost = order.cjAmountCents != null ? order.cjAmountCents - productCost : quote.length ? Math.round(quote[0].logisticPrice * 100) : null;
+  // Preselect the method the customer paid for; fall back to CJ's cheapest.
+  const chosen = quote.find((q) => q.logisticName === order.customerShipMethod) ?? quote[0];
+  const shipCost = order.cjAmountCents != null ? order.cjAmountCents - productCost : chosen ? Math.round(chosen.logisticPrice * 100) : null;
   const cjTotal = order.cjAmountCents ?? (costKnown && shipCost != null ? productCost + shipCost : null);
-  const profit = cjTotal != null ? order.subtotalCents - cjTotal : costKnown ? order.subtotalCents - productCost : null;
+  const paidTotal = order.subtotalCents + order.shippingCents;
+  const profit = cjTotal != null ? paidTotal - cjTotal : costKnown ? order.subtotalCents - productCost : null;
 
   const cheapest = quote[0]?.logisticName;
   const fastest = quote.length ? [...quote].sort((a, b) => maxDays(a.logisticAging) - maxDays(b.logisticAging) || a.logisticPrice - b.logisticPrice)[0].logisticName : null;
@@ -91,6 +94,7 @@ export default async function AdminOrder({
             <span>{q.logisticAging ? `${q.logisticAging} days` : "Delivery time not given"}</span>
             {q.logisticName === cheapest && <span className="tag tag-good">Cheapest</span>}
             {q.logisticName === fastest && <span className="tag tag-fast">Fastest</span>}
+            {q.logisticName === order.customerShipMethod && <span className="tag">Customer paid for this</span>}
             <span className="ship-total">{costKnown ? `${formatMoney(productCost + cents)} from CJ` : ""}</span>
           </span>
         </span>
@@ -125,10 +129,11 @@ export default async function AdminOrder({
       <section className="a-card money-row" aria-label="Money">
         <div>
           <div className="k">Customer paid</div>
-          <div className="v">{formatMoney(order.subtotalCents)}</div>
+          <div className="v">{formatMoney(paidTotal)}</div>
+          {order.shippingCents > 0 && <div className="k">incl. {formatMoney(order.shippingCents)} shipping</div>}
         </div>
         <div>
-          <div className="k">{order.cjAmountCents != null ? "CJ charged" : quote.length ? "CJ cost (cheapest)" : "CJ products"}</div>
+          <div className="k">{order.cjAmountCents != null ? "CJ charged" : chosen ? (chosen.logisticName === order.customerShipMethod ? "CJ cost (their shipping)" : "CJ cost (cheapest)") : "CJ products"}</div>
           <div className="v">{cjTotal != null ? formatMoney(cjTotal) : costKnown ? formatMoney(productCost) : "—"}</div>
         </div>
         <div>
@@ -238,11 +243,11 @@ export default async function AdminOrder({
                         Choose shipping <span className="muted">· from {order.cjFromCountry ?? "CN"}</span>
                       </legend>
                       <div className="ship-list">
-                        {quote.slice(0, 5).map((q, n) => shipOption(q, n === 0))}
+                        {quote.slice(0, 5).map((q) => shipOption(q, q.logisticName === chosen?.logisticName))}
                         {quote.length > 5 && (
                           <details className="more">
                             <summary>{quote.length - 5} more shipping methods</summary>
-                            <div className="ship-list">{quote.slice(5).map((q) => shipOption(q, false))}</div>
+                            <div className="ship-list">{quote.slice(5).map((q) => shipOption(q, q.logisticName === chosen?.logisticName))}</div>
                           </details>
                         )}
                       </div>
@@ -295,7 +300,7 @@ export default async function AdminOrder({
                   Reason (optional, for your records)
                   <input name="note" placeholder="e.g. out of stock at CJ" />
                 </label>
-                <button className="a-btn a-btn-danger">Refund {formatMoney(order.subtotalCents)} and decline</button>
+                <button className="a-btn a-btn-danger">Refund {formatMoney(order.subtotalCents + order.shippingCents)} and decline</button>
               </form>
             </details>
           </div>

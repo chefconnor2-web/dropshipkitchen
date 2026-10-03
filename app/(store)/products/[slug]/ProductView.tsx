@@ -5,7 +5,7 @@ import type { PublicProduct, PublicVariant } from "@/lib/storefront";
 import Gallery from "./Gallery";
 import VariantPicker from "./VariantPicker";
 
-export default function ProductView({ product: p }: { product: PublicProduct }) {
+export default function ProductView({ product: p, shipTo }: { product: PublicProduct; shipTo: { country: string; zip: string } }) {
   const initial = p.variants.find((v) => v.stock !== "UNAVAILABLE") ?? p.variants[0] ?? null;
   const [variant, setVariant] = useState<PublicVariant | null>(initial);
   const variantImage = variant?.imageSrc ? { src: variant.imageSrc, alt: `${p.title} — ${variant.name}` } : null;
@@ -16,7 +16,7 @@ export default function ProductView({ product: p }: { product: PublicProduct }) 
       <div className="pdp-info">
         {p.categories.length > 0 && <div className="overline">{p.categories.join(" · ")}</div>}
         <h1 className="pdp-title">{p.title}</h1>
-        <VariantPicker optionNames={p.optionNames} variants={p.variants} initial={initial} onChange={setVariant} />
+        <VariantPicker shipTo={shipTo} optionNames={p.optionNames} variants={p.variants} initial={initial} onChange={setVariant} />
         <ul className="assurances">
           {p.estimatedDelivery && (
             <li>

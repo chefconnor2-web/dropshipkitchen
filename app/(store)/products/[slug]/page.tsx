@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { publishedProduct } from "@/lib/storefront";
 import { config } from "@/lib/config";
 import ProductView from "./ProductView";
+import { getShipTo } from "@/lib/cart";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const p = await publishedProduct((await params).slug);
   if (!p) notFound();
   const category = p.categories[0];
+  const shipTo = await getShipTo();
   return (
     <div className="wrap page">
       <nav className="crumbs small" aria-label="Breadcrumb">
@@ -29,7 +31,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         {" / "}
         <span>{p.title}</span>
       </nav>
-      <ProductView product={p} />
+      <ProductView product={p} shipTo={{ country: shipTo.country, zip: shipTo.zip }} />
       {p.description && (
         <section className="pdp-details">
           <h2 className="section-title">Details</h2>

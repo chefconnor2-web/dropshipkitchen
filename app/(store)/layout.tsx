@@ -25,11 +25,21 @@ export default async function StoreLayout({ children }: { children: React.ReactN
           </Link>
           <nav className="header-nav" aria-label="Main">
             <Link href="/link">Link line</Link>
-            <Link href="/shop">Off-grid gear</Link>
+            <Link href="/shop">
+              <span className="hide-xs">Off-grid gear</span>
+              <span className="show-xs">Shop</span>
+            </Link>
             <Link href="/runtime" className="hide-sm">
               Runtime
             </Link>
           </nav>
+          <Link href="/search" className="search-link" aria-label="Search all products">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
+            <span>Search</span>
+          </Link>
           <Link href="/cart" className="cart-link" aria-label={`Cart, ${count} item${count === 1 ? "" : "s"}`}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
               <path d="M6 7h12l-1 13H7L6 7Z" />

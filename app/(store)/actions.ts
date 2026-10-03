@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { config, stripeKeyProblem } from "@/lib/config";
-import { getOrCreateCartId, getCartId, loadCart } from "@/lib/cart";
+import { cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
+import { daysLabel, isShipCountry, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
@@ -70,6 +71,18 @@ export async function checkout() {
       redirect(`/cart?error=${encodeURIComponent(`${i.variant.product.title} (${i.variant.name}) is no longer available in that quantity.`)}`);
     }
   }
+  // Shipping is CJ's live quote for these exact VIDs to the shopper's country, charged at cost.
+  const shipTo = await getShipTo();
+  if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
+  let tiers;
+  try {
+    tiers = await quoteTiers(cartShipItems(cart), shipTo.country, shipTo.zip);
+  } catch {
+    redirect(`/cart?error=${encodeURIComponent("We couldn’t get a shipping price right now. Please try again in a minute.")}`);
+  }
+  const tier = tiers.find((t) => t.key === shipTo.tier) ?? tiers[0];
+  if (!tier) redirect(`/cart?error=${encodeURIComponent("Sorry, we can’t ship these items to that country.")}`);
+
   const svs = await prisma.cjSupplierVariant.findMany({
     where: { id: { in: items.map((i) => i.variant.offer!.cjSupplierVariantId) } },
   });
@@ -81,6 +94,9 @@ export async function checkout() {
       number: newOrderNumber(),
       status: ORDER_STATUS.PENDING_PAYMENT,
       subtotalCents: items.reduce((s, i) => s + i.variant.priceCents * i.quantity, 0),
+      shippingCents: tier.cents,
+      customerShipMethod: tier.method,
+      customerShipCountry: shipTo.country,
       items: {
         create: items.map((i) => {
           const offer = i.variant.offer!;
@@ -118,7 +134,25 @@ export async function checkout() {
         product_data: { name: `${i.variant.product.title} — ${i.variant.name}` },
       },
     })),
-    shipping_address_collection: { allowed_countries: ["US", "CA", "GB", "AU", "NZ", "IE"] },
+    // The address must be in the country the shipping price was quoted for.
+    shipping_address_collection: { allowed_countries: [shipTo.country as "US"] },
+    shipping_options: [
+      {
+        shipping_rate_data: {
+          type: "fixed_amount",
+          fixed_amount: { amount: tier.cents, currency: "usd" },
+          display_name: `${tier.label} shipping (${daysLabel(tier)})`,
+          ...(tier.minDays != null && tier.maxDays != null
+            ? {
+                delivery_estimate: {
+                  minimum: { unit: "business_day" as const, value: tier.minDays },
+                  maximum: { unit: "business_day" as const, value: tier.maxDays },
+                },
+              }
+            : {}),
+        },
+      },
+    ],
     // Carriers ask for a phone number; it goes to CJ with the shipping address.
     phone_number_collection: { enabled: true },
     metadata: { orderId: order.id, orderNumber: order.number },
@@ -147,4 +181,51 @@ export async function joinWaitlist(_prev: WaitlistState, form: FormData): Promis
   if (!product.fits.includes(platform.id))
     return { ok: true, message: `Noted. Every ask counts toward what we build next. We’ll email you if the ${name} goes into testing.` };
   return { ok: true, message: `You’re on the list. We’ll email you once the ${name} passes testing.` };
+}
+
+export interface PublicShipTier {
+  key: "standard" | "express";
+  label: string;
+  cents: number;
+  days: string;
+}
+export type ShipEstimateState = { ok: true; country: string; tiers: PublicShipTier[] } | { ok: false; message: string } | null;
+
+/** Product page: live shipping for one variant to a country (and ZIP). Remembers the destination for the cart. */
+export async function estimateShipping(_prev: ShipEstimateState, form: FormData): Promise<ShipEstimateState> {
+  const variantId = String(form.get("variantId") || "");
+  const country = String(form.get("country") || "");
+  const zip = String(form.get("zip") || "").trim().slice(0, 12);
+  const quantity = Math.max(1, Math.min(99, Number(form.get("quantity")) || 1));
+  if (!isShipCountry(country)) return { ok: false, message: "Choose a country we ship to." };
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: { product: true, offer: { include: { cjSupplierVariant: true } } },
+  });
+  if (!variant?.offer || !variant.enabled || variant.product.status !== "PUBLISHED") return { ok: false, message: "Choose an option first." };
+  try {
+    const tiers = await quoteTiers(
+      [{ vid: variant.offer.cjSupplierVariant.cjVariantId, quantity, inventoryJson: variant.offer.cjSupplierVariant.inventoryJson }],
+      country,
+      zip,
+    );
+    if (!tiers.length) return { ok: false, message: "Sorry, this item can’t ship to that country." };
+    const prev = await getShipTo();
+    await setShipTo({ ...prev, country, zip });
+    return { ok: true, country, tiers: tiers.map((t) => ({ key: t.key, label: t.label, cents: t.cents, days: daysLabel(t) })) };
+  } catch {
+    return { ok: false, message: "We couldn’t get a shipping price right now. Please try again." };
+  }
+}
+
+/** Cart: where to ship and which tier. */
+export async function updateShipTo(form: FormData) {
+  const prev = await getShipTo();
+  const country = String(form.get("country") || prev.country);
+  await setShipTo({
+    country: isShipCountry(country) ? country : prev.country,
+    zip: form.has("zip") ? String(form.get("zip") || "").trim().slice(0, 12) : prev.zip,
+    tier: form.get("tier") === "express" ? "express" : form.get("tier") === "standard" ? "standard" : prev.tier,
+  });
+  revalidatePath("/cart");
 }

@@ -36,6 +36,13 @@ export default async function ShopPage({ searchParams }: { searchParams: Promise
 
   return (
     <div className="wrap page">
+      <form className="shop-search" role="search" action="/search">
+        <label className="sr-only" htmlFor="shop-q">
+          Search all products
+        </label>
+        <input id="shop-q" name="q" type="search" placeholder="Can’t see it? Search every product we can ship" />
+        <button className="btn">Search</button>
+      </form>
 
       <section id="catalog" className="catalog">
         <div className="catalog-head">

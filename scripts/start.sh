@@ -2,6 +2,7 @@
 # Container entrypoint: create/upgrade the schema, sync the catalog when its version changes, start the server.
 set -e
 npx prisma db push --skip-generate
+npm run -s reprice || echo "[reprice] skipped"
 
 # Bump CATALOG when the seed targets change. The import runs in the background so the site comes up
 # at once; --replace hides the previous catalog only after the new one imported.

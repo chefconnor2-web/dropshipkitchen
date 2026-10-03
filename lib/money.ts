@@ -32,3 +32,13 @@ export function suggestRetailCents(supplierCents: number | null, markup: number)
   const raw = Math.ceil((supplierCents * markup) / 100);
   return Math.max(raw, 1) * 100 - 1;
 }
+
+/** Store pricing rule: 30% over the supplier cost, but never less than $10 profit per unit. */
+export const MARKUP = 0.3;
+export const MIN_PROFIT_CENTS = 1000;
+
+/** Retail price for a supplier cost under the store rule, rounded UP to the next .99 so it never drops below the rule. */
+export function retailCents(supplierCents: number): number {
+  const target = Math.max(Math.ceil(supplierCents * (1 + MARKUP)), supplierCents + MIN_PROFIT_CENTS);
+  return Math.ceil((target + 1) / 100) * 100 - 1;
+}

@@ -211,7 +211,8 @@ export default async function EditProduct({
                   <code>{v.internalSku}</code>
                 </td>
                 <td>
-                  <input form="save" className="price-input" name={`price_${v.id}`} defaultValue={(v.priceCents / 100).toFixed(2)} />
+                  <span className="strong">{formatMoney(v.priceCents)}</span>
+                  <div className="muted small">auto: +30%, min $10</div>
                 </td>
                 <td>
                   <code>{v.offer?.supplierVariantId ?? "UNMAPPED"}</code>

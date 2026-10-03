@@ -83,7 +83,7 @@ function toPublic(p: Loaded): PublicProduct {
 }
 
 export async function publishedProducts(): Promise<PublicProduct[]> {
-  const rows = await prisma.product.findMany({ where: { status: "PUBLISHED" }, include, orderBy: { updatedAt: "desc" } });
+  const rows = await prisma.product.findMany({ where: { status: "PUBLISHED", listed: true }, include, orderBy: { updatedAt: "desc" } });
   return rows.map(toPublic);
 }
 
@@ -99,7 +99,7 @@ export interface PublicCategory {
 
 /** Categories that have at least one published product, most-stocked first. */
 export async function publishedCategories(): Promise<PublicCategory[]> {
-  const rows = await prisma.product.findMany({ where: { status: "PUBLISHED" }, select: { categories: true } });
+  const rows = await prisma.product.findMany({ where: { status: "PUBLISHED", listed: true }, select: { categories: true } });
   const counts = new Map<string, number>();
   for (const r of rows)
     for (const c of new Set(r.categories.split(",").map((s) => s.trim()).filter(Boolean)))
