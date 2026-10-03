@@ -1,6 +1,6 @@
-# Fly.io config. Change `app` to a unique name before the first deploy.
-app = "chef-supply-store"
-primary_region = "iad"
+# Fly.io config for the `dropshipkitchen` app (created from the Fly dashboard).
+app = "dropshipkitchen"
+primary_region = "ams"
 
 [build]
 
@@ -9,11 +9,13 @@ primary_region = "iad"
   DATABASE_URL = "file:/data/store.db"
   STORE_NAME = "Chef Supply"
   SUPPLIER_MODE = "mock"
+  SITE_URL = "https://dropshipkitchen.fly.dev"
 
-# Persistent disk for the SQLite database (create once: fly volumes create data --size 1).
-[mounts]
+# Persistent disk for the SQLite database (Fly creates the `data` volume on first deploy).
+[[mounts]]
   source = "data"
   destination = "/data"
+  initial_size = "1gb"
 
 [http_service]
   internal_port = 3000

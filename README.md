@@ -32,9 +32,9 @@ On first boot `scripts/start.sh` creates the schema and, if the store is empty a
 imports the CJ catalog in the background (log: `/data/seed.log`). Later boots skip the import.
 
 ```bash
-fly launch --no-deploy --copy-config      # pick a unique app name (or edit `app` in fly.toml)
+fly launch --no-deploy --copy-config      # or create the app from the Fly dashboard; `app` in fly.toml must match
 fly volumes create data --size 1
-fly secrets set CJ_API_KEY=… STRIPE_SECRET_KEY=sk_test_… ADMIN_PASSWORD=… SITE_URL=https://<app>.fly.dev
+fly secrets set CJ_API_KEY=… STRIPE_SECRET_KEY=sk_test_… ADMIN_PASSWORD=…   # SITE_URL is set in fly.toml
 fly deploy
 ```
 
