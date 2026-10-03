@@ -2,7 +2,7 @@ import Link from "next/link";
 import { config } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Admin — Chef Supply", robots: { index: false } };
+export const metadata = { title: "Admin", robots: { index: false } };
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -10,7 +10,7 @@ import {
   toCustomerText,
   normalizeVariant,
 } from "../lib/cj/normalize";
-import { priceToCents, suggestRetailCents } from "../lib/money";
+import { priceToCents, suggestRetailCents, tieredMarkup } from "../lib/money";
 
 test("parseListV2 reads data.content[].productList[]", () => {
   const { items, total } = parseListV2({
@@ -83,4 +83,23 @@ test("toCustomerText strips HTML and supplier references", () => {
 
 test("suggestRetailCents ends in .99", () => {
   assert.equal(suggestRetailCents(1284, 3), 3899);
+});
+
+test("tieredMarkup tapers for expensive items", () => {
+  assert.equal(tieredMarkup(500, 3), 3);
+  assert.equal(tieredMarkup(3000, 3), 2.5);
+  assert.equal(tieredMarkup(23321, 3), 2);
+  assert.equal(tieredMarkup(23321, 1.5), 1.5); // never raises a lower configured markup
+  assert.equal(tieredMarkup(null, 3), 3);
+});
+
+test("toCustomerText drops CJ's literal undefined and empty headings", () => {
+  assert.equal(
+    toCustomerText("<p>Highlights</p><p>undefined Specification</p><p>undefined Details</p><p>undefined</p>"),
+    "",
+  );
+  assert.equal(
+    toCustomerText("<p>Features</p><p>Weight: 376 g</p><p>Sold on Amazon</p><p>Packing list</p>"),
+    "Features\nWeight: 376 g",
+  );
 });

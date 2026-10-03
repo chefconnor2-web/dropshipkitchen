@@ -29,10 +29,17 @@ export const config = {
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || "",
   },
   siteUrl: (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, ""),
-  storeName: process.env.STORE_NAME || "Chef Supply",
+  storeName: process.env.STORE_NAME || "Tetherless",
   // Only "mock" is implemented. Live CJ purchasing is intentionally absent from this build.
   supplierMode: (process.env.SUPPLIER_MODE || "mock").toLowerCase(),
 };
+
+/** Initials of the store name ("Tetherless" → "T", "Outpost Power Co." → "OC"): logo mark, SKU and order prefixes. */
+export function storeInitials(): string {
+  const words = config.storeName.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const pick = words.length > 2 ? [words[0], words[words.length - 1]] : words;
+  return pick.map((w) => w[0].toUpperCase()).join("").slice(0, 3) || "ST";
+}
 
 export function cjConfigured(): boolean {
   return config.cj.apiKey.length > 0;

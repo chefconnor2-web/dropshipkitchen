@@ -35,7 +35,7 @@ export default async function CustomerOrderPage({
   // Possession of the Stripe session id acts as the view token for this proof.
   if (!order || !s || order.stripeSessionId !== s) notFound();
   return (
-    <div className="narrow">
+    <div className="wrap page narrow">
       <h1>Order {order.number}</h1>
       <p>
         Status: <strong>{CUSTOMER_STATUS[order.status] ?? order.status}</strong>

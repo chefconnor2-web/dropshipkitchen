@@ -7,7 +7,7 @@ primary_region = "ams"
 [env]
   NODE_ENV = "production"
   DATABASE_URL = "file:/data/store.db"
-  STORE_NAME = "Chef Supply"
+  STORE_NAME = "Tetherless"
   SUPPLIER_MODE = "mock"
   SITE_URL = "https://dropshipkitchen.fly.dev"
 

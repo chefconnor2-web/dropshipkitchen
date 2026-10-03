@@ -176,10 +176,15 @@ export function toCustomerText(html: string | undefined | null): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
-  return text
+  const lines = text
     .split("\n")
-    .map((l) => l.replace(/\s+/g, " ").trim())
-    .filter((l) => l && !/\bcj\b|cjdropshipping|dropship|https?:\/\//i.test(l))
+    // CJ copy often holds a literal "undefined" where an image or field was missing.
+    .map((l) => l.replace(/\bundefined\b/gi, " ").replace(/\s+/g, " ").trim())
+    .filter((l) => l.length > 1 && !/\bcj\b|cjdropshipping|dropship|amazon|walmart|temu|https?:\/\//i.test(l));
+  // Drop section headings left with nothing under them (the next line is another heading, or none).
+  const heading = /^(highlights?|specifications?|details|features|product (information|details)|description|packing list|package (contents|includes)|product image)\s*:?$/i;
+  return lines
+    .filter((l, i) => !heading.test(l) || (i + 1 < lines.length && !heading.test(lines[i + 1])))
     .join("\n")
     .slice(0, 4000);
 }

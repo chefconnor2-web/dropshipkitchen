@@ -14,7 +14,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const units = items.reduce((s, i) => s + i.quantity, 0);
 
   return (
-    <>
+    <div className="wrap page">
       <h1 className="page-title">Your cart</h1>
       {error && <p className="notice err">{error}</p>}
       {items.length === 0 ? (
@@ -94,6 +94,6 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
           </aside>
         </div>
       )}
-    </>
+    </div>
   );
 }

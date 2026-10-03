@@ -6,7 +6,7 @@ import { parseListV2, type SearchResult } from "@/lib/cj/normalize";
 import { CjStatusPanel, Flash, Source, fmtTime } from "@/components/admin";
 import { importProduct } from "@/app/admin/actions";
 
-const SUGGESTIONS = ["chef", "kitchen", "tweezers", "thermometer", "knife", "pastry", "spatula", "squeeze bottle", "bench scraper", "measuring"];
+const SUGGESTIONS = ["power station", "solar panel", "solar power bank", "lantern", "headlamp", "water filter", "hand crank radio", "fire starter", "camping stove", "survival kit"];
 
 export default async function CjPage({
   searchParams,

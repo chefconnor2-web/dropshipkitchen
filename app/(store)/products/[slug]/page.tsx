@@ -17,7 +17,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   if (!p) notFound();
   const category = p.categories[0];
   return (
-    <>
+    <div className="wrap page">
       <nav className="crumbs small" aria-label="Breadcrumb">
         <Link href="/shop">Shop</Link>
         {category && (
@@ -43,6 +43,6 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           </div>
         </section>
       )}
-    </>
+    </div>
   );
 }

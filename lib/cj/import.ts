@@ -6,8 +6,8 @@
 //        re-imports never overwrite what the merchant has curated)
 
 import { prisma } from "@/lib/db";
-import { config } from "@/lib/config";
-import { suggestRetailCents } from "@/lib/money";
+import { config, storeInitials } from "@/lib/config";
+import { suggestRetailCents, tieredMarkup } from "@/lib/money";
 import { refreshInventory } from "@/lib/inventory";
 import { getProductDetail, getVariantsByPid } from "./client";
 import {
@@ -40,7 +40,7 @@ async function uniqueSlug(base: string): Promise<string> {
 }
 
 async function nextInternalSku(title: string): Promise<string> {
-  const stop = new Set(["the", "a", "an", "for", "and", "with", "of", "kitchen", "stainless", "steel", "new"]);
+  const stop = new Set(["the", "a", "an", "for", "and", "with", "of", "kitchen", "stainless", "steel", "new", "outdoor", "portable"]);
   const word =
     title
       .split(/[^A-Za-z0-9]+/)
@@ -48,7 +48,7 @@ async function nextInternalSku(title: string): Promise<string> {
       ?.toUpperCase()
       .slice(0, 8) ?? "ITEM";
   for (let n = (await prisma.product.count()) + 1; ; n++) {
-    const sku = `CS-${word}-${String(n).padStart(3, "0")}`;
+    const sku = `${storeInitials()}-${word}-${String(n).padStart(3, "0")}`;
     if (!(await prisma.product.findUnique({ where: { internalSku: sku } }))) return sku;
   }
 }
@@ -211,7 +211,7 @@ async function createStorefrontVariant(
       name: Object.values(a.options).join(" / "),
       options: JSON.stringify(a.options),
       internalSku,
-      priceCents: suggestRetailCents(a.n.supplierPriceCents, config.pricing.defaultMarkup),
+      priceCents: suggestRetailCents(a.n.supplierPriceCents, tieredMarkup(a.n.supplierPriceCents, config.pricing.defaultMarkup)),
       imageUrl: a.n.variantImage,
       enabled: a.enabled,
       position: index,

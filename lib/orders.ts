@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { config } from "@/lib/config";
+import { config, storeInitials } from "@/lib/config";
 import { stripe } from "@/lib/stripe";
 import { refreshLive } from "@/lib/inventory";
 import type Stripe from "stripe";
@@ -14,7 +14,7 @@ export const ORDER_STATUS = {
 export function newOrderNumber(): string {
   const d = new Date();
   const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
-  return `CS-${ymd}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+  return `${storeInitials()}-${ymd}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
 
 /** Idempotently mark an order paid from a completed Stripe Checkout Session. */

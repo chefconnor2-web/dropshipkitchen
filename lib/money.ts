@@ -16,6 +16,16 @@ export function dollarsToCents(input: string): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
 }
 
+/**
+ * Markup for a supplier cost: the configured markup for small items, tapering for expensive ones
+ * so a $230 power station isn't priced at $700. `base` is DEFAULT_MARKUP (3 by default).
+ */
+export function tieredMarkup(supplierCents: number | null, base: number): number {
+  if (!supplierCents || supplierCents < 1500) return base;
+  if (supplierCents < 6000) return Math.min(base, 2.5);
+  return Math.min(base, 2);
+}
+
 /** Retail price suggestion: supplier cost x markup, ending in .99. */
 export function suggestRetailCents(supplierCents: number | null, markup: number): number {
   if (!supplierCents) return 1999;

@@ -1,6 +1,6 @@
-# Chef Supply — live CJ product portal (proof)
+# Tetherless — off-grid power store on live CJ data
 
-A branded chef-supply storefront built on **real products from CJdropshipping's official API V2**.
+A branded off-grid power storefront built on **real products from CJdropshipping's official API V2**.
 No mock catalog and no hand-entered products: everything the store sells was imported from CJ by PID,
 and every storefront variant is mapped to one exact CJ variant (VID).
 
@@ -28,8 +28,9 @@ npm run dev                   # http://localhost:3000/shop  ·  http://localhost
 ## Deploy (Fly.io, test mode)
 
 The repo ships a `Dockerfile` and `fly.toml`. The SQLite database lives on a Fly volume mounted at `/data`.
-On first boot `scripts/start.sh` creates the schema and, if the store is empty and `CJ_API_KEY` is set,
-imports the CJ catalog in the background (log: `/data/seed.log`). Later boots skip the import.
+On boot `scripts/start.sh` creates the schema and, when `CJ_API_KEY` is set and the catalog version in the
+script differs from `/data/catalog-version`, imports the CJ catalog in the background (log: `/data/seed.log`)
+and unpublishes the previous one. Bump `CATALOG` in the script after changing the seed targets.
 
 ```bash
 fly launch --no-deploy --copy-config      # or create the app from the Fly dashboard; `app` in fly.toml must match

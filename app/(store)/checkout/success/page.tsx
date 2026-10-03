@@ -16,7 +16,7 @@ export default async function SuccessPage({ searchParams }: { searchParams: Prom
   if (!order) redirect("/shop");
   const paid = session.payment_status === "paid";
   return (
-    <div className="narrow">
+    <div className="wrap page narrow">
       {paid && <ClearCart />}
       <h1>{paid ? "Thank you — order received" : "Payment not completed"}</h1>
       <p>
