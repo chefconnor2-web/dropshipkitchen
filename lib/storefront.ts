@@ -91,3 +91,20 @@ export async function publishedProduct(slug: string): Promise<PublicProduct | nu
   const p = await loadBySlug(slug);
   return p ? toPublic(p) : null;
 }
+
+export interface PublicCategory {
+  name: string;
+  count: number;
+}
+
+/** Categories that have at least one published product, most-stocked first. */
+export async function publishedCategories(): Promise<PublicCategory[]> {
+  const rows = await prisma.product.findMany({ where: { status: "PUBLISHED" }, select: { categories: true } });
+  const counts = new Map<string, number>();
+  for (const r of rows)
+    for (const c of new Set(r.categories.split(",").map((s) => s.trim()).filter(Boolean)))
+      counts.set(c, (counts.get(c) ?? 0) + 1);
+  return [...counts]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}

@@ -13,6 +13,8 @@ export const config = {
     // CJ enforces per-account QPS limits; serialise calls with at least this gap.
     minIntervalMs: num("CJ_MIN_INTERVAL_MS", 1100),
     timeoutMs: num("CJ_TIMEOUT_MS", 20000),
+    // Retries for HTTP 429 (CJ also rate-limits per source IP, which shared egress IPs can hit).
+    rateLimitRetries: num("CJ_RATE_LIMIT_RETRIES", 2),
   },
   inventory: {
     // Product pages use the cached value; add-to-cart and checkout re-query CJ when older than this.

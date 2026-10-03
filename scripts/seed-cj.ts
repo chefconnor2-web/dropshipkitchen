@@ -6,8 +6,10 @@
  *   npm run seed:cj -- --publish    # import and publish to /shop
  *   npm run seed:cj -- --limit 6
  *
+ * Retries rate-limited (429) CJ calls up to CJ_RATE_LIMIT_RETRIES times (default here: 8).
  * Requires CJ_API_KEY. Makes read-only catalog calls; never creates a CJ order.
  */
+import "./seed-env";
 import { prisma } from "@/lib/db";
 import { cjConfigured } from "@/lib/config";
 import { listProductsV2 } from "@/lib/cj/client";
@@ -15,19 +17,22 @@ import { parseListV2 } from "@/lib/cj/normalize";
 import { importCjProduct } from "@/lib/cj/import";
 
 // Search term + what a relevant title must / must not contain (keeps unrelated products out).
+// CJ's keyword search is loose (e.g. "plating tweezers" returns ear spoons and phone cases), so
+// `must` matches the kitchen use, not just the noun. BRANDED excludes third-party brand names.
+const BRANDED = /kegani|qulajoy|vevor|pasabahce|pasa baahce/i;
 const TARGETS: Array<{ q: string; must: RegExp; not?: RegExp; category: string }> = [
-  { q: "plating tweezers", must: /tweezer/i, not: /eyebrow|eyelash|lash|nail|hair|beauty|makeup|electronic|esd|jewel/i, category: "Plating" },
-  { q: "kitchen tweezers", must: /tweezer|tong/i, not: /eyebrow|eyelash|lash|nail|hair|beauty|makeup|esd/i, category: "Plating" },
-  { q: "silicone spatula", must: /spatula/i, not: /makeup|cosmetic|mask|wax|paint|putty|phone/i, category: "Spatulas" },
-  { q: "offset spatula", must: /spatula/i, not: /makeup|cosmetic|paint|putty/i, category: "Pastry" },
-  { q: "food thermometer", must: /thermometer/i, not: /body|baby|fever|forehead|ear|aquarium|pool|room|hygrometer/i, category: "Thermometers" },
-  { q: "piping bag nozzle", must: /piping|nozzle|pastry|icing|decorating/i, not: /hose|garden|3d print|printer/i, category: "Pastry" },
-  { q: "squeeze bottle sauce", must: /squeeze|sauce|condiment|dispenser/i, not: /hair|dye|paint|cosmetic|shampoo/i, category: "Squeeze Bottles" },
-  { q: "bench scraper", must: /scraper|dough|cutter/i, not: /car|ice|window|paint|glass|phone|screen|film|tile/i, category: "Pastry" },
-  { q: "measuring spoons", must: /measur/i, not: /tape|ruler|laser|body|tailor/i, category: "Measuring" },
-  { q: "kitchen scale digital", must: /scale/i, not: /body|bathroom|weight loss|luggage|fish|hanging|jewel/i, category: "Measuring" },
-  { q: "kitchen organizer spice", must: /spice|organi[sz]er|rack/i, not: /cosmetic|makeup|jewel|shoe|closet|car/i, category: "Organization" },
-  { q: "pastry brush silicone", must: /brush/i, not: /makeup|hair|tooth|paint|cosmetic|shoe|car/i, category: "Pastry" },
+  { q: "chef knife", must: /chef'?s? knife|gyuto|santoku/i, not: /bag|storage|set|scimitar|slaughter/i, category: "Knives" },
+  { q: "knife sharpener", must: /kitchen knife sharpener|sharpening stone|knife sharpener/i, not: /woodwork|belt|machine|cutting board|chopping board/i, category: "Knives" },
+  { q: "kitchen tongs", must: /tongs/i, not: /hair|curl|plate|bowl/i, category: "Tools" },
+  { q: "kitchen scissors", must: /kitchen shears|poultry|bone scissors/i, not: /hair|garden|tailor|embroider/i, category: "Tools" },
+  { q: "fish spatula", must: /fish spatula|slotted.*turner/i, not: /makeup|cosmetic|tank|aquarium/i, category: "Spatulas" },
+  { q: "silicone spatula", must: /spatula/i, not: /makeup|cosmetic|eye|mask|wax|paint|putty|phone|holder/i, category: "Spatulas" },
+  { q: "cake decorating", must: /decorating mouth|piping|icing tip|nozzle set/i, not: /christmas|tree|candle|card/i, category: "Pastry" },
+  { q: "silicone baking", must: /silicone.*(scraper|brush|baking mat|cupcake)/i, not: /makeup|hair|nail|tooth/i, category: "Pastry" },
+  { q: "kitchen thermometer", must: /(food|kitchen|oil|meat|bbq|barbecue|cooking).*thermometer/i, not: /aquarium|reptile|fish|forehead|body|baby|violin|motorcycle/i, category: "Thermometers" },
+  { q: "kitchen scale", must: /kitchen scale|baking scale|food (weighing )?scale/i, not: /body|human|baggage|suitcase|luggage|refrigerant|bench/i, category: "Measuring" },
+  { q: "oil spray bottle", must: /oil (sprayer|spray|mister|dispenser)|sprayer bottle/i, not: /hair|essential|mop|aroma|skin|body|scalp/i, category: "Bottles" },
+  { q: "measuring cup", must: /measuring (cup|spoon)/i, not: /wax|nose|body|tape|laser/i, category: "Measuring" },
 ];
 
 function arg(name: string): string | undefined {
@@ -55,7 +60,7 @@ async function main() {
       console.log(`search failed: ${e instanceof Error ? e.message : e}`);
       continue;
     }
-    const pick = items.find((r) => !done.has(r.pid) && t.must.test(r.name) && !(t.not && t.not.test(r.name)));
+    const pick = items.find((r) => !done.has(r.pid) && t.must.test(r.name) && !(t.not && t.not.test(r.name)) && !BRANDED.test(r.name));
     console.log(`${items.length} results${pick ? ` → ${pick.name} [PID ${pick.pid}]` : " → no relevant match"}`);
     if (!pick) continue;
     try {

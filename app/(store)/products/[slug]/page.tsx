@@ -1,8 +1,8 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { publishedProduct } from "@/lib/storefront";
 import { config } from "@/lib/config";
-import VariantPicker from "./VariantPicker";
-import Gallery from "./Gallery";
+import ProductView from "./ProductView";
 
 export const dynamic = "force-dynamic";
 
@@ -15,26 +15,34 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const p = await publishedProduct((await params).slug);
   if (!p) notFound();
+  const category = p.categories[0];
   return (
-    <div className="pdp">
-      <Gallery images={p.images} />
-      <div>
-        {p.categories.length > 0 && <div className="muted small">{p.categories.join(" · ")}</div>}
-        <h1>{p.title}</h1>
-        <VariantPicker optionNames={p.optionNames} variants={p.variants} />
-        {p.estimatedDelivery && (
-          <p className="small">
-            <strong>Estimated delivery:</strong> {p.estimatedDelivery}
-          </p>
+    <>
+      <nav className="crumbs small" aria-label="Breadcrumb">
+        <Link href="/shop">Shop</Link>
+        {category && (
+          <>
+            {" / "}
+            <Link href={`/shop?category=${encodeURIComponent(category)}`}>{category}</Link>
+          </>
         )}
-        {p.description && (
+        {" / "}
+        <span>{p.title}</span>
+      </nav>
+      <ProductView product={p} />
+      {p.description && (
+        <section className="pdp-details">
+          <h2 className="section-title">Details</h2>
           <div className="description">
-            {p.description.split("\n").map((l, i) => (
-              <p key={i}>{l}</p>
-            ))}
+            {p.description
+              .split("\n")
+              .filter((l) => l.trim())
+              .map((l, i) => (
+                <p key={i}>{l}</p>
+              ))}
           </div>
-        )}
-      </div>
-    </div>
+        </section>
+      )}
+    </>
   );
 }

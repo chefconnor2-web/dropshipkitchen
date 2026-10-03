@@ -11,64 +11,88 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const cart = await loadCart(await getCartId());
   const items = cart?.items ?? [];
   const subtotal = items.reduce((s, i) => s + i.variant.priceCents * i.quantity, 0);
+  const units = items.reduce((s, i) => s + i.quantity, 0);
 
   return (
     <>
-      <h1>Your cart</h1>
+      <h1 className="page-title">Your cart</h1>
       {error && <p className="notice err">{error}</p>}
       {items.length === 0 ? (
-        <p className="muted">
-          Your cart is empty. <Link href="/shop">Continue shopping →</Link>
-        </p>
+        <div className="empty-cart">
+          <p>Your cart is empty.</p>
+          <Link href="/shop" className="btn primary">
+            Browse the shop
+          </Link>
+        </div>
       ) : (
-        <>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th>Price</th>
-                <th>Qty</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((i) => {
-                const s = stockStatus(i.variant.offer?.cjSupplierVariant.inventoryTotal);
-                const img = i.variant.product.images[0];
-                return (
-                  <tr key={i.id}>
-                    <td>
-                      <div className="row gap">
-                        {img && <img className="thumb" src={`/media/${img.id}`} alt="" />}
-                        <div>
-                          <Link href={`/products/${i.variant.product.slug}`}>{i.variant.product.title}</Link>
-                          <div className="muted small">{i.variant.name}</div>
-                          <span className={`stock stock-${s} small`}>{stockLabel(s)}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>{formatMoney(i.variant.priceCents)}</td>
-                    <td>
-                      <form action={updateCartItem} className="row gap">
+        <div className="cart">
+          <ul className="cart-items">
+            {items.map((i) => {
+              // Server component: only the derived label reaches the page, never the supplier's count.
+              const s = stockStatus(i.variant.offer?.cjSupplierVariant.inventoryTotal);
+              const productImg = i.variant.product.images[0];
+              const src = i.variant.imageUrl ? `/media/v/${i.variant.id}` : productImg ? `/media/${productImg.id}` : null;
+              return (
+                <li key={i.id} className="cart-item">
+                  <Link href={`/products/${i.variant.product.slug}`} className="cart-thumb">
+                    {src ? <img src={src} alt="" /> : <div className="img-ph" />}
+                  </Link>
+                  <div className="cart-item-main">
+                    <Link href={`/products/${i.variant.product.slug}`} className="cart-item-title">
+                      {i.variant.product.title}
+                    </Link>
+                    {i.variant.name && !/^default$/i.test(i.variant.name) && <div className="muted small">{i.variant.name}</div>}
+                    <div className={`stock stock-${s} small`}>
+                      <span className="dot" aria-hidden /> {stockLabel(s)}
+                    </div>
+                    <div className="cart-item-actions">
+                      <form action={updateCartItem} className="qty-form">
                         <input type="hidden" name="itemId" value={i.id} />
-                        <input className="qty" type="number" name="quantity" min={0} max={99} defaultValue={i.quantity} />
+                        <label className="sr-only" htmlFor={`qty-${i.id}`}>
+                          Quantity
+                        </label>
+                        <input id={`qty-${i.id}`} className="qty" type="number" name="quantity" min={1} max={99} defaultValue={i.quantity} />
                         <button className="btn small">Update</button>
                       </form>
-                    </td>
-                    <td>{formatMoney(i.variant.priceCents * i.quantity)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div className="row between cart-foot">
-            <span className="muted small">Set quantity to 0 to remove. Availability is re-confirmed at checkout.</span>
-            <form action={checkout} className="row gap">
-              <strong>Subtotal {formatMoney(subtotal)}</strong>
-              <button className="btn primary">Checkout</button>
+                      <form action={updateCartItem}>
+                        <input type="hidden" name="itemId" value={i.id} />
+                        <input type="hidden" name="quantity" value="0" />
+                        <button className="link-btn small">Remove</button>
+                      </form>
+                    </div>
+                  </div>
+                  <div className="cart-item-price">
+                    <strong>{formatMoney(i.variant.priceCents * i.quantity)}</strong>
+                    {i.quantity > 1 && <div className="muted small">{formatMoney(i.variant.priceCents)} each</div>}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <aside className="summary" aria-label="Order summary">
+            <h2 className="summary-title">Order summary</h2>
+            <dl className="summary-rows">
+              <dt>
+                Subtotal ({units} item{units === 1 ? "" : "s"})
+              </dt>
+              <dd>{formatMoney(subtotal)}</dd>
+            </dl>
+            <div className="summary-total">
+              <span>Total</span>
+              <strong>{formatMoney(subtotal)}</strong>
+            </div>
+            <form action={checkout}>
+              <button className="btn primary lg block">Checkout</button>
             </form>
-          </div>
-        </>
+            <p className="muted small summary-note">
+              Availability is re-confirmed before payment. You’ll enter your shipping address at checkout.
+            </p>
+            <Link href="/shop" className="small summary-continue">
+              ← Continue shopping
+            </Link>
+          </aside>
+        </div>
       )}
     </>
   );

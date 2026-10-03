@@ -64,6 +64,24 @@ async function rawCall<T>(
   for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined && v !== "") qs.set(k, String(v));
   const url = `${config.cj.baseUrl}${path}${qs.size ? `?${qs}` : ""}`;
 
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callOnce<T>(method, path, url, qs, opts);
+    } catch (e) {
+      const limited = e instanceof CjApiError && e.httpStatus === 429;
+      if (!limited || attempt >= config.cj.rateLimitRetries) throw e;
+      await new Promise((r) => setTimeout(r, Math.min(30_000, 2000 * 2 ** attempt)));
+    }
+  }
+}
+
+function callOnce<T>(
+  method: "GET" | "POST",
+  path: string,
+  url: string,
+  qs: URLSearchParams,
+  opts: { body?: unknown; token?: string },
+): Promise<CjEnvelope<T>> {
   return throttled(async () => {
     const started = Date.now();
     let httpStatus: number | undefined;
