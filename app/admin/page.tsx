@@ -1,71 +1,97 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { CjStatusPanel, fmtTime } from "@/components/admin";
+import { formatMoney } from "@/lib/money";
+import { cjBalanceCents, supplierMode } from "@/lib/fulfillment";
+import { CjStatusPanel, StatusChip, fmtTime, timeAgo } from "@/components/admin";
 
 export default async function AdminHome() {
-  const [products, published, awaiting, calls] = await Promise.all([
-    prisma.product.count(),
-    prisma.product.count({ where: { status: "PUBLISHED" } }),
+  const since = new Date(Date.now() - 30 * 86400_000);
+  const [awaiting, waitingOrders, paid30, published, calls] = await Promise.all([
     prisma.order.count({ where: { status: "AWAITING_MERCHANT_APPROVAL" } }),
+    prisma.order.findMany({ where: { status: "AWAITING_MERCHANT_APPROVAL" }, orderBy: { paidAt: "asc" }, take: 3, include: { items: true } }),
+    prisma.order.findMany({ where: { paidAt: { gte: since }, status: { notIn: ["DECLINED_REFUNDED", "PENDING_PAYMENT"] } }, select: { subtotalCents: true } }),
+    prisma.product.count({ where: { status: "PUBLISHED" } }),
     prisma.cjApiCall.findMany({ orderBy: { createdAt: "desc" }, take: 15 }),
   ]);
+  const balance = supplierMode() === "live" ? await cjBalanceCents() : null;
+  const revenue = paid30.reduce((n, o) => n + o.subtotalCents, 0);
+
   return (
     <>
-      <h1>Dashboard</h1>
-      <CjStatusPanel back="/admin" />
-      <div className="stats">
-        <Link href="/admin/products" className="card pad">
-          <div className="big">{products}</div>imported products
-        </Link>
-        <Link href="/admin/products" className="card pad">
-          <div className="big">{published}</div>published
-        </Link>
-        <Link href="/admin/orders" className="card pad">
-          <div className="big">{awaiting}</div>orders awaiting approval
-        </Link>
+      <div className="a-head">
+        <h1>Dashboard</h1>
       </div>
-      <h2>Recent CJ API calls</h2>
-      <p className="muted small">Every request this app makes to CJ&apos;s official API is logged here.</p>
-      <table className="table small">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Call</th>
-            <th>HTTP</th>
-            <th>CJ code</th>
-            <th>CJ requestId</th>
-            <th>ms</th>
-            <th>Result</th>
-          </tr>
-        </thead>
-        <tbody>
-          {calls.map((c) => (
-            <tr key={c.id}>
-              <td>{fmtTime(c.createdAt)}</td>
-              <td>
-                <code>
-                  {c.method} {c.path}
-                  {c.query ? `?${c.query}` : ""}
-                </code>
-              </td>
-              <td>{c.httpStatus ?? "—"}</td>
-              <td>{c.cjCode ?? "—"}</td>
-              <td>
-                <code>{c.requestId ?? "—"}</code>
-              </td>
-              <td>{c.durationMs}</td>
-              <td className={c.ok ? "ok-text" : "err-text"}>{c.ok ? "OK" : c.message}</td>
-            </tr>
-          ))}
-          {calls.length === 0 && (
-            <tr>
-              <td colSpan={7} className="muted">
-                No calls yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <div className="kpis">
+        <Link href="/admin/orders?show=action" className={`kpi ${awaiting ? "kpi-action" : ""}`}>
+          <span className="kpi-v">{awaiting}</span>
+          <span className="kpi-k">Need approval</span>
+        </Link>
+        <div className="kpi">
+          <span className="kpi-v">{formatMoney(revenue)}</span>
+          <span className="kpi-k">Sales, last 30 days ({paid30.length})</span>
+        </div>
+        <Link href="/admin/products" className="kpi">
+          <span className="kpi-v">{published}</span>
+          <span className="kpi-k">Products live</span>
+        </Link>
+        {balance != null && (
+          <div className="kpi">
+            <span className="kpi-v">{formatMoney(balance)}</span>
+            <span className="kpi-k">CJ wallet balance</span>
+          </div>
+        )}
+      </div>
+
+      {waitingOrders.length > 0 && (
+        <section className="a-card">
+          <div className="a-card-head">
+            <h2 className="a-h2">Waiting on you</h2>
+            <Link href="/admin/orders?show=action" className="small">
+              See all
+            </Link>
+          </div>
+          <ul className="mini-list">
+            {waitingOrders.map((o) => (
+              <li key={o.id}>
+                <Link href={`/admin/orders/${o.id}`}>
+                  <span className="strong">{o.customerName || o.email || o.number}</span>
+                  <span className="muted small">
+                    {o.items[0]?.productTitle}
+                    {o.items.length > 1 ? ` + ${o.items.length - 1}` : ""} · {timeAgo(o.paidAt)}
+                  </span>
+                  <span className="mini-right">
+                    {formatMoney(o.subtotalCents)} <StatusChip status={o.status} />
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <CjStatusPanel back="/admin" />
+
+      <details className="a-card a-details">
+        <summary>CJ API log (last {calls.length} calls)</summary>
+        <div className="a-details-body">
+          <p className="muted small">Every request this store makes to CJ’s official API.</p>
+          <ul className="log-list">
+            {calls.map((c) => (
+              <li key={c.id} className={c.ok ? "" : "log-fail"}>
+                <div>
+                  <code>
+                    {c.method} {c.path}
+                  </code>
+                </div>
+                <div className="muted small">
+                  {fmtTime(c.createdAt)} · HTTP {c.httpStatus ?? "—"} · {c.durationMs} ms · {c.ok ? "OK" : c.message}
+                </div>
+              </li>
+            ))}
+            {calls.length === 0 && <li className="muted">No calls yet.</li>}
+          </ul>
+        </div>
+      </details>
     </>
   );
 }

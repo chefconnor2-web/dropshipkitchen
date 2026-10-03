@@ -4,9 +4,9 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { previewSupplierOrderPayload } from "@/lib/orders";
-import { cjBalanceCents, supplierMode } from "@/lib/fulfillment";
+import { cjBalanceCents, quoteShipping, supplierMode } from "@/lib/fulfillment";
 import type { CjFreightOption } from "@/lib/cj/client";
-import { Flash, Source, fmtTime } from "@/components/admin";
+import { Flash, StatusChip, fmtTime, timeAgo } from "@/components/admin";
 import {
   approveOrderAction,
   declineOrderAction,
@@ -17,9 +17,11 @@ import {
   refreshOrderCj,
 } from "@/app/admin/actions";
 
-type CostItem = { supplierPriceAtOrderCents: number | null; quantity: number };
-const costKnown0 = (items: CostItem[]) => items.every((i) => i.supplierPriceAtOrderCents != null);
-const itemsCost = (items: CostItem[]) => items.reduce((n, i) => n + (i.supplierPriceAtOrderCents ?? 0) * i.quantity, 0);
+/** Upper bound of a CJ delivery window like "5-11", for picking the fastest method. */
+function maxDays(aging?: string) {
+  const n = (aging ?? "").match(/\d+/g)?.map(Number) ?? [];
+  return n.length ? Math.max(...n) : Number.POSITIVE_INFINITY;
+}
 
 export default async function AdminOrder({
   params,
@@ -36,296 +38,294 @@ export default async function AdminOrder({
   });
   if (!order) notFound();
 
-  const svs = await prisma.cjSupplierVariant.findMany({
-    where: { cjVariantId: { in: order.items.map((i) => i.supplierVariantId) } },
-  });
+  const [svs, variants, images] = await Promise.all([
+    prisma.cjSupplierVariant.findMany({ where: { cjVariantId: { in: order.items.map((i) => i.supplierVariantId) } } }),
+    prisma.productVariant.findMany({
+      where: { id: { in: order.items.map((i) => i.productVariantId).filter((x): x is string => !!x) } },
+      select: { id: true, imageUrl: true },
+    }),
+    prisma.productImage.findMany({
+      where: { productId: { in: order.items.map((i) => i.productId).filter((x): x is string => !!x) }, position: 0 },
+      select: { id: true, productId: true },
+    }),
+  ]);
   const svByVid = new Map(svs.map((s) => [s.cjVariantId, s]));
+  const variantImg = new Set(variants.filter((v) => v.imageUrl).map((v) => v.id));
+  const productImg = new Map(images.map((i) => [i.productId, i.id]));
+
   const ship = order.shippingAddressJson ? JSON.parse(order.shippingAddressJson) : null;
+  const addr = ship?.address ?? {};
   const awaiting = order.status === "AWAITING_MERCHANT_APPROVAL";
   const mode = supplierMode();
-  const quote = JSON.parse(order.cjQuoteJson || "[]") as CjFreightOption[];
+  let quote = JSON.parse(order.cjQuoteJson || "[]") as CjFreightOption[];
+  let autoQuoteError: string | null = null;
+  // Opening an order that needs approval fetches its shipping quote, so the next tap is choosing a method.
+  if (awaiting && mode !== "mock" && quote.length === 0 && ship?.address?.country) {
+    try {
+      quote = await quoteShipping(order.id);
+    } catch (e) {
+      autoQuoteError = e instanceof Error ? e.message : String(e);
+    }
+  }
   const balance = mode === "live" && awaiting ? await cjBalanceCents() : null;
-  const cheapestTotal = quote.length && costKnown0(order.items) ? itemsCost(order.items) + Math.round(quote[0].logisticPrice * 100) : null;
+
+  const costKnown = order.items.every((i) => i.supplierPriceAtOrderCents != null);
+  const productCost = order.items.reduce((n, i) => n + (i.supplierPriceAtOrderCents ?? 0) * i.quantity, 0);
+  const shipCost = order.cjAmountCents != null ? order.cjAmountCents - productCost : quote.length ? Math.round(quote[0].logisticPrice * 100) : null;
+  const cjTotal = order.cjAmountCents ?? (costKnown && shipCost != null ? productCost + shipCost : null);
+  const profit = cjTotal != null ? order.subtotalCents - cjTotal : costKnown ? order.subtotalCents - productCost : null;
+
+  const cheapest = quote[0]?.logisticName;
+  const fastest = quote.length ? [...quote].sort((a, b) => maxDays(a.logisticAging) - maxDays(b.logisticAging) || a.logisticPrice - b.logisticPrice)[0].logisticName : null;
   const shipOption = (q: CjFreightOption, checked: boolean) => {
-    const shipCents = Math.round(q.logisticPrice * 100);
+    const cents = Math.round(q.logisticPrice * 100);
     return (
-      <label key={q.logisticName} className="ship-opt">
+      <label key={q.logisticName} className="ship-card">
         <input type="radio" name="logisticName" value={q.logisticName} defaultChecked={checked} />
-        <span className="strong">{q.logisticName}</span>
-        <span>{formatMoney(shipCents)}</span>
-        <span className="muted">{q.logisticAging ? `${q.logisticAging} days` : ""}</span>
-        <span className="muted">≈ {costKnown0(order.items) ? formatMoney(itemsCost(order.items) + shipCents) : "?"} total from CJ</span>
+        <span className="ship-card-body">
+          <span className="ship-card-top">
+            <span className="ship-name">{q.logisticName}</span>
+            <span className="ship-price">{formatMoney(cents)}</span>
+          </span>
+          <span className="ship-card-sub">
+            <span>{q.logisticAging ? `${q.logisticAging} days` : "Delivery time not given"}</span>
+            {q.logisticName === cheapest && <span className="tag tag-good">Cheapest</span>}
+            {q.logisticName === fastest && <span className="tag tag-fast">Fastest</span>}
+            <span className="ship-total">{costKnown ? `${formatMoney(productCost + cents)} from CJ` : ""}</span>
+          </span>
+        </span>
       </label>
     );
   };
 
-  let costAtOrder = 0;
-  let costKnown = true;
-  for (const i of order.items) {
-    if (i.supplierPriceAtOrderCents == null) costKnown = false;
-    else costAtOrder += i.supplierPriceAtOrderCents * i.quantity;
-  }
-
   return (
     <>
-      <Link href="/admin/orders">← Orders</Link>
-      <Flash notice={notice} error={error} />
-      <div className="row between">
-        <h1>Order {order.number}</h1>
-        <span className={`pill pill-${order.status}`}>{order.status}</span>
-      </div>
-      <p className="small muted">
-        Placed {fmtTime(order.createdAt)} · Paid {fmtTime(order.paidAt)} · {order.email ?? "no email"}
-        {order.stripePaymentIntent && (
-          <>
-            {" "}
-            · Stripe (test) <code>{order.stripePaymentIntent}</code>
-          </>
-        )}
-      </p>
-      {ship && (
-        <p className="small">
-          Ship to: {ship.name}, {[ship.address?.line1, ship.address?.line2, ship.address?.city, ship.address?.state, ship.address?.postal_code, ship.address?.country].filter(Boolean).join(", ")}
-        </p>
-      )}
-
-      {order.items.map((i) => {
-        const sv = svByVid.get(i.supplierVariantId);
-        const lastCheck = i.checks[0];
-        const currentPrice = lastCheck?.ok ? lastCheck.priceCents : sv?.supplierPriceCents ?? null;
-        const currentInv = lastCheck?.ok ? lastCheck.inventoryTotal : sv?.inventoryTotal ?? null;
-        const paid = i.customerPriceCents * i.quantity;
-        const estCost = (currentPrice ?? i.supplierPriceAtOrderCents) != null ? (currentPrice ?? i.supplierPriceAtOrderCents)! * i.quantity : null;
-        return (
-          <div key={i.id} className="two-col order-item">
-            <section className="card pad">
-              <h3>CUSTOMER PURCHASE</h3>
-              <Source kind="snapshot" />
-              <div className="big">{i.productTitle}</div>
-              <div>{i.variantName}</div>
-              <div>Qty {i.quantity}</div>
-              <div className="small muted">
-                Our SKU <code>{i.internalSku}</code> · {formatMoney(i.customerPriceCents)} each
-              </div>
-              <p>
-                Customer paid: <strong>{formatMoney(paid)}</strong>
-              </p>
-              {i.productId && (
-                <Link className="small" href={`/admin/products/${i.productId}`}>
-                  Current storefront product →
-                </Link>
-              )}
-            </section>
-            <section className="card pad supplier">
-              <h3>SUPPLIER MAPPING</h3>
-              <span className="muted small">Admin only — never shown to customers</span>
-              <dl className="kv">
-                <dt>Supplier</dt>
-                <dd>{i.supplier}</dd>
-                <dt>CJ PID</dt>
-                <dd>
-                  <code>{i.supplierProductId}</code>
-                </dd>
-                <dt>CJ VID</dt>
-                <dd>
-                  <code>{i.supplierVariantId}</code>
-                </dd>
-                <dt>CJ SKU</dt>
-                <dd>
-                  <code>{i.supplierSku}</code>
-                </dd>
-              </dl>
-              <table className="table small compare">
-                <thead>
-                  <tr>
-                    <th></th>
-                    <th>
-                      At customer order <Source kind="snapshot" />
-                    </th>
-                    <th>
-                      Current <Source kind={lastCheck?.ok ? "live" : "cached"} />
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>CJ price</td>
-                    <td>{formatMoney(i.supplierPriceAtOrderCents)}</td>
-                    <td>
-                      {formatMoney(currentPrice)}
-                      {currentPrice != null && i.supplierPriceAtOrderCents != null && currentPrice !== i.supplierPriceAtOrderCents && (
-                        <span className="err-text"> (changed)</span>
-                      )}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>CJ inventory</td>
-                    <td>
-                      {stockLabel(stockStatus(i.supplierInventoryAtOrder))} ({i.supplierInventoryAtOrder ?? "?"})
-                    </td>
-                    <td>
-                      {stockLabel(stockStatus(currentInv))} ({currentInv ?? "?"})
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>Verified</td>
-                    <td className="muted">{fmtTime(i.supplierInventoryCheckedAt)}</td>
-                    <td className="muted">
-                      {lastCheck ? `${fmtTime(lastCheck.checkedAt)}${lastCheck.ok ? "" : ` — FAILED: ${lastCheck.error}`}` : `cached ${fmtTime(sv?.inventoryCheckedAt)}`}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <p>
-                Estimated supplier cost: <strong>{formatMoney(estCost)}</strong> <span className="muted small">(excl. shipping)</span>
-                <br />
-                Estimated gross profit: <strong>{estCost != null ? formatMoney(paid - estCost) : "—"}</strong>
-              </p>
-            </section>
+      <Link href="/admin/orders" className="a-back">
+        ‹ Orders
+      </Link>
+      <div className="a-head">
+        <div>
+          <h1>{order.customerName || order.email || "Order"}</h1>
+          <div className="a-sub">
+            <code>{order.number}</code> · paid {timeAgo(order.paidAt ?? order.createdAt)}
           </div>
-        );
-      })}
-
-      <div className="card pad">
-        <div className="row between">
-          <div>
-            Order total paid <strong>{formatMoney(order.subtotalCents)}</strong> · Supplier cost at order{" "}
-            <strong>{costKnown ? formatMoney(costAtOrder) : "partly unknown"}</strong>
-          </div>
-          <form action={refreshOrderCj}>
-            <input type="hidden" name="orderId" value={order.id} />
-            <button className="btn">REFRESH CJ DATA</button>
-          </form>
         </div>
+        <StatusChip status={order.status} sandbox={order.cjSandbox} />
       </div>
+      <Flash notice={notice} error={error} />
+
+      <section className="a-card money-row" aria-label="Money">
+        <div>
+          <div className="k">Customer paid</div>
+          <div className="v">{formatMoney(order.subtotalCents)}</div>
+        </div>
+        <div>
+          <div className="k">{order.cjAmountCents != null ? "CJ charged" : quote.length ? "CJ cost (cheapest)" : "CJ products"}</div>
+          <div className="v">{cjTotal != null ? formatMoney(cjTotal) : costKnown ? formatMoney(productCost) : "—"}</div>
+        </div>
+        <div>
+          <div className="k">{cjTotal != null ? "Profit" : "Profit before shipping"}</div>
+          <div className={`v ${profit != null && profit < 0 ? "neg" : "pos"}`}>{profit != null ? formatMoney(profit) : "—"}</div>
+        </div>
+      </section>
+
+      <section className="a-card">
+        <h2 className="a-h2">Ship to</h2>
+        {ship ? (
+          <address className="ship-to">
+            <strong>{ship.name}</strong>
+            <br />
+            {addr.line1}
+            {addr.line2 ? (
+              <>
+                <br />
+                {addr.line2}
+              </>
+            ) : null}
+            <br />
+            {[addr.city, addr.state, addr.postal_code].filter(Boolean).join(", ")} · {addr.country}
+          </address>
+        ) : (
+          <p className="muted small">No shipping address on this order.</p>
+        )}
+        <div className="contact-row">
+          {order.email && (
+            <a className="pill-btn" href={`mailto:${order.email}`}>
+              ✉ {order.email}
+            </a>
+          )}
+          {order.customerPhone && (
+            <a className="pill-btn" href={`tel:${order.customerPhone}`}>
+              ☎ {order.customerPhone}
+            </a>
+          )}
+        </div>
+      </section>
+
+      <section className="a-card">
+        <h2 className="a-h2">Items</h2>
+        <ul className="item-list">
+          {order.items.map((i) => {
+            const sv = svByVid.get(i.supplierVariantId);
+            const last = i.checks[0];
+            const inv = last?.ok ? last.inventoryTotal : sv?.inventoryTotal ?? null;
+            const src =
+              i.productVariantId && variantImg.has(i.productVariantId)
+                ? `/media/v/${i.productVariantId}`
+                : i.productId && productImg.has(i.productId)
+                  ? `/media/${productImg.get(i.productId)}`
+                  : null;
+            return (
+              <li key={i.id} className="item-row">
+                <div className="order-thumb">{src ? <img src={src} alt="" loading="lazy" /> : <span />}</div>
+                <div className="item-main">
+                  <div className="item-title">{i.productTitle}</div>
+                  <div className="muted small">
+                    {!/^default$/i.test(i.variantName) && `${i.variantName} · `}
+                    {i.quantity} × {formatMoney(i.customerPriceCents)}
+                  </div>
+                  <div className="small">
+                    CJ {formatMoney(i.supplierPriceAtOrderCents)} each ·{" "}
+                    <span className={`stock stock-${stockStatus(inv)}`}>{stockLabel(stockStatus(inv))}</span>
+                  </div>
+                </div>
+                <div className="item-amt">{formatMoney(i.customerPriceCents * i.quantity)}</div>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
 
       {awaiting && (
-        <section className="card pad fulfil">
-          <div className="row between">
-            <h2 className="fulfil-title">Fulfil with CJ</h2>
-            <span className={`pill pill-mode-${mode}`}>SUPPLIER_MODE={mode}</span>
+        <section className="a-card fulfil" aria-label="Fulfil this order">
+          <div className="a-card-head">
+            <h2 className="a-h2">Fulfil with CJ</h2>
+            {mode === "live" && (
+              <span className="small">
+                CJ balance <strong>{balance == null ? "—" : formatMoney(balance)}</strong>
+              </span>
+            )}
           </div>
           {mode === "mock" ? (
-            <p className="small">
-              CJ orders are switched off. To place them from here, set <code>SUPPLIER_MODE</code> to <code>sandbox</code>{" "}
-              (CJ test orders: no charge, no shipping) or <code>live</code> (also real orders paid from your CJ balance) in
-              your hosting variables.
+            <p className="small muted">
+              CJ orders are switched off here. Set <code>SUPPLIER_MODE</code> to <code>sandbox</code> or <code>live</code> in your
+              hosting variables to send orders to CJ.
             </p>
           ) : (
             <>
-              <div className="row gap">
-                <form action={quoteShippingAction}>
+              <div className="step">
+                <span className="step-n">1</span>
+                <form action={quoteShippingAction} className="grow">
                   <input type="hidden" name="orderId" value={order.id} />
-                  <button className="btn">{quote.length ? "REFRESH SHIPPING QUOTE" : "1 · GET CJ SHIPPING QUOTE"}</button>
+                  <button className="a-btn">{quote.length ? "Refresh shipping quote" : "Get CJ shipping quote"}</button>
                 </form>
-                {order.cjFromCountry && <span className="small muted">Ships from {order.cjFromCountry} · live from CJ</span>}
-                {mode === "live" && (
-                  <span className="small">
-                    CJ balance <strong>{balance == null ? "unavailable" : formatMoney(balance)}</strong>
-                  </span>
-                )}
               </div>
               {quote.length > 0 && (
                 <form action={placeCjOrderAction} className="fulfil-form">
                   <input type="hidden" name="orderId" value={order.id} />
-                  <fieldset>
-                    <legend>2 · Shipping method</legend>
-                    {quote.slice(0, 6).map((q, n) => shipOption(q, n === 0))}
-                    {quote.length > 6 && (
-                      <details>
-                        <summary className="small">{quote.length - 6} more methods</summary>
-                        {quote.slice(6).map((q) => shipOption(q, false))}
-                      </details>
-                    )}
-                  </fieldset>
-                  <div className="row gap">
-                    <button className="btn" name="kind" value="sandbox">
-                      3 · PLACE SANDBOX TEST ORDER
-                    </button>
-                    <span className="small muted">Simulated payment. Nothing is charged or shipped.</span>
+                  <div className="step step-top">
+                    <span className="step-n">2</span>
+                    <fieldset className="grow">
+                      <legend className="step-label">
+                        Choose shipping <span className="muted">· from {order.cjFromCountry ?? "CN"}</span>
+                      </legend>
+                      <div className="ship-list">
+                        {quote.slice(0, 5).map((q, n) => shipOption(q, n === 0))}
+                        {quote.length > 5 && (
+                          <details className="more">
+                            <summary>{quote.length - 5} more shipping methods</summary>
+                            <div className="ship-list">{quote.slice(5).map((q) => shipOption(q, false))}</div>
+                          </details>
+                        )}
+                      </div>
+                    </fieldset>
                   </div>
-                  {mode === "live" ? (
-                    <div className="real-order">
-                      {balance != null && cheapestTotal != null && balance < cheapestTotal && (
-                        <p className="notice err small">
-                          Your CJ balance ({formatMoney(balance)}) won’t cover this order. Top up your CJ wallet first, or the
-                          order is created but left unpaid.
-                        </p>
+                  <div className="step step-top">
+                    <span className="step-n">3</span>
+                    <div className="grow place">
+                      {mode === "live" && (
+                        <div className="real-box">
+                          {balance != null && cjTotal != null && balance < cjTotal && (
+                            <p className="warn-line">
+                              Your CJ balance ({formatMoney(balance)}) won’t cover this order. Top up your CJ wallet first.
+                            </p>
+                          )}
+                          <label className="confirm-real">
+                            <input type="checkbox" name="confirmReal" value="yes" />
+                            <span>
+                              Place a <b>real</b> order: CJ ships to {ship?.name ?? "the customer"} and charges my CJ balance about{" "}
+                              <b>{cjTotal != null ? formatMoney(cjTotal) : "the quoted total"}</b>.
+                            </span>
+                          </label>
+                          <button className="a-btn a-btn-primary" name="kind" value="real">
+                            Place real order
+                          </button>
+                        </div>
                       )}
-                      <label className="confirm-real">
-                        <input type="checkbox" name="confirmReal" value="yes" /> I understand this places a <b>real</b> CJ order
-                        that ships to the customer and charges my CJ balance about{" "}
-                        <b>{costKnown ? formatMoney(costAtOrder + Math.round(quote[0].logisticPrice * 100)) : "the quoted total"}</b>{" "}
-                        (exact amount depends on the method chosen).
-                      </label>
-                      <button className="btn danger" name="kind" value="real">
-                        3 · PLACE REAL ORDER &amp; PAY FROM CJ BALANCE
+                      <button className="a-btn" name="kind" value="sandbox">
+                        Place sandbox test order
                       </button>
+                      <p className="hint">Sandbox orders use CJ’s simulated payment: nothing is charged or shipped.</p>
                     </div>
-                  ) : (
-                    <p className="small muted">Real orders are off in this environment (SUPPLIER_MODE=sandbox).</p>
-                  )}
+                  </div>
                 </form>
               )}
             </>
           )}
+          {autoQuoteError && <p className="notice err">Couldn’t get a shipping quote from CJ: {autoQuoteError}</p>}
           {order.cjError && <p className="notice err">{order.cjError}</p>}
-          <div className="decision row gap">
+          <div className="other-actions">
             <form action={approveOrderAction}>
               <input type="hidden" name="orderId" value={order.id} />
-              <button className="btn">APPROVE WITHOUT CJ ORDER (mock)</button>
+              <button className="a-btn a-btn-ghost">Approve without a CJ order</button>
             </form>
-            <form action={declineOrderAction} className="row gap">
-              <input type="hidden" name="orderId" value={order.id} />
-              <input name="note" placeholder="Reason (optional)" />
-              <button className="btn danger">DECLINE &amp; REFUND</button>
-            </form>
+            <details className="decline">
+              <summary className="a-btn a-btn-ghost danger-text">Decline &amp; refund…</summary>
+              <form action={declineOrderAction} className="decline-form">
+                <input type="hidden" name="orderId" value={order.id} />
+                <label>
+                  Reason (optional, for your records)
+                  <input name="note" placeholder="e.g. out of stock at CJ" />
+                </label>
+                <button className="a-btn a-btn-danger">Refund {formatMoney(order.subtotalCents)} and decline</button>
+              </form>
+            </details>
           </div>
         </section>
       )}
 
       {order.cjPlacedAt && (
-        <section className="card pad fulfil">
-          <div className="row between">
-            <h2 className="fulfil-title">CJ order</h2>
-            <span className={`pill ${order.cjSandbox ? "pill-mode-sandbox" : "pill-ok"}`}>{order.cjSandbox ? "SANDBOX — not charged, not shipped" : "REAL ORDER"}</span>
+        <section className="a-card">
+          <div className="a-card-head">
+            <h2 className="a-h2">CJ order</h2>
+            <span className={`chip-status ${order.cjSandbox ? "tone-busy" : "tone-good"}`}>{order.cjSandbox ? "Sandbox · not shipped" : "Real order"}</span>
           </div>
-          <dl className="kv">
-            <dt>CJ order id</dt>
-            <dd>
-              <code>{order.cjOrderId ?? "—"}</code>
-            </dd>
-            <dt>Our order number at CJ</dt>
-            <dd>
-              <code>{order.cjOrderNumber}</code>
-            </dd>
-            <dt>Shipment order</dt>
-            <dd>
-              <code>{order.cjShipmentOrderId ?? "—"}</code>
-            </dd>
-            <dt>Shipping</dt>
-            <dd>
-              {order.cjLogisticName} from {order.cjFromCountry}
-            </dd>
-            <dt>CJ amount</dt>
-            <dd>{formatMoney(order.cjAmountCents)}</dd>
+          <dl className="facts">
             <dt>Paid to CJ</dt>
-            <dd className={order.cjPaidAt ? "ok-text" : "err-text"}>{order.cjPaidAt ? fmtTime(order.cjPaidAt) : "Not paid yet"}</dd>
+            <dd className={order.cjPaidAt ? "ok-text" : "err-text"}>{order.cjPaidAt ? `${formatMoney(order.cjAmountCents)} · ${timeAgo(order.cjPaidAt)}` : "Not paid yet"}</dd>
             <dt>CJ status</dt>
             <dd>{order.cjStatus ?? "—"}</dd>
             <dt>Tracking</dt>
             <dd>{order.cjTrackingNumber ? <code>{order.cjTrackingNumber}</code> : "Not shipped yet"}</dd>
+            <dt>Shipping</dt>
+            <dd>
+              {order.cjLogisticName} · from {order.cjFromCountry}
+            </dd>
+            <dt>CJ order</dt>
+            <dd>
+              <code>{order.cjOrderId ?? "—"}</code>
+            </dd>
           </dl>
           {order.cjError && <p className="notice err">{order.cjError}</p>}
-          <div className="row gap">
-            <form action={refreshCjOrderAction}>
+          <div className="btn-row">
+            <form action={refreshCjOrderAction} className="grow">
               <input type="hidden" name="orderId" value={order.id} />
-              <button className="btn">REFRESH CJ STATUS</button>
+              <button className="a-btn">Refresh CJ status</button>
             </form>
             {!order.cjPaidAt && (order.cjShipmentOrderId || order.cjOrderId) && (
-              <form action={payCjOrderAction}>
+              <form action={payCjOrderAction} className="grow">
                 <input type="hidden" name="orderId" value={order.id} />
-                <button className="btn primary">RETRY PAYMENT</button>
+                <button className="a-btn a-btn-primary">Retry payment</button>
               </form>
             )}
           </div>
@@ -339,43 +339,67 @@ export default async function AdminOrder({
         </p>
       )}
 
-      <details className="raw">
-        <summary>CJ order payload preview (the address and items a CJ order is built from)</summary>
-        <pre>{JSON.stringify(previewSupplierOrderPayload(order), null, 2)}</pre>
+      <details className="a-card a-details">
+        <summary>Supplier details &amp; history</summary>
+        <div className="a-details-body">
+          <form action={refreshOrderCj}>
+            <input type="hidden" name="orderId" value={order.id} />
+            <button className="a-btn">Re-check CJ price &amp; stock</button>
+          </form>
+          {order.items.map((i) => {
+            const sv = svByVid.get(i.supplierVariantId);
+            const last = i.checks[0];
+            const curPrice = last?.ok ? last.priceCents : sv?.supplierPriceCents ?? null;
+            const curInv = last?.ok ? last.inventoryTotal : sv?.inventoryTotal ?? null;
+            return (
+              <dl key={i.id} className="facts">
+                <dt>Product</dt>
+                <dd>{i.productTitle}</dd>
+                <dt>CJ PID</dt>
+                <dd>
+                  <code>{i.supplierProductId}</code>
+                </dd>
+                <dt>CJ VID</dt>
+                <dd>
+                  <code>{i.supplierVariantId}</code>
+                </dd>
+                <dt>CJ SKU</dt>
+                <dd>
+                  <code>{i.supplierSku}</code>
+                </dd>
+                <dt>Our SKU</dt>
+                <dd>
+                  <code>{i.internalSku}</code>
+                </dd>
+                <dt>CJ price</dt>
+                <dd>
+                  {formatMoney(i.supplierPriceAtOrderCents)} at order → {formatMoney(curPrice)} now
+                  {curPrice != null && i.supplierPriceAtOrderCents != null && curPrice !== i.supplierPriceAtOrderCents && <span className="err-text"> (changed)</span>}
+                </dd>
+                <dt>CJ stock</dt>
+                <dd>
+                  {i.supplierInventoryAtOrder ?? "?"} at order → {curInv ?? "?"} now
+                </dd>
+                <dt>Checked</dt>
+                <dd className="muted">{last ? `${fmtTime(last.checkedAt)}${last.ok ? "" : ` — failed: ${last.error}`}` : `cached ${fmtTime(sv?.inventoryCheckedAt)}`}</dd>
+              </dl>
+            );
+          })}
+          <p className="small muted">
+            Placed {fmtTime(order.createdAt)} · paid {fmtTime(order.paidAt)}
+            {order.stripePaymentIntent && (
+              <>
+                {" "}
+                · Stripe <code>{order.stripePaymentIntent}</code>
+              </>
+            )}
+          </p>
+          <details>
+            <summary className="small">CJ order request (address &amp; items sent to CJ)</summary>
+            <pre className="wrap-pre">{JSON.stringify(previewSupplierOrderPayload(order), null, 2)}</pre>
+          </details>
+        </div>
       </details>
-
-      {order.items.some((i) => i.checks.length) && (
-        <>
-          <h2>Live recheck history</h2>
-          <table className="table small">
-            <thead>
-              <tr>
-                <th>Checked</th>
-                <th>CJ VID</th>
-                <th>Price</th>
-                <th>Inventory</th>
-                <th>Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {order.items
-                .flatMap((i) => i.checks)
-                .sort((a, b) => b.checkedAt.getTime() - a.checkedAt.getTime())
-                .map((c) => (
-                  <tr key={c.id}>
-                    <td>{fmtTime(c.checkedAt)}</td>
-                    <td>
-                      <code>{c.supplierVariantId}</code>
-                    </td>
-                    <td>{formatMoney(c.priceCents)}</td>
-                    <td>{c.inventoryTotal ?? "—"}</td>
-                    <td className={c.ok ? "ok-text" : "err-text"}>{c.ok ? "OK" : c.error}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </>
-      )}
     </>
   );
 }

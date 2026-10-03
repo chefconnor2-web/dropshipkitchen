@@ -45,7 +45,7 @@ export default async function CjPage({
 
   return (
     <>
-      <h1>CJdropshipping integration</h1>
+      <h1>Find on CJ</h1>
       <Flash notice={notice} error={error} />
       <CjStatusPanel back={back} />
 
