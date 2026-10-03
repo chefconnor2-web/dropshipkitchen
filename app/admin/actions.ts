@@ -9,6 +9,7 @@ import { importCjProduct } from "@/lib/cj/import";
 import { slugify } from "@/lib/cj/normalize";
 import { refreshLive } from "@/lib/inventory";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
+import { sendOrderEmail, sendTestEmail, type OrderEmailKind } from "@/lib/order-emails";
 
 function msg(e: unknown) {
   return encodeURIComponent(e instanceof Error ? e.message : String(e));
@@ -233,4 +234,26 @@ export async function saveCustomerAction(form: FormData) {
   });
   revalidatePath(`/admin/customers/${id}`);
   redirect(`/admin/customers/${id}?notice=${encodeURIComponent("Customer saved")}`);
+}
+
+export async function sendTestEmailAction(form: FormData) {
+  const to = String(form.get("to") || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) redirect(`/admin/emails?error=${encodeURIComponent("Enter a valid email address.")}`);
+  const log = await sendTestEmail(to);
+  revalidatePath("/admin/emails");
+  if (log.status === "sent") redirect(`/admin/emails?notice=${encodeURIComponent(`Test email sent to ${to}. Check the inbox (and spam).`)}`);
+  redirect(`/admin/emails?error=${encodeURIComponent(log.error || "Email not sent.")}`);
+}
+
+export async function resendOrderEmailAction(form: FormData) {
+  const id = String(form.get("id") || "");
+  const kind = String(form.get("kind") || "") as OrderEmailKind;
+  const log = await sendOrderEmail(id, kind, { force: true });
+  revalidatePath(`/admin/orders/${id}`);
+  const q = !log
+    ? `error=${encodeURIComponent("Nothing to send: the order has no email address yet, or no tracking number.")}`
+    : log.status === "sent"
+      ? `notice=${encodeURIComponent(`Email sent to ${log.to}`)}`
+      : `error=${encodeURIComponent(log.error || "Email not sent.")}`;
+  redirect(`/admin/orders/${id}?${q}`);
 }

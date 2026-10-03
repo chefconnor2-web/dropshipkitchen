@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { priceToCents } from "@/lib/money";
 import { ORDER_STATUS } from "@/lib/orders";
+import { sendOrderEmail } from "@/lib/order-emails";
 import { CjApiError, createOrderV3, freightCalculate, getBalance, confirmOrder, getOrderDetail, payBalance, payBalanceV2, sandboxSimulatePay, type CjFreightOption } from "@/lib/cj/client";
 
 export type SupplierMode = "mock" | "sandbox" | "live";
@@ -235,7 +236,7 @@ export async function refreshCjOrder(orderId: string) {
   const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
   if (!order.cjOrderId) throw new Error("No CJ order id on this order yet.");
   const d = (await getOrderDetail(order.cjOrderId)).data ?? {};
-  return prisma.order.update({
+  const updated = await prisma.order.update({
     where: { id: orderId },
     data: {
       cjStatus: typeof d.orderStatus === "string" ? d.orderStatus : order.cjStatus,
@@ -244,6 +245,9 @@ export async function refreshCjOrder(orderId: string) {
       cjRawJson: JSON.stringify(d),
     },
   });
+  // First time CJ reports a tracking number: tell the customer.
+  if (updated.cjTrackingNumber && !order.cjTrackingNumber) await sendOrderEmail(order.id, "order_shipped");
+  return updated;
 }
 
 /** CJ balance in cents, or null when it can't be read (shown, never relied on). */

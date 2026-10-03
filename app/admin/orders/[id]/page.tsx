@@ -15,6 +15,7 @@ import {
   quoteShippingAction,
   refreshCjOrderAction,
   refreshOrderCj,
+  resendOrderEmailAction,
 } from "@/app/admin/actions";
 
 /** Upper bound of a CJ delivery window like "5-11", for picking the fastest method. */
@@ -38,7 +39,7 @@ export default async function AdminOrder({
   });
   if (!order) notFound();
 
-  const [svs, variants, images] = await Promise.all([
+  const [svs, variants, images, emails] = await Promise.all([
     prisma.cjSupplierVariant.findMany({ where: { cjVariantId: { in: order.items.map((i) => i.supplierVariantId) } } }),
     prisma.productVariant.findMany({
       where: { id: { in: order.items.map((i) => i.productVariantId).filter((x): x is string => !!x) } },
@@ -48,6 +49,7 @@ export default async function AdminOrder({
       where: { productId: { in: order.items.map((i) => i.productId).filter((x): x is string => !!x) }, position: 0 },
       select: { id: true, productId: true },
     }),
+    prisma.emailLog.findMany({ where: { orderId: id }, orderBy: { createdAt: "desc" } }),
   ]);
   const svByVid = new Map(svs.map((s) => [s.cjVariantId, s]));
   const variantImg = new Set(variants.filter((v) => v.imageUrl).map((v) => v.id));
@@ -351,6 +353,51 @@ export default async function AdminOrder({
           {order.stripeRefundId && <code>{order.stripeRefundId}</code>}
         </p>
       )}
+
+      <section className="a-card">
+        <h2 className="a-h2">Emails to {order.email || "the customer"}</h2>
+        {emails.length === 0 ? (
+          <p className="muted small">None yet.</p>
+        ) : (
+          <ul className="mini-list">
+            {emails.map((e) => (
+              <li key={e.id}>
+                <div className="mini-row">
+                  <span className="email-row-top">
+                    <span className="strong">{e.subject}</span>
+                    <span className={`chip-status ${e.status === "sent" ? "tone-good" : e.status === "failed" ? "tone-bad" : "tone-warn"}`}>
+                      {e.status === "sent" ? "Sent" : e.status === "failed" ? "Failed" : "Not sent"}
+                    </span>
+                  </span>
+                  <span className="muted small">
+                    {e.to} · {timeAgo(e.createdAt)} ·{" "}
+                    <a href={`/admin/emails/${e.id}`} target="_blank" rel="noreferrer">
+                      Preview
+                    </a>
+                  </span>
+                  {e.error && e.status !== "sent" && <span className="small muted">{e.error}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {order.email && (
+          <div className="email-list-actions">
+            <form action={resendOrderEmailAction}>
+              <input type="hidden" name="id" value={order.id} />
+              <input type="hidden" name="kind" value="order_confirmation" />
+              <button className="a-btn a-btn-sm">Resend confirmation</button>
+            </form>
+            {order.cjTrackingNumber && (
+              <form action={resendOrderEmailAction}>
+                <input type="hidden" name="id" value={order.id} />
+                <input type="hidden" name="kind" value="order_shipped" />
+                <button className="a-btn a-btn-sm">Resend tracking</button>
+              </form>
+            )}
+          </div>
+        )}
+      </section>
 
       <details className="a-card a-details">
         <summary>Supplier details &amp; history</summary>

@@ -3,16 +3,18 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { cjBalanceCents, supplierMode } from "@/lib/fulfillment";
 import { CjStatusPanel, StatusChip, fmtTime, timeAgo } from "@/components/admin";
+import { emailConfigured } from "@/lib/email";
 
 export default async function AdminHome() {
   const since = new Date(Date.now() - 30 * 86400_000);
-  const [awaiting, waitingOrders, paid30, published, calls, waitlist] = await Promise.all([
+  const [awaiting, waitingOrders, paid30, published, calls, waitlist, lastEmail] = await Promise.all([
     prisma.order.count({ where: { status: "AWAITING_MERCHANT_APPROVAL" } }),
     prisma.order.findMany({ where: { status: "AWAITING_MERCHANT_APPROVAL" }, orderBy: { paidAt: "asc" }, take: 3, include: { items: true } }),
     prisma.order.findMany({ where: { paidAt: { gte: since }, status: { notIn: ["DECLINED_REFUNDED", "PENDING_PAYMENT"] } }, select: { subtotalCents: true } }),
     prisma.product.count({ where: { status: "PUBLISHED" } }),
     prisma.cjApiCall.findMany({ orderBy: { createdAt: "desc" }, take: 15 }),
     prisma.waitlistEntry.count(),
+    prisma.emailLog.findFirst({ orderBy: { createdAt: "desc" } }),
   ]);
   const balance = supplierMode() === "live" ? await cjBalanceCents() : null;
   const revenue = paid30.reduce((n, o) => n + o.subtotalCents, 0);
@@ -73,6 +75,16 @@ export default async function AdminHome() {
           </ul>
         </section>
       )}
+
+      <Link href="/admin/emails" className="a-card email-home">
+        <div className="a-card-head">
+          <h2 className="a-h2">Customer emails</h2>
+          <span className={`chip-status ${emailConfigured() ? "tone-good" : "tone-warn"}`}>{emailConfigured() ? "Sending" : "Not set up"}</span>
+        </div>
+        <p className="small muted">
+          {lastEmail ? `Last: “${lastEmail.subject}” · ${timeAgo(lastEmail.createdAt)}` : "Order confirmations, tracking and refunds."} Send a test ›
+        </p>
+      </Link>
 
       <CjStatusPanel back="/admin" />
 

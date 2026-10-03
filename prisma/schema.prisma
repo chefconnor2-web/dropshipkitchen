@@ -275,3 +275,21 @@ model WaitlistEntry {
   @@unique([email, platform, productId])
   @@index([platform, productId])
 }
+
+/// Every customer/merchant email the store renders, sent or not, so the admin can see and resend it.
+model EmailLog {
+  id         String   @id @default(cuid())
+  orderId    String?
+  kind       String // order_confirmation | order_shipped | order_refunded | merchant_new_order | test
+  to         String
+  subject    String
+  html       String
+  text       String
+  status     String // sent | failed | not_configured
+  providerId String?
+  error      String?
+  createdAt  DateTime @default(now())
+
+  @@index([orderId])
+  @@index([createdAt])
+}

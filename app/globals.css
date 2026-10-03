@@ -772,3 +772,13 @@ a.battery-tile:hover { border-color: var(--ink); color: var(--ink); }
   .header-nav { gap: 12px; }
   .search-link { padding: 6px 2px; }
 }
+
+/* admin emails */
+.tone-warn { background: #FBF0D9; color: #7A5306; }
+.email-test { display: flex; gap: 8px; margin-top: 12px; }
+.email-test input { flex: 1; min-width: 0; }
+.email-row-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+.email-list-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+@media (max-width: 600px) { .email-test { flex-direction: column; } }
+.email-home { display: block; text-decoration: none; color: inherit; } .email-home p { margin: 0; }
+.mini-list li .mini-row a { display: inline; padding: 0; border: 0; color: inherit; text-decoration: underline; }
