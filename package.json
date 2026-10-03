@@ -13,6 +13,7 @@
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@flydotio/litestream": "^1.0.1",
     "@prisma/client": "^6.19.3",
     "next": "^15.5.26",
     "react": "^19.3.0",
@@ -26,5 +27,8 @@
     "prisma": "^6.19.3",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
+  },
+  "dockerfile": {
+    "litestream": true
   }
 }
