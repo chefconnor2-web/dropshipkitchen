@@ -30,8 +30,9 @@ export interface ShippingAddress {
   } | null;
 }
 
-/** Where to ship from: the US warehouse when it can cover every item, else China (CJ's default). */
-export function chooseFromCountry(items: Array<{ quantity: number; inventoryJson: string | null }>): string {
+/** Where to ship from: the US warehouse when it can cover every item for a US address, else China (CJ's default). */
+export function chooseFromCountry(items: Array<{ quantity: number; inventoryJson: string | null }>, destCountry?: string | null): string {
+  if (destCountry && destCountry !== "US") return "CN";
   const usCovers = items.every((i) => {
     try {
       const rows = JSON.parse(i.inventoryJson || "[]") as Array<{ countryCode?: string; totalInventoryNum?: number; storageNum?: number }>;
@@ -95,8 +96,11 @@ async function loadOrder(orderId: string) {
     select: { cjVariantId: true, inventoryJson: true },
   });
   const inv = new Map(svs.map((s) => [s.cjVariantId, s.inventoryJson]));
-  const fromCountry = chooseFromCountry(order.items.map((i) => ({ quantity: i.quantity, inventoryJson: inv.get(i.supplierVariantId) ?? null })));
   const ship = order.shippingAddressJson ? (JSON.parse(order.shippingAddressJson) as ShippingAddress) : null;
+  const fromCountry = chooseFromCountry(
+    order.items.map((i) => ({ quantity: i.quantity, inventoryJson: inv.get(i.supplierVariantId) ?? null })),
+    ship?.address?.country,
+  );
   return { order, fromCountry, ship };
 }
 

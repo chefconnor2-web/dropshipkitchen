@@ -7,7 +7,8 @@
 
 import { prisma } from "@/lib/db";
 import { config, storeInitials } from "@/lib/config";
-import { suggestRetailCents, tieredMarkup } from "@/lib/money";
+import { retailCents, suggestRetailCents } from "@/lib/money";
+import { applyPricingRule } from "@/lib/pricing";
 import { refreshInventory } from "@/lib/inventory";
 import { getProductDetail, getVariantsByPid } from "./client";
 import {
@@ -143,6 +144,7 @@ export async function importCjProduct(pid: string, opts: { deliveryCycle?: strin
       });
       added++;
     }
+    await applyPricingRule([existing.id]);
     return {
       productId: existing.id,
       supplierProductId: sp.id,
@@ -211,7 +213,7 @@ async function createStorefrontVariant(
       name: Object.values(a.options).join(" / "),
       options: JSON.stringify(a.options),
       internalSku,
-      priceCents: suggestRetailCents(a.n.supplierPriceCents, tieredMarkup(a.n.supplierPriceCents, config.pricing.defaultMarkup)),
+      priceCents: a.n.supplierPriceCents != null ? retailCents(a.n.supplierPriceCents) : suggestRetailCents(null, 1),
       imageUrl: a.n.variantImage,
       enabled: a.enabled,
       position: index,

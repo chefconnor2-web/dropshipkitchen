@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import { addToCart, type CartActionState } from "../../actions";
 import type { PublicVariant } from "@/lib/storefront";
+import ShippingEstimate from "@/components/store/ShippingEstimate";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -14,7 +15,9 @@ export default function VariantPicker({
   variants,
   initial,
   onChange,
+  shipTo,
 }: {
+  shipTo: { country: string; zip: string };
   optionNames: string[];
   variants: PublicVariant[];
   initial: PublicVariant | null;
@@ -58,6 +61,7 @@ export default function VariantPicker({
   if (variants.length === 0) return <p className="stock stock-UNAVAILABLE">Currently unavailable</p>;
 
   return (
+    <>
     <form action={action} className="picker">
       <div className="price">{match ? money(match.priceCents) : "—"}</div>
       {match && optionNames.length === 0 && variants.length > 1 && <div className="muted small">{match.name}</div>}
@@ -112,5 +116,7 @@ export default function VariantPicker({
         </p>
       )}
     </form>
+    <ShippingEstimate key={match?.id ?? "none"} variantId={match?.id ?? null} country={shipTo.country} zip={shipTo.zip} />
+    </>
   );
 }

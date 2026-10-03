@@ -11,7 +11,8 @@
     "seed:cj": "tsx scripts/seed-cj.ts",
     "cj:check": "tsx scripts/cj-check.ts",
     "test": "tsx --test tests/*.test.ts",
-    "cj:source": "tsx scripts/cj-source.ts"
+    "cj:source": "tsx scripts/cj-source.ts",
+    "reprice": "tsx scripts/reprice.ts"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.3.0",

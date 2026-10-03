@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { getStockByVid, getVariantByVid } from "@/lib/cj/client";
 import { normalizeVariant, sumInventory } from "@/lib/cj/normalize";
+import { applyPricingRuleForSupplierVariants } from "@/lib/pricing";
 
 export type StockStatus = "IN_STOCK" | "LOW_STOCK" | "UNAVAILABLE" | "UNKNOWN";
 
@@ -38,7 +39,7 @@ export async function refreshPrice(cjSupplierVariantId: string) {
   const sv = await prisma.cjSupplierVariant.findUniqueOrThrow({ where: { id: cjSupplierVariantId } });
   const env = await getVariantByVid(sv.cjVariantId);
   const n = normalizeVariant({ ...env.data, vid: env.data?.vid ?? sv.cjVariantId });
-  return prisma.cjSupplierVariant.update({
+  const updated = await prisma.cjSupplierVariant.update({
     where: { id: sv.id },
     data: {
       supplierPriceCents: n.supplierPriceCents ?? sv.supplierPriceCents,
@@ -46,6 +47,9 @@ export async function refreshPrice(cjSupplierVariantId: string) {
       rawJson: JSON.stringify(env.data),
     },
   });
+  // Storefront prices follow CJ's cost under the store rule.
+  await applyPricingRuleForSupplierVariants([sv.id]);
+  return updated;
 }
 
 /** Full live recheck (price + stock) of one exact VID. */

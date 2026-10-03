@@ -8,7 +8,6 @@ import { testConnection } from "@/lib/cj/client";
 import { importCjProduct } from "@/lib/cj/import";
 import { slugify } from "@/lib/cj/normalize";
 import { refreshLive } from "@/lib/inventory";
-import { dollarsToCents } from "@/lib/money";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
 
 function msg(e: unknown) {
@@ -70,12 +69,10 @@ export async function saveProduct(form: FormData) {
     });
     const variants = await prisma.productVariant.findMany({ where: { productId: id } });
     for (const v of variants) {
-      const price = dollarsToCents(String(form.get(`price_${v.id}`) ?? ""));
       const name = String(form.get(`name_${v.id}`) ?? v.name).trim() || v.name;
       await prisma.productVariant.update({
         where: { id: v.id },
         data: {
-          priceCents: price ?? v.priceCents,
           enabled: form.get(`enabled_${v.id}`) === "on",
           name,
           // Keep variant SKUs under the product SKU when the merchant renames it.

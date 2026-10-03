@@ -81,6 +81,8 @@ model Product {
 
   images   ProductImage[]
   variants ProductVariant[]
+  /// false for products opened from storefront search: buyable by link, hidden from the shop grid.
+  listed   Boolean          @default(true)
 }
 
 // Customer-facing images are served through /media/<id> so supplier CDN URLs never reach the browser.
@@ -194,7 +196,11 @@ model Order {
   cjRawJson           String? // last createOrder / getOrderDetail response data
   createdAt           DateTime  @default(now())
 
-  items OrderItem[]
+  items               OrderItem[]
+  /// Shipping the customer paid (CJ's quote, passed through at cost) and the CJ method it was quoted for.
+  shippingCents       Int         @default(0)
+  customerShipMethod  String?
+  customerShipCountry String?
 }
 
 // Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.
