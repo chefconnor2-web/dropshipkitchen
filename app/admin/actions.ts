@@ -216,3 +216,24 @@ export async function refreshCjOrderAction(form: FormData) {
   }
   orderBack(id, q);
 }
+
+export async function saveCustomerAction(form: FormData) {
+  const id = String(form.get("customerId"));
+  const tags = String(form.get("tags") || "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 12)
+    .join(", ");
+  await prisma.customer.update({
+    where: { id },
+    data: {
+      name: String(form.get("name") || "").trim() || null,
+      phone: String(form.get("phone") || "").trim() || null,
+      notes: String(form.get("notes") || "").slice(0, 5000),
+      tags,
+    },
+  });
+  revalidatePath(`/admin/customers/${id}`);
+  redirect(`/admin/customers/${id}?notice=${encodeURIComponent("Customer saved")}`);
+}

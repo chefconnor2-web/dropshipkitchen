@@ -144,8 +144,24 @@ model CartItem {
   @@unique([cartId, variantId])
 }
 
+// One per email address, built from paid orders. Notes and tags are the merchant's own.
+model Customer {
+  id        String   @id @default(cuid())
+  email     String   @unique // lower-cased
+  name      String?
+  phone     String?
+  notes     String   @default("")
+  tags      String   @default("") // comma separated
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+}
+
 model Order {
   id                  String    @id @default(cuid())
+  customerId          String?
+  customer            Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   number              String    @unique
   status              String // PENDING_PAYMENT | AWAITING_MERCHANT_APPROVAL | PLACING_SUPPLIER_ORDER | SUPPLIER_ORDER_PLACED | APPROVED_MOCK_FULFILLMENT | DECLINED_REFUNDED | PAYMENT_FAILED
   email               String?

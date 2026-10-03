@@ -105,7 +105,15 @@ export default async function AdminOrder({
       </Link>
       <div className="a-head">
         <div>
-          <h1>{order.customerName || order.email || "Order"}</h1>
+          <h1>
+            {order.customerId ? (
+              <Link href={`/admin/customers/${order.customerId}`} className="h1-link">
+                {order.customerName || order.email || "Order"}
+              </Link>
+            ) : (
+              order.customerName || order.email || "Order"
+            )}
+          </h1>
           <div className="a-sub">
             <code>{order.number}</code> · paid {timeAgo(order.paidAt ?? order.createdAt)}
           </div>

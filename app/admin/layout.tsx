@@ -20,9 +20,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const stripeReady = !stripeKeyProblem();
   const tabs: AdminTab[] = [
     { href: "/admin/orders", label: "Orders", badge: awaiting, icon: "M4 7h16M4 12h16M4 17h10" },
+    { href: "/admin/customers", label: "Customers", icon: "M16 19v-1a4 4 0 0 0-8 0v1M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7 8v-1a3 3 0 0 0-2-2.8M17 5.2a3 3 0 0 1 0 5.6" },
     { href: "/admin/products", label: "Products", icon: "M4 8l8-4 8 4-8 4-8-4zm0 0v8l8 4 8-4V8" },
-    { href: "/admin/suppliers/cj", label: "Find on CJ", icon: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm9 16-4.5-4.5" },
-    { href: "/admin", label: "Dashboard", icon: "M4 13h6V4H4zm10 7h6V4h-6zM4 20h6v-4H4z" },
+    { href: "/admin/suppliers/cj", label: "CJ", icon: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm9 16-4.5-4.5" },
+    { href: "/admin", label: "Home", icon: "M4 13h6V4H4zm10 7h6V4h-6zM4 20h6v-4H4z" },
   ];
   return (
     <div className="admin">
