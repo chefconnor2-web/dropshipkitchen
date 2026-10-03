@@ -35,6 +35,7 @@ imports the CJ catalog in the background (log: `/data/seed.log`). Later boots sk
 fly launch --no-deploy --copy-config      # or create the app from the Fly dashboard; `app` in fly.toml must match
 fly volumes create data --size 1
 fly secrets set CJ_API_KEY=… STRIPE_SECRET_KEY=sk_test_… ADMIN_PASSWORD=…   # SITE_URL is set in fly.toml
+fly secrets set ANTHROPIC_API_KEY=…                                            # optional: reads receiving photos
 fly deploy
 ```
 
@@ -54,6 +55,7 @@ Keep one machine: SQLite lives on a single volume, so don't scale this app past 
 | `/cart` → Stripe Checkout (test) | Checkout revalidates stale stock by VID, then creates the order and its supplier snapshot |
 | `/admin/orders/[id]` | Customer purchase vs. **Supplier mapping** (PID, VID, SKU, price and stock at order vs. now, estimated cost and gross profit), **REFRESH CJ DATA**, **APPROVE & FULFILL** (mock), **DECLINE & REFUND** (Stripe test refund) |
 | `/admin/integration-proof` | Product → internal variant → SupplierOffer → live CJ data → what the customer sees, with **REFRESH LIVE DATA** and the "Last verified from CJ" time |
+| `/admin/receiving` | **Receiving / GFS label scanner.** Start a delivery, snap the sticker on every box (or upload several at once), add the expiry date by typing it or snapping the product's printed date, mark spoiled/damaged boxes with photos and get a ready-to-send credit request. Lists what to use first and recent problems |
 | `/admin` | Log of every HTTP call made to CJ (endpoint, HTTP status, CJ code, CJ `requestId`, timing) |
 
 ## CJ API usage
@@ -96,6 +98,24 @@ single option rather than inventing values.
 - Imported descriptions are converted to plain text, with lines mentioning CJ, dropshipping, or URLs removed. You then rewrite them.
 - Stripe line items use our product and variant names only.
 
+## Receiving (GFS case-label scanner)
+
+Built for the phone at the back door. Each box that comes in gets a record built from a photo of its case sticker:
+
+1. **Snap the label.** The photo is downscaled on the phone. On Chrome/Android the label's barcodes are also decoded
+   on the phone (`BarcodeDetector`); GS1 data in them (GTIN, lot, pack/best-before/expiry dates) is parsed by
+   `lib/receiving/gs1.ts` and wins over anything read from the picture.
+2. **The sticker is read** by Claude (`lib/receiving/vision.ts`, structured JSON output): item number, description,
+   brand, pack/size, GTIN, lot, pack date, any printed expiry, and every legible line of text. Needs `ANTHROPIC_API_KEY`;
+   without it the photo is saved and the fields are typed in.
+3. **Expiry date** comes from the product itself: type it, or tap *Snap the date* and it's read from the photo.
+   The page records whether the date came from the sticker, a photo or by hand.
+4. **Problems** (spoiled, damaged, short, wrong item, temperature) take a count, a note and extra photos, and the page
+   writes a credit request to send to the rep.
+
+Photos are stored under `UPLOAD_DIR` (`/data/uploads` on Fly, on the same 1 GB volume as the database; a downscaled
+photo is roughly 0.3–1 MB) and served only behind admin auth at `/admin/receiving/photo/<id>`.
+
 ## Tests
 
-`npm test` runs the unit tests for CJ payload parsing and normalisation. `npm run lint` type-checks.
+`npm test` runs the unit tests for CJ payload parsing and normalisation and for GS1 label parsing. `npm run lint` type-checks.

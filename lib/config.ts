@@ -28,6 +28,15 @@ export const config = {
     secretKey: process.env.STRIPE_SECRET_KEY?.trim() || "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || "",
   },
+  receiving: {
+    // Case-sticker and product-date photos are read by Claude when this is set; otherwise fields are typed in.
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim() || "",
+    model: process.env.RECEIVING_MODEL?.trim() || "claude-opus-5-5",
+    // Photos live on disk (on Fly: the /data volume).
+    uploadDir: process.env.UPLOAD_DIR?.trim() || "./uploads",
+    // "Use first" list on /admin/receiving covers products expiring within this many days.
+    expiringSoonDays: num("RECEIVING_EXPIRING_DAYS", 3),
+  },
   siteUrl: (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, ""),
   storeName: process.env.STORE_NAME || "Chef Supply",
   // Only "mock" is implemented. Live CJ purchasing is intentionally absent from this build.
@@ -44,4 +53,8 @@ export function stripeKeyProblem(): string | null {
   if (!k.startsWith("sk_test_") && !k.startsWith("rk_test_"))
     return "Only Stripe TEST keys (sk_test_…) are accepted during the proof phase.";
   return null;
+}
+
+export function labelReaderConfigured(): boolean {
+  return config.receiving.anthropicApiKey.length > 0;
 }

@@ -10,6 +10,7 @@ primary_region = "ams"
   STORE_NAME = "Chef Supply"
   SUPPLIER_MODE = "mock"
   SITE_URL = "https://dropshipkitchen.fly.dev"
+  UPLOAD_DIR = "/data/uploads"
 
 # Persistent disk for the SQLite database (Fly creates the `data` volume on first deploy).
 [[mounts]]
