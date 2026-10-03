@@ -1,6 +1,6 @@
 // Official CJdropshipping API V2 client (https://developers.cjdropshipping.com/api2.0/v1).
 //
-// Endpoints used (nothing in this file can place or pay for a CJ order):
+// Endpoints used:
 //   POST /authentication/getAccessToken     { apiKey }
 //   POST /authentication/refreshAccessToken { refreshToken }
 //   GET  /product/listV2                    keyWord, page, size
@@ -10,6 +10,15 @@
 //   GET  /product/stock/queryByVid          vid
 //   POST /product/sourcing/create           ask CJ to source a product it doesn't list yet
 //   POST /product/sourcing/query            status of those requests
+//   POST /logistic/freightCalculate         shipping options and cost for exact VIDs
+//   POST /shopping/order/createOrderV3      create a CJ order (payType 3 = create only, never auto-pay)
+//   PATCH /shopping/order/confirmOrder      CREATED → UNPAID, required before payment
+//   POST /shopping/sandbox/simulatePay      simulated payment for a sandbox order (no charge)
+//   POST /shopping/pay/payBalance           pay a created order from the CJ balance (by order id)
+//   POST /shopping/pay/payBalanceV2         the same, for a parent order (by shipment order id)
+//   GET  /shopping/pay/getBalance           CJ account balance
+//   GET  /shopping/order/getOrderDetail     order status and tracking
+// Only lib/fulfillment.ts calls the order and payment endpoints, and only behind SUPPLIER_MODE.
 //
 // Every call is written to the CjApiCall table (path, HTTP status, CJ code, CJ requestId, timing)
 // so the admin can see that data came from CJ's official API.
@@ -58,7 +67,7 @@ function throttled<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function rawCall<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   path: string,
   opts: { query?: Record<string, string | number | undefined>; body?: unknown; token?: string } = {},
 ): Promise<CjEnvelope<T>> {
@@ -78,7 +87,7 @@ async function rawCall<T>(
 }
 
 function callOnce<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   path: string,
   url: string,
   qs: URLSearchParams,
@@ -196,7 +205,7 @@ const AUTH_ERROR_CODES = new Set([1600001, 1600002, 1600003]);
 async function authed<T>(
   path: string,
   query: Record<string, string | number | undefined>,
-  method: "GET" | "POST" = "GET",
+  method: "GET" | "POST" | "PATCH" = "GET",
   body?: unknown,
 ): Promise<CjEnvelope<T>> {
   const token = await getAccessToken();
@@ -250,6 +259,65 @@ export async function createSourcing(req: CjSourcingRequest) {
 /** Status of earlier sourcing requests, by CJ sourcing id. */
 export async function querySourcing(sourceIds: string[]) {
   return authed<unknown>("/product/sourcing/query", {}, "POST", { sourceIds });
+}
+
+export interface CjFreightOption {
+  logisticName: string;
+  logisticPrice: number; // USD
+  logisticAging?: string; // days, e.g. "7-12"
+}
+
+export async function freightCalculate(req: {
+  startCountryCode: string;
+  endCountryCode: string;
+  zip?: string;
+  products: Array<{ vid: string; quantity: number }>;
+}) {
+  return authed<CjFreightOption[]>("/logistic/freightCalculate", {}, "POST", req);
+}
+
+export interface CjCreateOrderData {
+  orderId?: string;
+  orderNumber?: string;
+  shipmentOrderId?: string;
+  orderAmount?: number | string;
+  actualPayment?: number | string;
+  postageAmount?: number | string;
+  productAmount?: number | string;
+  orderStatus?: string;
+  interceptOrderReasons?: Array<{ code: number; message: string }>;
+}
+
+/** Creates a CJ order without paying for it (payType 3). Payment is a separate, explicit call. */
+export async function createOrderV3(body: Record<string, unknown>) {
+  return authed<CjCreateOrderData>("/shopping/order/createOrderV3", {}, "POST", { ...body, payType: 3 });
+}
+
+/** Moves a created order (CREATED) to UNPAID so it can be paid. */
+export async function confirmOrder(orderId: string) {
+  return authed<string>("/shopping/order/confirmOrder", {}, "PATCH", { orderId });
+}
+
+/** Simulated payment for a sandbox order (isSandbox=1). Never charges anything. */
+export async function sandboxSimulatePay(orderId: string) {
+  return authed<boolean>("/shopping/sandbox/simulatePay", {}, "POST", { orderId });
+}
+
+/** Pays one CJ order from the balance. For a parent order with several sub-orders use payBalanceV2. */
+export async function payBalance(orderId: string) {
+  return authed<null>("/shopping/pay/payBalance", {}, "POST", { orderId });
+}
+
+export async function payBalanceV2(shipmentOrderId: string) {
+  return authed<null>("/shopping/pay/payBalanceV2", {}, "POST", { shipmentOrderId });
+}
+
+export async function getBalance() {
+  return authed<{ amount: number; freezeAmount?: number | null }>("/shopping/pay/getBalance", {});
+}
+
+export async function getOrderDetail(orderId: string) {
+  return authed<Record<string, unknown>>("/shopping/order/getOrderDetail", { orderId });
 }
 
 /** Connection test: obtains (or reuses) a token and performs one tiny catalog read. */

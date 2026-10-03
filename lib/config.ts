@@ -30,7 +30,8 @@ export const config = {
   },
   siteUrl: (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, ""),
   storeName: process.env.STORE_NAME || "Tetherless",
-  // Only "mock" is implemented. Live CJ purchasing is intentionally absent from this build.
+  // mock (default): never sends orders to CJ · sandbox: CJ sandbox orders only (no charge, no shipping)
+  // · live: also real CJ orders, paid from the CJ balance, each one confirmed by the merchant.
   supplierMode: (process.env.SUPPLIER_MODE || "mock").toLowerCase(),
 };
 

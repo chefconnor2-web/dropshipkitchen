@@ -147,7 +147,7 @@ model CartItem {
 model Order {
   id                  String    @id @default(cuid())
   number              String    @unique
-  status              String // PENDING_PAYMENT | AWAITING_MERCHANT_APPROVAL | APPROVED_MOCK_FULFILLMENT | DECLINED_REFUNDED | PAYMENT_FAILED
+  status              String // PENDING_PAYMENT | AWAITING_MERCHANT_APPROVAL | PLACING_SUPPLIER_ORDER | SUPPLIER_ORDER_PLACED | APPROVED_MOCK_FULFILLMENT | DECLINED_REFUNDED | PAYMENT_FAILED
   email               String?
   customerName        String?
   shippingAddressJson String?
@@ -160,6 +160,22 @@ model Order {
   decidedAt           DateTime?
   decisionNote        String?
   mockSupplierOrderId String? // set in SUPPLIER_MODE=mock — never a real CJ order
+  customerPhone       String?
+  // CJ fulfilment (SUPPLIER_MODE=sandbox|live). A sandbox order never charges or ships.
+  cjQuoteJson         String? // last freight quote: [{logisticName, logisticPrice, logisticAging}]
+  cjFromCountry       String?
+  cjLogisticName      String?
+  cjSandbox           Boolean   @default(false)
+  cjOrderNumber       String? // the orderNumber we sent CJ (unique per attempt)
+  cjOrderId           String?
+  cjShipmentOrderId   String? // what payBalanceV2 pays
+  cjAmountCents       Int? // CJ's order amount (products + postage), USD
+  cjPaidAt            DateTime?
+  cjStatus            String? // CJ orderStatus, e.g. CREATED, UNSHIPPED, SHIPPED
+  cjTrackingNumber    String?
+  cjPlacedAt          DateTime?
+  cjError             String?
+  cjRawJson           String? // last createOrder / getOrderDetail response data
   createdAt           DateTime  @default(now())
 
   items OrderItem[]

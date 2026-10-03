@@ -7,6 +7,8 @@ import type Stripe from "stripe";
 export const ORDER_STATUS = {
   PENDING_PAYMENT: "PENDING_PAYMENT",
   AWAITING_MERCHANT_APPROVAL: "AWAITING_MERCHANT_APPROVAL",
+  PLACING_SUPPLIER_ORDER: "PLACING_SUPPLIER_ORDER",
+  SUPPLIER_ORDER_PLACED: "SUPPLIER_ORDER_PLACED",
   APPROVED_MOCK_FULFILLMENT: "APPROVED_MOCK_FULFILLMENT",
   DECLINED_REFUNDED: "DECLINED_REFUNDED",
 } as const;
@@ -34,6 +36,7 @@ export async function markOrderPaidFromSession(session: Stripe.Checkout.Session)
       paidAt: new Date(),
       email: session.customer_details?.email ?? null,
       customerName: session.customer_details?.name ?? null,
+      customerPhone: session.customer_details?.phone ?? null,
       shippingAddressJson: shipping ? JSON.stringify(shipping) : null,
       stripePaymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
     },
@@ -80,7 +83,7 @@ export function previewSupplierOrderPayload(order: {
   const ship = order.shippingAddressJson ? JSON.parse(order.shippingAddressJson) : null;
   const addr = ship?.address ?? {};
   return {
-    endpoint: "POST /shopping/order/createOrderV2 (NOT CALLED — SUPPLIER_MODE=mock)",
+    endpoint: "POST /shopping/order/createOrderV3 (sent only when you place a CJ order below)",
     orderNumber: order.number,
     shippingCountryCode: addr.country ?? null,
     shippingProvince: addr.state ?? null,
@@ -96,16 +99,15 @@ export async function approveOrder(orderId: string) {
   const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   if (order.status !== ORDER_STATUS.AWAITING_MERCHANT_APPROVAL)
     throw new Error(`Order is ${order.status}; only AWAITING_MERCHANT_APPROVAL orders can be approved.`);
-  if (config.supplierMode !== "mock")
-    throw new Error("Live CJ purchasing is disabled in this build. Set SUPPLIER_MODE=mock.");
-  // SUPPLIER_MODE=mock: record the decision and a mock supplier reference. No CJ order is created.
+  // Mock approval: record the decision and a mock supplier reference. No CJ order is created.
+  // (Real and sandbox CJ orders go through lib/fulfillment.ts.)
   return prisma.order.update({
     where: { id: order.id },
     data: {
       status: ORDER_STATUS.APPROVED_MOCK_FULFILLMENT,
       decidedAt: new Date(),
       mockSupplierOrderId: `MOCK-CJ-${order.number}`,
-      decisionNote: "Approved. SUPPLIER_MODE=mock — no CJ order was placed and no money was spent with the supplier.",
+      decisionNote: "Approved without a supplier order (mock): no CJ order was placed and nothing was spent with the supplier.",
     },
   });
 }

@@ -4,8 +4,22 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { previewSupplierOrderPayload } from "@/lib/orders";
+import { cjBalanceCents, supplierMode } from "@/lib/fulfillment";
+import type { CjFreightOption } from "@/lib/cj/client";
 import { Flash, Source, fmtTime } from "@/components/admin";
-import { approveOrderAction, declineOrderAction, refreshOrderCj } from "@/app/admin/actions";
+import {
+  approveOrderAction,
+  declineOrderAction,
+  payCjOrderAction,
+  placeCjOrderAction,
+  quoteShippingAction,
+  refreshCjOrderAction,
+  refreshOrderCj,
+} from "@/app/admin/actions";
+
+type CostItem = { supplierPriceAtOrderCents: number | null; quantity: number };
+const costKnown0 = (items: CostItem[]) => items.every((i) => i.supplierPriceAtOrderCents != null);
+const itemsCost = (items: CostItem[]) => items.reduce((n, i) => n + (i.supplierPriceAtOrderCents ?? 0) * i.quantity, 0);
 
 export default async function AdminOrder({
   params,
@@ -28,6 +42,22 @@ export default async function AdminOrder({
   const svByVid = new Map(svs.map((s) => [s.cjVariantId, s]));
   const ship = order.shippingAddressJson ? JSON.parse(order.shippingAddressJson) : null;
   const awaiting = order.status === "AWAITING_MERCHANT_APPROVAL";
+  const mode = supplierMode();
+  const quote = JSON.parse(order.cjQuoteJson || "[]") as CjFreightOption[];
+  const balance = mode === "live" && awaiting ? await cjBalanceCents() : null;
+  const cheapestTotal = quote.length && costKnown0(order.items) ? itemsCost(order.items) + Math.round(quote[0].logisticPrice * 100) : null;
+  const shipOption = (q: CjFreightOption, checked: boolean) => {
+    const shipCents = Math.round(q.logisticPrice * 100);
+    return (
+      <label key={q.logisticName} className="ship-opt">
+        <input type="radio" name="logisticName" value={q.logisticName} defaultChecked={checked} />
+        <span className="strong">{q.logisticName}</span>
+        <span>{formatMoney(shipCents)}</span>
+        <span className="muted">{q.logisticAging ? `${q.logisticAging} days` : ""}</span>
+        <span className="muted">≈ {costKnown0(order.items) ? formatMoney(itemsCost(order.items) + shipCents) : "?"} total from CJ</span>
+      </label>
+    );
+  };
 
   let costAtOrder = 0;
   let costKnown = true;
@@ -170,18 +200,138 @@ export default async function AdminOrder({
       </div>
 
       {awaiting && (
-        <div className="decision row gap">
-          <form action={approveOrderAction}>
-            <input type="hidden" name="orderId" value={order.id} />
-            <button className="btn primary">APPROVE &amp; FULFILL (mock)</button>
-          </form>
-          <form action={declineOrderAction} className="row gap">
-            <input type="hidden" name="orderId" value={order.id} />
-            <input name="note" placeholder="Reason (optional)" />
-            <button className="btn danger">DECLINE &amp; REFUND</button>
-          </form>
-        </div>
+        <section className="card pad fulfil">
+          <div className="row between">
+            <h2 className="fulfil-title">Fulfil with CJ</h2>
+            <span className={`pill pill-mode-${mode}`}>SUPPLIER_MODE={mode}</span>
+          </div>
+          {mode === "mock" ? (
+            <p className="small">
+              CJ orders are switched off. To place them from here, set <code>SUPPLIER_MODE</code> to <code>sandbox</code>{" "}
+              (CJ test orders: no charge, no shipping) or <code>live</code> (also real orders paid from your CJ balance) in
+              your hosting variables.
+            </p>
+          ) : (
+            <>
+              <div className="row gap">
+                <form action={quoteShippingAction}>
+                  <input type="hidden" name="orderId" value={order.id} />
+                  <button className="btn">{quote.length ? "REFRESH SHIPPING QUOTE" : "1 · GET CJ SHIPPING QUOTE"}</button>
+                </form>
+                {order.cjFromCountry && <span className="small muted">Ships from {order.cjFromCountry} · live from CJ</span>}
+                {mode === "live" && (
+                  <span className="small">
+                    CJ balance <strong>{balance == null ? "unavailable" : formatMoney(balance)}</strong>
+                  </span>
+                )}
+              </div>
+              {quote.length > 0 && (
+                <form action={placeCjOrderAction} className="fulfil-form">
+                  <input type="hidden" name="orderId" value={order.id} />
+                  <fieldset>
+                    <legend>2 · Shipping method</legend>
+                    {quote.slice(0, 6).map((q, n) => shipOption(q, n === 0))}
+                    {quote.length > 6 && (
+                      <details>
+                        <summary className="small">{quote.length - 6} more methods</summary>
+                        {quote.slice(6).map((q) => shipOption(q, false))}
+                      </details>
+                    )}
+                  </fieldset>
+                  <div className="row gap">
+                    <button className="btn" name="kind" value="sandbox">
+                      3 · PLACE SANDBOX TEST ORDER
+                    </button>
+                    <span className="small muted">Simulated payment. Nothing is charged or shipped.</span>
+                  </div>
+                  {mode === "live" ? (
+                    <div className="real-order">
+                      {balance != null && cheapestTotal != null && balance < cheapestTotal && (
+                        <p className="notice err small">
+                          Your CJ balance ({formatMoney(balance)}) won’t cover this order. Top up your CJ wallet first, or the
+                          order is created but left unpaid.
+                        </p>
+                      )}
+                      <label className="confirm-real">
+                        <input type="checkbox" name="confirmReal" value="yes" /> I understand this places a <b>real</b> CJ order
+                        that ships to the customer and charges my CJ balance about{" "}
+                        <b>{costKnown ? formatMoney(costAtOrder + Math.round(quote[0].logisticPrice * 100)) : "the quoted total"}</b>{" "}
+                        (exact amount depends on the method chosen).
+                      </label>
+                      <button className="btn danger" name="kind" value="real">
+                        3 · PLACE REAL ORDER &amp; PAY FROM CJ BALANCE
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="small muted">Real orders are off in this environment (SUPPLIER_MODE=sandbox).</p>
+                  )}
+                </form>
+              )}
+            </>
+          )}
+          {order.cjError && <p className="notice err">{order.cjError}</p>}
+          <div className="decision row gap">
+            <form action={approveOrderAction}>
+              <input type="hidden" name="orderId" value={order.id} />
+              <button className="btn">APPROVE WITHOUT CJ ORDER (mock)</button>
+            </form>
+            <form action={declineOrderAction} className="row gap">
+              <input type="hidden" name="orderId" value={order.id} />
+              <input name="note" placeholder="Reason (optional)" />
+              <button className="btn danger">DECLINE &amp; REFUND</button>
+            </form>
+          </div>
+        </section>
       )}
+
+      {order.cjPlacedAt && (
+        <section className="card pad fulfil">
+          <div className="row between">
+            <h2 className="fulfil-title">CJ order</h2>
+            <span className={`pill ${order.cjSandbox ? "pill-mode-sandbox" : "pill-ok"}`}>{order.cjSandbox ? "SANDBOX — not charged, not shipped" : "REAL ORDER"}</span>
+          </div>
+          <dl className="kv">
+            <dt>CJ order id</dt>
+            <dd>
+              <code>{order.cjOrderId ?? "—"}</code>
+            </dd>
+            <dt>Our order number at CJ</dt>
+            <dd>
+              <code>{order.cjOrderNumber}</code>
+            </dd>
+            <dt>Shipment order</dt>
+            <dd>
+              <code>{order.cjShipmentOrderId ?? "—"}</code>
+            </dd>
+            <dt>Shipping</dt>
+            <dd>
+              {order.cjLogisticName} from {order.cjFromCountry}
+            </dd>
+            <dt>CJ amount</dt>
+            <dd>{formatMoney(order.cjAmountCents)}</dd>
+            <dt>Paid to CJ</dt>
+            <dd className={order.cjPaidAt ? "ok-text" : "err-text"}>{order.cjPaidAt ? fmtTime(order.cjPaidAt) : "Not paid yet"}</dd>
+            <dt>CJ status</dt>
+            <dd>{order.cjStatus ?? "—"}</dd>
+            <dt>Tracking</dt>
+            <dd>{order.cjTrackingNumber ? <code>{order.cjTrackingNumber}</code> : "Not shipped yet"}</dd>
+          </dl>
+          {order.cjError && <p className="notice err">{order.cjError}</p>}
+          <div className="row gap">
+            <form action={refreshCjOrderAction}>
+              <input type="hidden" name="orderId" value={order.id} />
+              <button className="btn">REFRESH CJ STATUS</button>
+            </form>
+            {!order.cjPaidAt && (order.cjShipmentOrderId || order.cjOrderId) && (
+              <form action={payCjOrderAction}>
+                <input type="hidden" name="orderId" value={order.id} />
+                <button className="btn primary">RETRY PAYMENT</button>
+              </form>
+            )}
+          </div>
+        </section>
+      )}
+
       {order.decisionNote && (
         <p className="notice">
           {order.decisionNote} {order.mockSupplierOrderId && <code>{order.mockSupplierOrderId}</code>}
@@ -190,7 +340,7 @@ export default async function AdminOrder({
       )}
 
       <details className="raw">
-        <summary>CJ order payload preview (what approval would send once live purchasing is enabled — NOT sent)</summary>
+        <summary>CJ order payload preview (the address and items a CJ order is built from)</summary>
         <pre>{JSON.stringify(previewSupplierOrderPayload(order), null, 2)}</pre>
       </details>
 
