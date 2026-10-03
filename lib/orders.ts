@@ -3,6 +3,7 @@ import { config, storeInitials } from "@/lib/config";
 import { stripe } from "@/lib/stripe";
 import { refreshLive } from "@/lib/inventory";
 import { linkOrderToCustomer } from "@/lib/customers";
+import { sendOrderEmail } from "@/lib/order-emails";
 import type Stripe from "stripe";
 
 export const ORDER_STATUS = {
@@ -43,6 +44,8 @@ export async function markOrderPaidFromSession(session: Stripe.Checkout.Session)
     },
   });
   await linkOrderToCustomer(paid.id);
+  await sendOrderEmail(paid.id, "order_confirmation");
+  await sendOrderEmail(paid.id, "merchant_new_order");
   return paid;
 }
 
@@ -121,7 +124,7 @@ export async function declineAndRefund(orderId: string, note?: string) {
     throw new Error(`Order is ${order.status}; only AWAITING_MERCHANT_APPROVAL orders can be declined.`);
   if (!order.stripePaymentIntent) throw new Error("No Stripe payment intent recorded for this order.");
   const refund = await stripe().refunds.create({ payment_intent: order.stripePaymentIntent });
-  return prisma.order.update({
+  const updated = await prisma.order.update({
     where: { id: order.id },
     data: {
       status: ORDER_STATUS.DECLINED_REFUNDED,
@@ -130,4 +133,6 @@ export async function declineAndRefund(orderId: string, note?: string) {
       decisionNote: note || "Declined by merchant; refunded in Stripe test mode.",
     },
   });
+  await sendOrderEmail(order.id, "order_refunded");
+  return updated;
 }

@@ -28,6 +28,15 @@ export const config = {
     secretKey: process.env.STRIPE_SECRET_KEY?.trim() || "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || "",
   },
+  email: {
+    // Resend (resend.com). Without a key, emails are rendered and logged in the admin but not sent.
+    resendApiKey: process.env.RESEND_API_KEY?.trim() || "",
+    // A sender on a domain verified in Resend. Until one is, Resend only allows onboarding@resend.dev,
+    // which can deliver to the Resend account owner's own address only.
+    from: process.env.EMAIL_FROM?.trim() || "",
+    // Where new-order alerts go, and the Reply-To on customer emails.
+    storeEmail: process.env.STORE_EMAIL?.trim() || "",
+  },
   siteUrl: (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, ""),
   storeName: process.env.STORE_NAME || "Tetherless",
   // mock (default): never sends orders to CJ · sandbox: CJ sandbox orders only (no charge, no shipping)
