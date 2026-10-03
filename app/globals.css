@@ -399,3 +399,19 @@ legend { font-weight: 600; margin-bottom: 6px; }
   .result > img { width: 100%; }
   .table { display: block; overflow-x: auto; }
 }
+
+/* admin: CJ fulfilment */
+.fulfil { margin: 16px 0; display: grid; gap: 12px; }
+.fulfil-title { margin: 0; }
+.fulfil-form { display: grid; gap: 12px; }
+.ship-opt { display: grid; grid-template-columns: auto 1.4fr 0.7fr 0.8fr 1.4fr; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 0 0 6px; color: var(--ink); font-size: 14px; }
+.ship-opt input { width: auto; margin: 0; }
+.real-order { display: grid; gap: 8px; border: 1px solid #f0c9c4; background: #fdf3f2; border-radius: 8px; padding: 12px; }
+.confirm-real { display: flex; gap: 8px; align-items: flex-start; color: var(--ink); font-size: 14px; margin: 0; }
+.confirm-real input { width: auto; margin-top: 3px; }
+.pill-mode-mock { background: #eee; }
+.pill-mode-sandbox { background: #e3ecfb; color: var(--live); }
+.pill-mode-live { background: #fbe9e7; color: var(--err); }
+.pill-SUPPLIER_ORDER_PLACED { background: #e6f3ea; color: var(--ok); }
+.pill-PLACING_SUPPLIER_ORDER { background: #fdf1d8; color: var(--warn); }
+@media (max-width: 760px) { .ship-opt { grid-template-columns: auto 1fr 1fr; } }

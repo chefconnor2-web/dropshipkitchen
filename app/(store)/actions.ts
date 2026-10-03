@@ -118,6 +118,8 @@ export async function checkout() {
       },
     })),
     shipping_address_collection: { allowed_countries: ["US", "CA", "GB", "AU", "NZ", "IE"] },
+    // Carriers ask for a phone number; it goes to CJ with the shipping address.
+    phone_number_collection: { enabled: true },
     metadata: { orderId: order.id, orderNumber: order.number },
     success_url: `${config.siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${config.siteUrl}/cart`,

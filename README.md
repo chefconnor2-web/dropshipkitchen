@@ -44,6 +44,22 @@ Then add a Stripe test webhook for `https://<app>.fly.dev/api/stripe/webhook` an
 
 Keep one machine: SQLite lives on a single volume, so don't scale this app past one instance.
 
+## Fulfilling orders with CJ
+
+`SUPPLIER_MODE` decides what the admin order page can do:
+
+| Mode | What approving an order can do |
+|---|---|
+| `mock` (default) | Record a mock supplier reference. Nothing is sent to CJ. |
+| `sandbox` | Also place CJ **sandbox** orders: simulated payment, nothing charged or shipped. |
+| `live` | Also place **real** CJ orders, shipped to the customer and paid from your CJ balance. |
+
+On an order awaiting approval: **Get CJ shipping quote** (live freight options for the exact VIDs and address),
+pick a method, then **Place sandbox test order**, or tick the confirmation and **Place real order & pay from CJ
+balance**. The flow is CJ's own: `createOrderV3` (create only) → `confirmOrder` → `payBalance` (sandbox:
+`sandbox/simulatePay`). An order can only be placed once; if payment fails the order stays created and
+**Retry payment** pays it. **Refresh CJ status** pulls CJ's status and tracking number.
+
 ## Where things are
 
 | Path | What it is |
