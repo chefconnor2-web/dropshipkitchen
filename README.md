@@ -25,6 +25,24 @@ npm run seed:cj -- --publish  # optional: import ~10 real chef-supply products f
 npm run dev                   # http://localhost:3000/shop  ·  http://localhost:3000/admin
 ```
 
+## Deploy (Fly.io, test mode)
+
+The repo ships a `Dockerfile` and `fly.toml`. The SQLite database lives on a Fly volume mounted at `/data`.
+On first boot `scripts/start.sh` creates the schema and, if the store is empty and `CJ_API_KEY` is set,
+imports the CJ catalog in the background (log: `/data/seed.log`). Later boots skip the import.
+
+```bash
+fly launch --no-deploy --copy-config      # pick a unique app name (or edit `app` in fly.toml)
+fly volumes create data --size 1
+fly secrets set CJ_API_KEY=… STRIPE_SECRET_KEY=sk_test_… ADMIN_PASSWORD=… SITE_URL=https://<app>.fly.dev
+fly deploy
+```
+
+Then add a Stripe test webhook for `https://<app>.fly.dev/api/stripe/webhook` and run
+`fly secrets set STRIPE_WEBHOOK_SECRET=whsec_…`. Pay with Stripe's test card `4242 4242 4242 4242`.
+
+Keep one machine: SQLite lives on a single volume, so don't scale this app past one instance.
+
 ## Where things are
 
 | Path | What it is |

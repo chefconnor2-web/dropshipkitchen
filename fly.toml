@@ -1,0 +1,26 @@
+# Fly.io config. Change `app` to a unique name before the first deploy.
+app = "chef-supply-store"
+primary_region = "iad"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  DATABASE_URL = "file:/data/store.db"
+  STORE_NAME = "Chef Supply"
+  SUPPLIER_MODE = "mock"
+
+# Persistent disk for the SQLite database (create once: fly volumes create data --size 1).
+[mounts]
+  source = "data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "512mb"
