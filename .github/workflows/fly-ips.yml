@@ -1,0 +1,26 @@
+# Gives the Fly app public IP addresses so https://dropshipkitchen.fly.dev resolves.
+# Safe to re-run: it only allocates what's missing. Deploys still come from Fly's GitHub integration.
+# Needs the repo secret FLY_API_TOKEN (a Fly deploy token for the app).
+name: Fly public IPs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/live-cj-product-portal-3970t1]
+    paths: [fly.toml, .github/workflows/fly-ips.yml]
+
+jobs:
+  ips:
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      APP: dropshipkitchen
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Allocate missing IPs
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then echo "::error::Add the FLY_API_TOKEN repository secret first"; exit 1; fi
+          ips=$(flyctl ips list -a "$APP" --json)
+          echo "$ips" | grep -q '"Type": *"v6"' || flyctl ips allocate-v6 -a "$APP"
+          echo "$ips" | grep -q '"Type": *"shared_v4"\|"Type": *"v4"' || flyctl ips allocate-v4 --shared -a "$APP"
+          flyctl ips list -a "$APP"
