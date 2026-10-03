@@ -16,7 +16,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Link href="/admin/suppliers/cj">CJ Integration</Link>
             <Link href="/admin/products">Products</Link>
             <Link href="/admin/orders">Orders</Link>
-            <Link href="/admin/receiving">Receiving</Link>
             <Link href="/admin/integration-proof">Integration Proof</Link>
             <Link href="/shop" target="_blank">
               Storefront ↗
