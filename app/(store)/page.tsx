@@ -1,21 +1,15 @@
 import Link from "next/link";
 import { config } from "@/lib/config";
 import { publishedProducts } from "@/lib/storefront";
-import { LINK_LINE, DRAW_WATTS, runtimeHours } from "@/lib/lineup";
+import { LINK_LINE, DRAW_WATTS, PLATFORMS, runtimeHours } from "@/lib/lineup";
 import ProductCard from "@/components/store/ProductCard";
 import RuntimeCalculator from "@/components/store/RuntimeCalculator";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
   title: `${config.storeName} — Off-grid power for portable Starlink`,
-  description: "Run Starlink Mini on the 20V tool batteries you already own. Fused, field-tested power and off-grid gear.",
+  description: "Run Starlink Mini on the DeWalt, Milwaukee, Makita, Ryobi or Bosch tool batteries you already own. Fused, field-tested power and off-grid gear.",
 };
-
-const BATTERIES = [
-  { name: "DeWalt 20V MAX", status: "Link line in testing", live: true },
-  { name: "Milwaukee M18", status: "Coming next", live: false },
-  { name: "Makita 18V LXT", status: "Coming next", live: false },
-];
 
 export default async function Home() {
   const gear = (await publishedProducts()).slice(0, 8);
@@ -29,13 +23,13 @@ export default async function Home() {
             <p className="eyebrow">Off-grid power for portable Starlink</p>
             <h1>Internet that runs on the batteries you already own.</h1>
             <p className="hero-lede">
-              Clean, fused, field-tested power for Starlink Mini, built around the 20V tool batteries already in your truck.
+              Clean, fused, field-tested power for Starlink Mini, built around the 18V and 20V tool batteries already in your truck.
               And the off-grid gear that goes with it.
             </p>
             <div className="hero-ctas">
-              <a href="#line" className="btn primary lg">
-                See the Link line
-              </a>
+              <Link href="/link" className="btn primary lg">
+                Find your adapter
+              </Link>
               <Link href="/shop" className="btn ghost lg">
                 Shop off-grid gear
               </Link>
@@ -47,7 +41,7 @@ export default async function Home() {
               <span>Model · Link Dual</span>
             </div>
             <dt>Input</dt>
-            <dd>2 × 20V MAX</dd>
+            <dd>2 × 18V / 20V MAX</dd>
             <dt>Output</dt>
             <dd>DC → Starlink Mini</dd>
             <dt>Runtime</dt>
@@ -60,7 +54,7 @@ export default async function Home() {
         </div>
         <div className="wrap spec-strip" aria-hidden>
           <span>12–48V DC in</span>
-          <span>20V MAX batteries</span>
+          <span>DeWalt · Milwaukee · Makita · Ryobi · Bosch</span>
           <span>≈ {hours5(1)} h per 5Ah</span>
           <span>Starlink Mini ready</span>
         </div>
@@ -70,14 +64,15 @@ export default async function Home() {
         <div className="wrap">
           <p className="eyebrow">Step 1</p>
           <h2 className="section-title">Choose your battery.</h2>
-          <div className="battery-row">
-            {BATTERIES.map((b) => (
-              <div key={b.name} className={`battery-tile ${b.live ? "live" : ""}`}>
-                <div className="battery-name">{b.name}</div>
+          <div className="battery-row battery-row-5">
+            {PLATFORMS.map((b) => (
+              <Link key={b.id} href={`/link?battery=${b.id}#products`} className={`battery-tile ${b.status === "testing" ? "live" : ""}`}>
+                <div className="battery-name">{b.brand}</div>
+                <div className="battery-line">{b.line}</div>
                 <div className="battery-status">
-                  <span className="dot" aria-hidden /> {b.status}
+                  <span className="dot" aria-hidden /> {b.status === "testing" ? "In testing" : "Coming next"}
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
@@ -87,7 +82,7 @@ export default async function Home() {
         <div className="wrap">
           <p className="eyebrow">Step 2 · The Link line</p>
           <div className="section-head">
-            <h2 className="section-title">Four kits. One cable standard.</h2>
+            <h2 className="section-title">Four kits. Five batteries. One standard.</h2>
             <p className="section-note">
               Launching once every sample passes our bench test: voltage under load, fuse, cutoff and a four-hour run.
             </p>
@@ -104,6 +99,10 @@ export default async function Home() {
                 <h3>{p.name}</h3>
                 <p>{p.summary}</p>
                 <dl className="plate plate-card">
+                  <div className="plate-row">
+                    <dt>Fits</dt>
+                    <dd>{p.fits.length === PLATFORMS.length ? "All 5 platforms" : PLATFORMS.filter((b) => p.fits.includes(b.id)).map((b) => b.brand).join(" · ")}</dd>
+                  </div>
                   {p.specs.map(([label, value]) => (
                     <div key={label} className="plate-row">
                       <dt>{label}</dt>
@@ -120,6 +119,11 @@ export default async function Home() {
               </article>
             ))}
           </div>
+          <p className="line-cta">
+            <Link href="/link" className="btn">
+              Pick your battery and get notified
+            </Link>
+          </p>
         </div>
       </section>
 

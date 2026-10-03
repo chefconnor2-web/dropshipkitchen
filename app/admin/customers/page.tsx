@@ -44,9 +44,14 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
             {rows.length} customer{rows.length === 1 ? "" : "s"} · {formatMoney(total)} lifetime
           </div>
         </div>
-        <a href="/admin/customers/export" className="a-btn a-btn-sm">
-          Export CSV
-        </a>
+        <div className="a-head-actions">
+          <Link href="/admin/waitlist" className="a-btn a-btn-sm">
+            Waitlist
+          </Link>
+          <a href="/admin/customers/export" className="a-btn a-btn-sm">
+            Export CSV
+          </a>
+        </div>
       </div>
       <form className="search-bar" role="search">
         <input type="search" name="q" defaultValue={term} placeholder="Search name, email, phone or tag" aria-label="Search customers" />

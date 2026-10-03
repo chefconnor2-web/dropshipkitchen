@@ -61,7 +61,7 @@ export default function RuntimeCalculator() {
         <dl className="plate">
           <dt>Energy</dt>
           <dd>
-            {count} × 20V {ah}Ah = {wh} Wh
+            {count} × 18V {ah}Ah = {wh} Wh
           </dd>
           <dt>Draw</dt>
           <dd>{watts} W</dd>
