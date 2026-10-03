@@ -1,6 +1,6 @@
 // Official CJdropshipping API V2 client (https://developers.cjdropshipping.com/api2.0/v1).
 //
-// Endpoints used (all read-only — nothing in this file can place or pay for a CJ order):
+// Endpoints used (nothing in this file can place or pay for a CJ order):
 //   POST /authentication/getAccessToken     { apiKey }
 //   POST /authentication/refreshAccessToken { refreshToken }
 //   GET  /product/listV2                    keyWord, page, size
@@ -8,6 +8,8 @@
 //   GET  /product/variant/query             pid
 //   GET  /product/variant/queryByVid        vid
 //   GET  /product/stock/queryByVid          vid
+//   POST /product/sourcing/create           ask CJ to source a product it doesn't list yet
+//   POST /product/sourcing/query            status of those requests
 //
 // Every call is written to the CjApiCall table (path, HTTP status, CJ code, CJ requestId, timing)
 // so the admin can see that data came from CJ's official API.
@@ -191,16 +193,21 @@ export async function getAccessToken(forceNew = false): Promise<string> {
 
 const AUTH_ERROR_CODES = new Set([1600001, 1600002, 1600003]);
 
-async function authed<T>(path: string, query: Record<string, string | number | undefined>): Promise<CjEnvelope<T>> {
+async function authed<T>(
+  path: string,
+  query: Record<string, string | number | undefined>,
+  method: "GET" | "POST" = "GET",
+  body?: unknown,
+): Promise<CjEnvelope<T>> {
   const token = await getAccessToken();
   try {
-    return await rawCall<T>("GET", path, { query, token });
+    return await rawCall<T>(method, path, { query, body, token });
   } catch (e) {
     const authFailure =
       e instanceof CjApiError && (e.httpStatus === 401 || (e.cjCode !== undefined && AUTH_ERROR_CODES.has(e.cjCode)));
     if (!authFailure) throw e;
     await prisma.setting.deleteMany({ where: { key: TOKEN_KEY } });
-    return rawCall<T>("GET", path, { query, token: await getAccessToken(true) });
+    return rawCall<T>(method, path, { query, body, token: await getAccessToken(true) });
   }
 }
 
@@ -224,6 +231,25 @@ export async function getVariantByVid(vid: string) {
 
 export async function getStockByVid(vid: string) {
   return authed<CjStockEntry[]>("/product/stock/queryByVid", { vid });
+}
+
+export interface CjSourcingRequest {
+  productName: string;
+  productImage: string;
+  productUrl?: string;
+  remark?: string;
+  /** Target price in USD. */
+  price?: number;
+}
+
+/** Ask CJ's agents to find and list a product CJ doesn't carry yet. Returns CJ's sourcing id. */
+export async function createSourcing(req: CjSourcingRequest) {
+  return authed<{ cjSourcingId?: string; result?: string }>("/product/sourcing/create", {}, "POST", req);
+}
+
+/** Status of earlier sourcing requests, by CJ sourcing id. */
+export async function querySourcing(sourceIds: string[]) {
+  return authed<unknown>("/product/sourcing/query", {}, "POST", { sourceIds });
 }
 
 /** Connection test: obtains (or reuses) a token and performs one tiny catalog read. */

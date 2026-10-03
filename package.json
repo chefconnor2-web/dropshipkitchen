@@ -10,7 +10,8 @@
     "db:push": "prisma db push",
     "seed:cj": "tsx scripts/seed-cj.ts",
     "cj:check": "tsx scripts/cj-check.ts",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "cj:source": "tsx scripts/cj-source.ts"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.3.0",
