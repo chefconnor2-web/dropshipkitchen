@@ -26,3 +26,11 @@ primary_region = "ams"
 
 [[vm]]
   memory = "512mb"
+
+# Only route traffic once the store answers (first boot also pushes the schema).
+[[http_service.checks]]
+  grace_period = "30s"
+  interval = "30s"
+  timeout = "5s"
+  method = "GET"
+  path = "/shop"
