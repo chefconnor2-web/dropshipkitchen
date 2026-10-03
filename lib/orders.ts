@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { config, storeInitials } from "@/lib/config";
 import { stripe } from "@/lib/stripe";
 import { refreshLive } from "@/lib/inventory";
+import { linkOrderToCustomer } from "@/lib/customers";
 import type Stripe from "stripe";
 
 export const ORDER_STATUS = {
@@ -29,7 +30,7 @@ export async function markOrderPaidFromSession(session: Stripe.Checkout.Session)
   const shipping =
     (session as unknown as { collected_information?: { shipping_details?: unknown } }).collected_information
       ?.shipping_details ?? (session as unknown as { shipping_details?: unknown }).shipping_details ?? null;
-  return prisma.order.update({
+  const paid = await prisma.order.update({
     where: { id: order.id },
     data: {
       status: ORDER_STATUS.AWAITING_MERCHANT_APPROVAL,
@@ -41,6 +42,8 @@ export async function markOrderPaidFromSession(session: Stripe.Checkout.Session)
       stripePaymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
     },
   });
+  await linkOrderToCustomer(paid.id);
+  return paid;
 }
 
 /** Live re-query of CJ using the exact VID stored on each order item; every check is recorded. */
