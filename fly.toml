@@ -1,5 +1,5 @@
-# Fly.io config for the `dropshipkitchen` app (created from the Fly dashboard).
-app = "dropshipkitchen"
+# Fly.io config for the PREVIEW app (branch `preview`). Production is `dropshipkitchen` on the default branch.
+app = "tetherless-preview"
 primary_region = "ams"
 
 [build]
@@ -9,7 +9,7 @@ primary_region = "ams"
   DATABASE_URL = "file:/data/store.db"
   STORE_NAME = "Tetherless"
   SUPPLIER_MODE = "mock"
-  SITE_URL = "https://dropshipkitchen.fly.dev"
+  SITE_URL = "https://tetherless-preview.fly.dev"
 
 # Persistent disk for the SQLite database (Fly creates the `data` volume on first deploy).
 [[mounts]]
