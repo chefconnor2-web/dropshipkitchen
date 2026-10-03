@@ -2,6 +2,7 @@
  * Submits CJ sourcing requests for products CJ doesn't list yet, then reports their status.
  *
  *   npm run cj:source                    # submit scripts/sourcing-requests.json
+ *   npm run cj:source -- --file sourcing-requests-platforms.json   # submit another list in scripts/
  *   npm run cj:source -- --status ID...  # check earlier requests by CJ sourcing id
  *
  * Once CJ approves a request it gets a normal CJ product (PID) that imports like any other.
@@ -23,7 +24,9 @@ async function main() {
     }
     return;
   }
-  const requests = JSON.parse(readFileSync(new URL("./sourcing-requests.json", import.meta.url), "utf8")) as CjSourcingRequest[];
+  const f = process.argv.indexOf("--file");
+  const file = (f >= 0 ? process.argv[f + 1] : "sourcing-requests.json").replace(/^.*[\\/]/, "");
+  const requests = JSON.parse(readFileSync(new URL(`./${file}`, import.meta.url), "utf8")) as CjSourcingRequest[];
   for (const r of requests) {
     try {
       const env = await createSourcing(r);

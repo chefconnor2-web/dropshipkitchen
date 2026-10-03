@@ -6,12 +6,13 @@ import { CjStatusPanel, StatusChip, fmtTime, timeAgo } from "@/components/admin"
 
 export default async function AdminHome() {
   const since = new Date(Date.now() - 30 * 86400_000);
-  const [awaiting, waitingOrders, paid30, published, calls] = await Promise.all([
+  const [awaiting, waitingOrders, paid30, published, calls, waitlist] = await Promise.all([
     prisma.order.count({ where: { status: "AWAITING_MERCHANT_APPROVAL" } }),
     prisma.order.findMany({ where: { status: "AWAITING_MERCHANT_APPROVAL" }, orderBy: { paidAt: "asc" }, take: 3, include: { items: true } }),
     prisma.order.findMany({ where: { paidAt: { gte: since }, status: { notIn: ["DECLINED_REFUNDED", "PENDING_PAYMENT"] } }, select: { subtotalCents: true } }),
     prisma.product.count({ where: { status: "PUBLISHED" } }),
     prisma.cjApiCall.findMany({ orderBy: { createdAt: "desc" }, take: 15 }),
+    prisma.waitlistEntry.count(),
   ]);
   const balance = supplierMode() === "live" ? await cjBalanceCents() : null;
   const revenue = paid30.reduce((n, o) => n + o.subtotalCents, 0);
@@ -33,6 +34,10 @@ export default async function AdminHome() {
         <Link href="/admin/products" className="kpi">
           <span className="kpi-v">{published}</span>
           <span className="kpi-k">Products live</span>
+        </Link>
+        <Link href="/admin/waitlist" className="kpi">
+          <span className="kpi-v">{waitlist}</span>
+          <span className="kpi-k">Link line waitlist</span>
         </Link>
         {balance != null && (
           <div className="kpi">

@@ -37,10 +37,10 @@ model CjSupplierProduct {
 }
 
 model CjSupplierVariant {
-  id                 String    @id @default(cuid())
+  id                 String            @id @default(cuid())
   supplierProductId  String
   supplierProduct    CjSupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
-  cjVariantId        String    @unique // CJ VID
+  cjVariantId        String            @unique // CJ VID
   cjVariantSku       String
   variantName        String? // CJ variantNameEn
   variantKey         String? // CJ variantKey, e.g. "Black-30cm"
@@ -55,7 +55,7 @@ model CjSupplierVariant {
   inventoryCheckedAt DateTime?
   priceCheckedAt     DateTime?
   rawJson            String
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime          @updatedAt
 
   offers SupplierOffer[]
 }
@@ -63,21 +63,21 @@ model CjSupplierVariant {
 // ---------- STOREFRONT DATA (ours) ----------
 
 model Product {
-  id                String   @id @default(cuid())
-  slug              String   @unique
+  id                String             @id @default(cuid())
+  slug              String             @unique
   title             String
-  description       String   @default("")
-  internalSku       String   @unique
-  categories        String   @default("") // comma separated
+  description       String             @default("")
+  internalSku       String             @unique
+  categories        String             @default("") // comma separated
   seoTitle          String?
   seoDescription    String?
-  status            String   @default("DRAFT") // DRAFT | PUBLISHED
+  status            String             @default("DRAFT") // DRAFT | PUBLISHED
   estimatedDelivery String? // customer-facing text, e.g. "7–12 business days"
-  optionNames       String   @default("[]") // JSON array, e.g. ["Colour","Size"]
+  optionNames       String             @default("[]") // JSON array, e.g. ["Colour","Size"]
   supplierProductId String?
   supplierProduct   CjSupplierProduct? @relation(fields: [supplierProductId], references: [id], onDelete: SetNull)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
   images   ProductImage[]
   variants ProductVariant[]
@@ -199,9 +199,9 @@ model Order {
 
 // Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.
 model OrderItem {
-  id                         String   @id @default(cuid())
+  id                         String    @id @default(cuid())
   orderId                    String
-  order                      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order                      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId                  String? // soft references for navigation only
   productVariantId           String?
   productTitle               String
@@ -223,15 +223,15 @@ model OrderItem {
 
 // Every live re-check against CJ for an order item, kept as evidence.
 model SupplierCheck {
-  id              String    @id @default(cuid())
-  orderItemId     String
-  orderItem       OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  id                String    @id @default(cuid())
+  orderItemId       String
+  orderItem         OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   supplierVariantId String
-  priceCents      Int?
-  inventoryTotal  Int?
-  ok              Boolean
-  error           String?
-  checkedAt       DateTime  @default(now())
+  priceCents        Int?
+  inventoryTotal    Int?
+  ok                Boolean
+  error             String?
+  checkedAt         DateTime  @default(now())
 }
 
 // ---------- INTEGRATION BOOKKEEPING ----------
@@ -255,4 +255,17 @@ model Setting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+/// "Tell me when it launches" sign-ups for Link line products that aren't buyable yet.
+model WaitlistEntry {
+  id         String    @id @default(cuid())
+  email      String
+  platform   String
+  productId  String
+  createdAt  DateTime  @default(now())
+  notifiedAt DateTime?
+
+  @@unique([email, platform, productId])
+  @@index([platform, productId])
 }

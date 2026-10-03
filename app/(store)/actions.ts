@@ -8,6 +8,7 @@ import { getOrCreateCartId, getCartId, loadCart } from "@/lib/cart";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
+import { linkProductById, platformById, platformName } from "@/lib/lineup";
 
 export type CartActionState = { ok: boolean; message: string } | null;
 
@@ -126,4 +127,24 @@ export async function checkout() {
   });
   await prisma.order.update({ where: { id: order.id }, data: { stripeSessionId: session.id } });
   redirect(session.url!);
+}
+
+export type WaitlistState = { ok: boolean; message: string } | null;
+
+/** "Tell me when it launches" for a Link line product on one battery platform. */
+export async function joinWaitlist(_prev: WaitlistState, form: FormData): Promise<WaitlistState> {
+  const email = String(form.get("email") || "").trim().toLowerCase();
+  const platform = platformById(String(form.get("platform") || ""));
+  const product = linkProductById(String(form.get("productId") || ""));
+  if (!product) return { ok: false, message: "Please pick a product." };
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, message: "Please enter a valid email." };
+  await prisma.waitlistEntry.upsert({
+    where: { email_platform_productId: { email, platform: platform.id, productId: product.id } },
+    update: {},
+    create: { email, platform: platform.id, productId: product.id },
+  });
+  const name = `${platformName(platform)} ${product.name}`;
+  if (!product.fits.includes(platform.id))
+    return { ok: true, message: `Noted. Every ask counts toward what we build next. We’ll email you if the ${name} goes into testing.` };
+  return { ok: true, message: `You’re on the list. We’ll email you once the ${name} passes testing.` };
 }

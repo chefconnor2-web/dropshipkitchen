@@ -24,7 +24,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <span className="brand-name">{config.storeName}</span>
           </Link>
           <nav className="header-nav" aria-label="Main">
-            <Link href="/#line">Link line</Link>
+            <Link href="/link">Link line</Link>
             <Link href="/shop">Off-grid gear</Link>
             <Link href="/runtime" className="hide-sm">
               Runtime
@@ -56,7 +56,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <div className="footer-h">Shop</div>
             <ul className="footer-links">
               <li>
-                <Link href="/#line">Link line</Link>
+                <Link href="/link">Link line</Link>
               </li>
               <li>
                 <Link href="/shop">All off-grid gear</Link>
@@ -85,8 +85,8 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             © {new Date().getFullYear()} {config.storeName}
           </span>
           <span>
-            DeWalt and 20V MAX are trademarks of Stanley Black &amp; Decker. Starlink is a trademark of SpaceX.{" "}
-            {config.storeName} is not affiliated with either.
+            DeWalt, 20V MAX, Milwaukee, M18, Makita, LXT, Ryobi, ONE+ and Bosch are trademarks of their owners. Starlink is a trademark of SpaceX.{" "}
+            {config.storeName} is not affiliated with any of them; names are used only to describe compatibility.
           </span>
         </div>
       </footer>
