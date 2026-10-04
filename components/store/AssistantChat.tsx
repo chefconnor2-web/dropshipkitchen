@@ -9,6 +9,13 @@ interface Card {
   fromCents: number;
   group?: string;
 }
+interface Option {
+  id: string;
+  name: string;
+  priceCents: number;
+  available: boolean;
+  stock: string;
+}
 interface LiveGroup {
   group: string;
   cards: Card[];
@@ -78,6 +85,9 @@ export default function AssistantChat() {
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [live, setLive] = useState<LiveGroup[]>([]);
+  const [adding, setAdding] = useState<Record<string, boolean>>({});
+  const [addedPids, setAddedPids] = useState<Record<string, boolean>>({});
+  const [picking, setPicking] = useState<Record<string, { options: Option[]; productUrl: string; selected?: string }>>({});
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -167,16 +177,35 @@ export default function AssistantChat() {
     }
   }
 
-  async function quickAdd(card: Card) {
-    const r = await fetch("/api/assistant/add", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: card.pid }) });
-    const d = await r.json().catch(() => ({}));
-    if (d.chooseAt) {
-      window.open(d.chooseAt, "_blank");
-      return;
+  async function quickAdd(card: Card, variantId?: string) {
+    setAdding((a) => ({ ...a, [card.pid]: true }));
+    try {
+      const r = await fetch("/api/assistant/add", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(variantId ? { variantId } : { pid: card.pid }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.choose) {
+        setPicking((p) => ({ ...p, [card.pid]: { options: d.options, productUrl: d.productUrl, selected: d.options.find((o: Option) => o.available)?.id ?? d.options[0]?.id } }));
+        return;
+      }
+      if (typeof d.cartCount === "number") setCartCount(d.cartCount);
+      if (d.ok) {
+        setAddedPids((a) => ({ ...a, [card.pid]: true }));
+        setPicking((p) => {
+          const n = { ...p };
+          delete n[card.pid];
+          return n;
+        });
+      }
+      setToast(d.message ?? (d.ok ? "Added to cart" : "Couldn’t add that"));
+    } catch {
+      setToast("Couldn’t add that. Please try again.");
+    } finally {
+      setAdding((a) => ({ ...a, [card.pid]: false }));
+      setTimeout(() => setToast(null), 3500);
     }
-    if (typeof d.cartCount === "number") setCartCount(d.cartCount);
-    setToast(d.message ?? (d.ok ? "Added to cart" : "Couldn’t add that"));
-    setTimeout(() => setToast(null), 3500);
   }
 
   async function reset() {
@@ -226,12 +255,35 @@ export default function AssistantChat() {
                         <img src={`/media/s/${encodeURIComponent(c.pid)}`} alt="" loading="lazy" />
                       </a>
                       <div className="ai-card-title">{c.title}</div>
-                      <div className="ai-card-foot">
-                        <span className="ai-card-price">{money(c.fromCents)}</span>
-                        <button type="button" onClick={() => quickAdd(c)}>
-                          Add
-                        </button>
-                      </div>
+                      {picking[c.pid] ? (
+                        <div className="ai-pick">
+                          <label className="sr-only" htmlFor={`opt-${c.pid}`}>
+                            Option
+                          </label>
+                          <select
+                            id={`opt-${c.pid}`}
+                            value={picking[c.pid].selected}
+                            onChange={(ev) => setPicking((p) => ({ ...p, [c.pid]: { ...p[c.pid], selected: ev.target.value } }))}
+                          >
+                            {picking[c.pid].options.map((o) => (
+                              <option key={o.id} value={o.id} disabled={!o.available}>
+                                {o.name} · {money(o.priceCents)}
+                                {o.available ? "" : " (sold out)"}
+                              </option>
+                            ))}
+                          </select>
+                          <button type="button" disabled={adding[c.pid] || !picking[c.pid].selected} onClick={() => quickAdd(c, picking[c.pid].selected)}>
+                            {adding[c.pid] ? "Adding…" : "Add"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="ai-card-foot">
+                          <span className="ai-card-price">{money(c.fromCents)}</span>
+                          <button type="button" className={addedPids[c.pid] ? "is-added" : ""} disabled={adding[c.pid]} onClick={() => quickAdd(c)}>
+                            {adding[c.pid] ? "Adding…" : addedPids[c.pid] ? "✓ Added" : "Add"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
