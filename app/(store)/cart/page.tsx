@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
+import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
 import { SHIP_COUNTRIES, daysLabel, parcelsLabel, quoteTiers, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
-import { checkout, requestFreightQuote, updateCartItem, updateShipTo } from "../actions";
+import { checkout, removeCartBox, requestFreightQuote, updateCartItem, updateShipTo } from "../actions";
 import { suggestFreight } from "@/lib/freight";
 
 export const dynamic = "force-dynamic";
@@ -16,15 +16,17 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   // The whole cart is priced as one transaction: bigger orders pay a lower margin.
   const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
   const unit = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
-  const subtotal = priced.totalCents;
+  const boxes = cart?.boxes ?? [];
+  const boxTotal = boxes.reduce((n, b) => n + b.box.priceCents, 0);
+  const subtotal = priced.totalCents + boxTotal;
   const savings = priced.savingsCents;
-  const units = items.reduce((s, i) => s + i.quantity, 0);
+  const units = items.reduce((s, i) => s + i.quantity, 0) + boxes.length;
   const shipTo = await getShipTo();
   let tiers: ShipTier[] = [];
   let shipError: string | null = null;
-  if (items.length) {
+  if (items.length || boxes.length) {
     try {
-      tiers = await quoteTiers(cartShipItems(cart), shipTo.country, shipTo.zip);
+      tiers = await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
       if (!tiers.length)
         shipError =
           items.reduce((n, i) => n + i.quantity, 0) >= 20
@@ -43,7 +45,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       <h1 className="page-title">Your cart</h1>
       {error && <p className="notice err">{error}</p>}
       {freight === "sent" && <p className="notice ok">Freight quote requested. We’ll email you within one business day.</p>}
-      {items.length === 0 ? (
+      {items.length === 0 && boxes.length === 0 ? (
         <div className="empty-cart">
           <p>Your cart is empty.</p>
           <Link href="/shop" className="btn primary">
@@ -53,6 +55,32 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       ) : (
         <div className="cart">
           <ul className="cart-items">
+            {boxes.map((b) => (
+              <li key={b.id} className="cart-item">
+                <Link href={`/boxes/${b.box.slug}`} className="cart-thumb">
+                  <div className="img-ph box-ph" aria-hidden>
+                    ?
+                  </div>
+                </Link>
+                <div className="cart-item-main">
+                  <Link href={`/boxes/${b.box.slug}`} className="cart-item-title">
+                    {b.box.name}
+                  </Link>
+                  <div className="muted small">
+                    Mystery box · {b.box.itemCount} items worth {formatMoney(b.box.guaranteedValueCents)}+ · revealed after purchase
+                  </div>
+                  <div className="cart-item-actions">
+                    <form action={removeCartBox}>
+                      <input type="hidden" name="id" value={b.id} />
+                      <button className="link-btn small">Remove</button>
+                    </form>
+                  </div>
+                </div>
+                <div className="cart-item-price">
+                  <strong>{formatMoney(b.box.priceCents)}</strong>
+                </div>
+              </li>
+            ))}
             {items.map((i) => {
               // Server component: only the derived label reaches the page, never the supplier's count.
               const s = stockStatus(i.variant.offer?.cjSupplierVariant.inventoryTotal);

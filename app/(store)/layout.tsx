@@ -25,6 +25,9 @@ export default async function StoreLayout({ children }: { children: React.ReactN
           </Link>
           <nav className="header-nav" aria-label="Main">
             <Link href="/">Assistant</Link>
+            <Link href="/boxes" className="hide-xs">
+              Mystery boxes
+            </Link>
             <Link href="/shop">
               <span className="hide-xs">Catalog</span>
               <span className="show-xs">Catalog</span>
@@ -67,6 +70,9 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               </li>
               <li>
                 <Link href="/search">Search everything</Link>
+              </li>
+              <li>
+                <Link href="/boxes">Mystery boxes</Link>
               </li>
               {categories.map((c) => (
                 <li key={c.name}>

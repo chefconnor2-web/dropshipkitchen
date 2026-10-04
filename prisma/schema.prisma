@@ -109,6 +109,7 @@ model ProductVariant {
 
   offer     SupplierOffer?
   cartItems CartItem[]
+  boxPools  MysteryBoxPoolItem[]
 }
 
 // The bridge: exactly one supplier variant behind each storefront variant.
@@ -132,6 +133,7 @@ model Cart {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   items     CartItem[]
+  boxes     CartBox[]
 }
 
 model CartItem {
@@ -227,7 +229,10 @@ model OrderItem {
   supplierInventoryAtOrder   Int?
   supplierInventoryCheckedAt DateTime?
 
-  checks SupplierCheck[]
+  checks          SupplierCheck[]
+  /// Set on items that came out of a mystery box (revealed after payment); same group = same box.
+  mysteryBoxName  String?
+  mysteryBoxGroup String?
 }
 
 // Every live re-check against CJ for an order item, kept as evidence.
@@ -346,4 +351,46 @@ model FreightRequest {
   status           String   @default("new") // new | quoted | won | lost
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+}
+
+/// A mystery box an AI designed from a brief. Each purchase draws items at random from its pool,
+/// always worth at least `guaranteedValueCents` at list price and leaving at least `minProfitCents`.
+model MysteryBox {
+  id                   String               @id @default(cuid())
+  slug                 String               @unique
+  name                 String
+  tagline              String               @default("")
+  description          String               @default("")
+  brief                String               @default("")
+  priceCents           Int
+  itemCount            Int
+  guaranteedValueCents Int
+  minProfitCents       Int
+  status               String               @default("DRAFT") // DRAFT | PUBLISHED
+  buildLog             String               @default("")
+  pool                 MysteryBoxPoolItem[]
+  cartBoxes            CartBox[]
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+}
+
+model MysteryBoxPoolItem {
+  id        String         @id @default(cuid())
+  boxId     String
+  box       MysteryBox     @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([boxId, variantId])
+}
+
+/// One mystery box in a cart. Its contents are drawn when it's added (so shipping can be quoted) and stay hidden.
+model CartBox {
+  id        String     @id @default(cuid())
+  cartId    String
+  cart      Cart       @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  boxId     String
+  box       MysteryBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  picksJson String // [variantId]
+  createdAt DateTime   @default(now())
 }

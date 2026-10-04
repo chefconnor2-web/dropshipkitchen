@@ -911,3 +911,36 @@ p.ai-kit-err { margin: 0; padding: 0 12px 10px; font-size: 13px; }
 .freight-form input, .freight-form textarea { font: inherit; font-size: 16px; padding: 9px 11px; border: 1.5px solid var(--line); border-radius: 6px; background: #fff; }
 .freight-form .btn { justify-self: start; }
 .freight-form p { margin: 0; }
+
+/* admin: mystery box builder */
+.box-builder { display: grid; gap: 10px; }
+.box-builder label { display: grid; gap: 4px; font-size: 13px; color: var(--a-muted); }
+.box-builder textarea, .box-builder input { font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid #DDD9D0; border-radius: 10px; background: #fff; color: inherit; }
+.box-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.box-ideas { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.box-ideas button { flex: none; font: inherit; font-size: 12.5px; padding: 6px 10px; border-radius: 99px; border: 1px solid #DDD9D0; background: #fff; cursor: pointer; }
+.box-log { list-style: none; margin: 0; padding: 10px 12px; background: #F6F5F1; border-radius: 10px; font: 12.5px/1.6 ui-monospace, Menlo, monospace; max-height: 220px; overflow-y: auto; }
+.pool-row { display: grid; grid-template-columns: 56px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid #EFEDE7; } .pool-row .product-thumb img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+.box-ph { display: grid; place-items: center; font: 700 2.4rem/1 var(--display); color: #fff; background: linear-gradient(135deg, var(--signal), #8a2c0b) !important; }
+
+/* mystery boxes */
+.box-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+.box-card { display: flex; flex-direction: column; background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; text-decoration: none; color: inherit; transition: transform 0.15s, box-shadow 0.15s; }
+.box-card:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+.box-art { aspect-ratio: 16 / 10; display: grid; place-items: center; background: radial-gradient(circle at 30% 20%, #ff8a4c, var(--signal) 45%, #7a260a); color: #fff; font: 700 5rem/1 var(--display); text-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+.box-art-lg { aspect-ratio: 1; border-radius: 16px; font-size: 9rem; }
+.box-card-body { padding: 16px 18px 18px; display: grid; gap: 6px; }
+.box-card-body h2 { margin: 0; font-size: 1.6rem; }
+.box-card-body p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+.box-card-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 6px; font-size: 13.5px; color: var(--muted); }
+.box-card-foot strong { font: 600 1.25rem/1 var(--mono); color: var(--ink); }
+.box-pdp { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+.box-teasers { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 10px; }
+.box-teasers img { aspect-ratio: 1; width: 100%; object-fit: cover; border-radius: 8px; filter: blur(5px) saturate(0.8); }
+.box-tagline { font-size: 1.1rem; color: var(--ink-2); margin: -10px 0 14px; }
+.box-promises { margin: 16px 0 20px; padding-left: 20px; display: grid; gap: 6px; line-height: 1.5; }
+.box-desc { margin: 20px 0 10px; line-height: 1.6; }
+@media (max-width: 860px) { .box-pdp { grid-template-columns: 1fr; gap: 20px; } .box-art-lg { aspect-ratio: 16 / 10; font-size: 6rem; } }
+.box-reveal { margin: 18px 0; padding: 18px 20px; border-radius: 14px; background: radial-gradient(circle at 20% 0%, #fff3ec, #fff); border: 1.5px solid var(--signal); }
+.box-reveal h2 { margin: 0 0 10px; font-size: 1.6rem; }
+.box-reveal ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }

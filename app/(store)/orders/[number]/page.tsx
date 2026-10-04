@@ -34,7 +34,7 @@ export default async function CustomerOrderPage({
       cjTrackingNumber: true,
       stripeSessionId: true,
       createdAt: true,
-      items: { select: { id: true, productTitle: true, variantName: true, quantity: true, customerPriceCents: true } },
+      items: { select: { id: true, productTitle: true, variantName: true, quantity: true, customerPriceCents: true, mysteryBoxName: true, mysteryBoxGroup: true, productId: true } },
     },
   });
   // Possession of the Stripe session id acts as the view token for this proof.
@@ -53,9 +53,26 @@ export default async function CustomerOrderPage({
           </a>
         </p>
       )}
+      {[...new Set(order.items.filter((i) => i.mysteryBoxGroup).map((i) => i.mysteryBoxGroup!))].map((g) => {
+        const inBox = order.items.filter((i) => i.mysteryBoxGroup === g);
+        return (
+          <section key={g} className="box-reveal">
+            <p className="eyebrow">Revealed</p>
+            <h2>Your {inBox[0].mysteryBoxName} contains</h2>
+            <ul>
+              {inBox.map((i) => (
+                <li key={i.id}>
+                  <strong>{i.productTitle}</strong>
+                  {i.variantName && !/^default$/i.test(i.variantName) ? <span className="muted"> · {i.variantName}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
       <table className="table">
         <tbody>
-          {order.items.map((i) => (
+          {order.items.filter((i) => !i.mysteryBoxGroup).map((i) => (
             <tr key={i.id}>
               <td>
                 {i.productTitle}
@@ -67,6 +84,14 @@ export default async function CustomerOrderPage({
           ))}
         </tbody>
       </table>
+      {[...new Set(order.items.filter((i) => i.mysteryBoxGroup).map((i) => i.mysteryBoxGroup!))].map((g) => {
+        const inBox = order.items.filter((i) => i.mysteryBoxGroup === g);
+        return (
+          <p key={g} className="right">
+            Mystery box: {inBox[0].mysteryBoxName} {formatMoney(inBox.reduce((n, i) => n + i.customerPriceCents * i.quantity, 0))}
+          </p>
+        );
+      })}
       <p className="right">
         Shipping {order.shippingCents ? formatMoney(order.shippingCents) : "Free"}
         <br />
