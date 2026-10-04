@@ -159,8 +159,21 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
 
 export class AssistantLimitError extends Error {}
 
+function progressNote(c: Anthropic.ToolUseBlock): string {
+  const i = c.input as Record<string, unknown>;
+  if (c.name === "search_catalog") return `Searching “${String(i.query ?? "").slice(0, 60)}”…`;
+  if (c.name === "get_product") return "Checking options and stock…";
+  if (c.name === "add_to_cart") return "Adding to your cart…";
+  return "Checking your cart…";
+}
+
 /** One shopper turn: runs the tool loop to completion and returns what the chat panel should show. */
-export async function chatTurn(chatId: string, cartId: string, userText: string): Promise<UiEntry & { role: "assistant" }> {
+export async function chatTurn(
+  chatId: string,
+  cartId: string,
+  userText: string,
+  onProgress: (note: string) => void = () => {},
+): Promise<UiEntry & { role: "assistant" }> {
   const text = userText.trim().slice(0, MAX_MESSAGE_CHARS);
   const chat = await prisma.assistantChat.findUniqueOrThrow({ where: { id: chatId } });
   if (chat.userTurns >= MAX_USER_TURNS) throw new AssistantLimitError("This chat is full. Start a new one to keep going.");
@@ -196,6 +209,7 @@ export async function chatTurn(chatId: string, cartId: string, userText: string)
       break;
     }
     const calls = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    for (const c of calls) onProgress(progressNote(c));
     const results: Anthropic.ToolResultBlockParam[] = await Promise.all(
       calls.map(async (c) => {
         try {

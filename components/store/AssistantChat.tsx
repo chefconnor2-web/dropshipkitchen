@@ -63,6 +63,7 @@ export default function AssistantChat() {
   const [error, setError] = useState<string | null>(null);
   const [cartCount, setCartCount] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -88,16 +89,42 @@ export default function AssistantChat() {
     setEntries((e) => [...e, { role: "user", text: msg }]);
     try {
       const r = await fetch("/api/assistant", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg }) });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Something went wrong.");
-      setEntries((e) => [...e, d.entry]);
-      setCartCount(d.cartCount ?? 0);
+      if (!r.ok || !r.body) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || "Something went wrong.");
+      }
+      // Read the NDJSON stream: progress notes, then the finished reply.
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let done = false;
+      while (!done) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === "progress") setProgress(ev.note);
+          else if (ev.type === "error") throw new Error(ev.error);
+          else if (ev.type === "done") {
+            setEntries((e) => [...e, ev.entry]);
+            setCartCount(ev.cartCount ?? 0);
+            done = true;
+          }
+        }
+      }
+      if (!done) throw new Error("The connection dropped. Please try again.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setEntries((e) => e.slice(0, -1));
       setInput(msg);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -175,7 +202,7 @@ export default function AssistantChat() {
           <div className="ai-msg ai-bot ai-thinking">
             <span className="dot" />
             <span className="dot" />
-            <span className="dot" /> Sourcing…
+            <span className="dot" /> {progress ?? "Thinking…"}
           </div>
         )}
         <div ref={endRef} />
