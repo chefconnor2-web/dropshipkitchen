@@ -331,3 +331,19 @@ model OrderParcel {
 
   @@unique([orderId, index])
 }
+
+/// A shopper asking for a freight quote on a large order (pallets, sea/air freight arranged with CJ by hand).
+model FreightRequest {
+  id               String   @id @default(cuid())
+  email            String
+  company          String?
+  notes            String   @default("")
+  country          String
+  postalCode       String   @default("")
+  itemsJson        String // [{title, option, quantity, unitCents, pid}]
+  subtotalCents    Int
+  parcelQuoteCents Int? // what parcel shipping would cost, for comparison
+  status           String   @default("new") // new | quoted | won | lost
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}

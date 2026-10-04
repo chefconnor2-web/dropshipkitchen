@@ -7,6 +7,7 @@ import { config, stripeKeyProblem } from "@/lib/config";
 import { cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
+import { createFreightRequest } from "@/lib/freight";
 import { daysLabel, isShipCountry, parcelsLabel, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
@@ -192,7 +193,7 @@ export async function estimateShipping(_prev: ShipEstimateState, form: FormData)
   if (!variant?.offer || !variant.enabled || variant.product.status !== "PUBLISHED") return { ok: false, message: "Choose an option first." };
   try {
     const tiers = await quoteTiers(
-      [{ vid: variant.offer.cjSupplierVariant.cjVariantId, quantity, inventoryJson: variant.offer.cjSupplierVariant.inventoryJson }],
+      [{ vid: variant.offer.cjSupplierVariant.cjVariantId, quantity, inventoryJson: variant.offer.cjSupplierVariant.inventoryJson, weightGrams: variant.offer.cjSupplierVariant.weightGrams }],
       country,
       zip,
     );
@@ -215,4 +216,38 @@ export async function updateShipTo(form: FormData) {
     tier: form.get("tier") === "express" ? "express" : form.get("tier") === "standard" ? "standard" : prev.tier,
   });
   revalidatePath("/cart");
+}
+
+/** Cart: ask for a freight quote on a large order. */
+export async function requestFreightQuote(form: FormData) {
+  const email = String(form.get("email") || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) redirect(`/cart?error=${encodeURIComponent("Enter a valid email for the freight quote.")}`);
+  const cart = await loadCart(await getCartId());
+  const items = cart?.items.filter((i) => i.variant.enabled && i.variant.offer) ?? [];
+  if (!items.length) redirect("/cart");
+  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
+  const shipTo = await getShipTo();
+  let parcelQuoteCents: number | null = null;
+  try {
+    parcelQuoteCents = (await quoteTiers(cartShipItems(cart), shipTo.country, shipTo.zip))[0]?.cents ?? null;
+  } catch {
+    /* comparison only */
+  }
+  await createFreightRequest({
+    email,
+    company: String(form.get("company") || "").trim().slice(0, 120) || undefined,
+    notes: String(form.get("notes") || "").trim().slice(0, 2000),
+    country: shipTo.country,
+    postalCode: shipTo.zip,
+    items: items.map((i, n) => ({
+      title: i.variant.product.title,
+      option: i.variant.name,
+      quantity: i.quantity,
+      unitCents: priced.unitCents[n],
+      pid: i.variant.offer?.supplierProductId ?? null,
+    })),
+    subtotalCents: priced.totalCents,
+    parcelQuoteCents,
+  });
+  redirect("/cart?freight=sent");
 }

@@ -4,12 +4,13 @@ import { SHIP_COUNTRIES, daysLabel, parcelsLabel, quoteTiers, type ShipTier } fr
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
-import { checkout, updateCartItem, updateShipTo } from "../actions";
+import { checkout, requestFreightQuote, updateCartItem, updateShipTo } from "../actions";
+import { suggestFreight } from "@/lib/freight";
 
 export const dynamic = "force-dynamic";
 
-export default async function CartPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error } = await searchParams;
+export default async function CartPage({ searchParams }: { searchParams: Promise<{ error?: string; freight?: string }> }) {
+  const { error, freight } = await searchParams;
   const cart = await loadCart(await getCartId());
   const items = cart?.items ?? [];
   // The whole cart is priced as one transaction: bigger orders pay a lower margin.
@@ -35,11 +36,13 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   }
   const tier = tiers.find((t) => t.key === shipTo.tier) ?? tiers[0];
   const shipping = tier?.cents ?? null;
+  const showFreight = items.length > 0 && suggestFreight(subtotal, shipping, units);
 
   return (
     <div className="wrap page">
       <h1 className="page-title">Your cart</h1>
       {error && <p className="notice err">{error}</p>}
+      {freight === "sent" && <p className="notice ok">Freight quote requested. We’ll email you within one business day.</p>}
       {items.length === 0 ? (
         <div className="empty-cart">
           <p>Your cart is empty.</p>
@@ -165,6 +168,21 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                 Checkout
               </button>
             </form>
+            {showFreight && freight !== "sent" && (
+              <details className="freight-box" open={!tier}>
+                <summary>
+                  <strong>Large order? Get a freight quote</strong>
+                  <span className="muted small"> · often cheaper than parcels for pallets and heavy goods</span>
+                </summary>
+                <form action={requestFreightQuote} className="freight-form">
+                  <input name="email" type="email" required placeholder="Your email" autoComplete="email" />
+                  <input name="company" placeholder="Company (optional)" autoComplete="organization" />
+                  <textarea name="notes" rows={2} placeholder="Delivery details, deadline, loading dock… (optional)" />
+                  <button className="btn">Request freight quote</button>
+                  <p className="muted small">We arrange sea or air freight with our supplier and email you a price. Your cart stays as it is.</p>
+                </form>
+              </details>
+            )}
             <p className="muted small summary-note">
               Availability and shipping are re-confirmed with our supplier before payment. You’ll enter your full address at checkout.
             </p>

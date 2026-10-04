@@ -127,7 +127,10 @@ export async function quoteShipping(orderId: string): Promise<CjFreightOption[]>
     .sort((a, b) => a.logisticPrice - b.logisticPrice);
   if (!options.length) {
     // Too heavy for one parcel: plan a split shipment, keeping the customer's methods where CJ still offers them.
-    const items = order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity }));
+    const weights = new Map(
+      (await prisma.cjSupplierVariant.findMany({ where: { cjVariantId: { in: order.items.map((i) => i.supplierVariantId) } }, select: { cjVariantId: true, weightGrams: true } })).map((v) => [v.cjVariantId, v.weightGrams]),
+    );
+    const items = order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity, weightGrams: weights.get(i.supplierVariantId) }));
     const planned = await planParcels(items, fromCountry, country, ship?.address?.postal_code ?? undefined);
     if (!planned) throw new Error(`CJ has no shipping method from ${fromCountry} to ${country} for these items, even split into parcels.`);
     const paid = JSON.parse(order.parcelPlanJson || "[]") as ParcelPlanEntry[];
