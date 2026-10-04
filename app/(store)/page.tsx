@@ -48,22 +48,6 @@ export default async function Home() {
         </div>
       </section>
 
-      <section className="band">
-        <div className="wrap">
-          <p className="eyebrow">How it works</p>
-          <h2 className="section-title">From idea to cart in one conversation.</h2>
-          <div className="steps">
-            {STEPS.map((s) => (
-              <div key={s.n} className="how-step">
-                <span className="how-step-n">{s.n}</span>
-                <h3>{s.h}</h3>
-                <p>{s.p}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {boxes.length > 0 && (
         <section className="band">
           <div className="wrap">
@@ -95,6 +79,22 @@ export default async function Home() {
           </div>
         </section>
       )}
+
+      <section className="band">
+        <div className="wrap">
+          <p className="eyebrow">How it works</p>
+          <h2 className="section-title">From idea to cart in one conversation.</h2>
+          <div className="steps">
+            {STEPS.map((s) => (
+              <div key={s.n} className="how-step">
+                <span className="how-step-n">{s.n}</span>
+                <h3>{s.h}</h3>
+                <p>{s.p}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       <section className="band band-tight">
         <div className="wrap promise-row">
