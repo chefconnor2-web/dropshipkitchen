@@ -21,7 +21,27 @@ interface LiveGroup {
   cards: Card[];
   done: boolean;
 }
-type Entry = { role: "user"; text: string } | { role: "assistant"; text: string; cards: Card[]; added: string[] };
+interface KitItem {
+  part: string;
+  pid: string;
+  title: string;
+  fromCents: number;
+  quantity: number;
+  option?: string;
+}
+interface Kit {
+  id: string;
+  name: string;
+  items: KitItem[];
+}
+type Entry = { role: "user"; text: string } | { role: "assistant"; text: string; cards: Card[]; added: string[]; kit?: Kit };
+interface KitState {
+  busy: boolean;
+  done: number;
+  total: number;
+  results?: Array<{ part: string; title: string; ok: boolean; message: string }>;
+  error?: string;
+}
 
 const EXAMPLES = [
   "I need a battery setup for a custom 48V e-bike, plus the tools to do it myself",
@@ -87,6 +107,7 @@ export default function AssistantChat() {
   const [live, setLive] = useState<LiveGroup[]>([]);
   const [adding, setAdding] = useState<Record<string, boolean>>({});
   const [addedPids, setAddedPids] = useState<Record<string, boolean>>({});
+  const [kitState, setKitState] = useState<Record<string, KitState>>({});
   const [picking, setPicking] = useState<Record<string, { options: Option[]; productUrl: string; selected?: string }>>({});
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -208,6 +229,39 @@ export default function AssistantChat() {
     }
   }
 
+  async function addKit(kit: Kit) {
+    setKitState((k) => ({ ...k, [kit.id]: { busy: true, done: 0, total: kit.items.length } }));
+    try {
+      const r = await fetch("/api/assistant/kit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kitId: kit.id }) });
+      if (!r.ok || !r.body) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || "Couldn’t add the kit.");
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === "item") setKitState((k) => ({ ...k, [kit.id]: { ...k[kit.id], done: ev.done, total: ev.total } }));
+          else if (ev.type === "done") {
+            setKitState((k) => ({ ...k, [kit.id]: { busy: false, done: ev.results.length, total: ev.results.length, results: ev.results } }));
+            setCartCount(ev.cartCount ?? 0);
+          } else if (ev.type === "error") throw new Error(ev.error);
+        }
+      }
+    } catch (e) {
+      setKitState((k) => ({ ...k, [kit.id]: { busy: false, done: 0, total: kit.items.length, error: e instanceof Error ? e.message : "Couldn’t add the kit." } }));
+    }
+  }
+
   async function reset() {
     await fetch("/api/assistant", { method: "DELETE" });
     setEntries([]);
@@ -243,6 +297,49 @@ export default function AssistantChat() {
                     <div key={a}>✓ Added {a}</div>
                   ))}
                   <Link href="/cart">Review cart →</Link>
+                </div>
+              )}
+              {e.kit && (
+                <div className="ai-kit">
+                  <div className="ai-kit-head">
+                    <span className="ai-kit-badge">Kit</span>
+                    <strong>{e.kit.name}</strong>
+                  </div>
+                  <ul className="ai-kit-list">
+                    {e.kit.items.map((it) => {
+                      const r = kitState[e.kit!.id]?.results?.find((x) => x.part === it.part && x.title === it.title);
+                      return (
+                        <li key={it.part + it.pid} className={r ? (r.ok ? "ok" : "fail") : ""}>
+                          <span className="ai-kit-part">{it.part}</span>
+                          <span className="ai-kit-title">
+                            {it.title}
+                            {it.option ? <span className="muted"> · {it.option}</span> : null}
+                            {r && !r.ok ? <span className="ai-kit-err"> · {r.message}</span> : null}
+                          </span>
+                          <span className="ai-kit-qty">
+                            {r ? (r.ok ? "✓ " : "✗ ") : ""}
+                            {it.quantity} × {money(it.fromCents)}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="ai-kit-foot">
+                    <span>
+                      From <strong>{money(e.kit.items.reduce((n, i) => n + i.fromCents * i.quantity, 0))}</strong>
+                      <span className="muted"> + shipping</span>
+                    </span>
+                    {kitState[e.kit.id]?.results ? (
+                      <Link href="/cart" className="btn primary">
+                        {kitState[e.kit.id].results!.every((x) => x.ok) ? "✓ Added · View cart" : "View cart"}
+                      </Link>
+                    ) : (
+                      <button type="button" className="btn primary" disabled={kitState[e.kit.id]?.busy} onClick={() => addKit(e.kit!)}>
+                        {kitState[e.kit.id]?.busy ? `Adding ${kitState[e.kit.id].done}/${kitState[e.kit.id].total}…` : "Add entire kit to cart"}
+                      </button>
+                    )}
+                  </div>
+                  {kitState[e.kit.id]?.error && <p className="ai-kit-err">{kitState[e.kit.id].error}</p>}
                 </div>
               )}
               {groupCards(e.cards).map(([group, cards]) => (

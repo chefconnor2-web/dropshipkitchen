@@ -13,6 +13,7 @@ import { openCjProduct } from "@/lib/open-product";
 import { addVariantToCart } from "@/lib/cart-add";
 import { loadCart } from "@/lib/cart";
 import { stockLabel, stockStatus } from "@/lib/inventory";
+import { addKitToCart, type Kit, type KitItem } from "@/lib/kit";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -39,7 +40,7 @@ export interface ProductCard {
 }
 export type UiEntry =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[] };
+  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit };
 
 /** Live events for the chat panel while a turn runs. */
 export type AssistantEvent = { type: "progress"; note: string } | { type: "found"; group: string; cards: ProductCard[]; done: boolean };
@@ -58,6 +59,8 @@ How to work:
 - Before adding an accessory, check the main product's description for what's included (charger, BMS, connectors, mounts) and don't add duplicates; tell the shopper what's already in the box.
 - For lithium batteries, high voltage or mains wiring, add one short safety note. Don't help with anything illegal or dangerous.
 - Prices are USD per unit and already include our margin. Shipping is quoted for the shopper's postal code in the cart. For bulk quantities, add the quantity they need; stock is re-checked live.
+- After you present picks for a project, call propose_kit once with your recommended pick for each part you found (sensible quantities; an option in words when it matters, e.g. "20Ah"). The shopper sees it as a kit card with an "Add entire kit" button.
+- When the shopper asks to add the whole kit, everything, or all of it, call add_kit in the same turn with the kit's items (adjusted for anything they changed). Don't ask again; afterwards, list what was added and anything that failed.
 - Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
 }
 
@@ -111,6 +114,57 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
         quantity: { type: "integer", description: "Units to add, 1-999" },
       },
       required: ["variant_id", "quantity"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "propose_kit",
+    description: "Show the shopper a kit card: one recommended product per part, with quantities and an 'Add entire kit' button. Use pids from find_products only.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short kit name, e.g. '48V e-bike battery kit'" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              part: { type: "string", description: "Part label, e.g. 'Battery'" },
+              pid: { type: "string", description: "pid from find_products" },
+              quantity: { type: "integer", description: "Units, 1-999" },
+              option: { type: "string", description: "Preferred option in words, or empty" },
+            },
+            required: ["part", "pid", "quantity", "option"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["name", "items"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add_kit",
+    description: "Add several products to the cart in one go (the whole kit). Each item's best-matching option is picked from its option hint; stock is checked live. Returns what was added and what failed.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              part: { type: "string", description: "Part label, e.g. 'Battery'" },
+              pid: { type: "string", description: "pid from find_products" },
+              quantity: { type: "integer", description: "Units, 1-999" },
+              option: { type: "string", description: "Preferred option in words, or empty" },
+            },
+            required: ["part", "pid", "quantity", "option"],
+            additionalProperties: false,
+          },
+        } },
+      required: ["items"],
       additionalProperties: false,
     },
   },
@@ -265,6 +319,9 @@ async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEv
 interface Ctx {
   cartId: string;
   cards: ProductCard[];
+  /** Every product this chat has shown, so kits can only contain real search results. */
+  known: Map<string, ProductCard>;
+  kit?: Kit;
   added: string[];
   emit: (e: AssistantEvent) => void;
   client: Anthropic;
@@ -287,6 +344,7 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
       for (const p of r.picks)
         if (!ctx.cards.some((c) => c.pid === p.pid))
           ctx.cards.push({ pid: p.pid, title: p.title, fromCents: Math.round(Number(p.from_price_usd) * 100), group: r.part });
+    for (const c of ctx.cards) ctx.known.set(c.pid, c);
     return { content: JSON.stringify(results) };
   }
   if (name === "get_product") {
@@ -321,6 +379,30 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
     if (r.ok) ctx.added.push(r.message.replace(/^Added /, "").replace(/ to your cart\.$/, ""));
     return { content: r.message, isError: !r.ok };
   }
+  if (name === "propose_kit" || name === "add_kit") {
+    const items: KitItem[] = (Array.isArray(input.items) ? input.items : [])
+      .slice(0, 20)
+      .map((x) => x as Record<string, unknown>)
+      .map((x): KitItem | null => {
+        const card = ctx.known.get(String(x.pid ?? ""));
+        return card
+          ? { part: String(x.part ?? card.group ?? "Item").slice(0, 40), pid: card.pid, title: card.title, fromCents: card.fromCents, quantity: Math.max(1, Math.min(999, Number(x.quantity) || 1)), option: String(x.option ?? "").slice(0, 80) || undefined }
+          : null;
+      })
+      .filter((x): x is KitItem => !!x);
+    if (!items.length) return { content: "None of those pids came from find_products in this chat.", isError: true };
+    if (name === "propose_kit") {
+      ctx.kit = { id: `kit_${Date.now().toString(36)}`, name: String(input.name ?? "Your kit").slice(0, 60), items };
+      const total = items.reduce((n, i) => n + i.fromCents * i.quantity, 0);
+      return { content: `Kit card shown with ${items.length} items, from about ${formatMoney(total)} before options and shipping. The shopper can add it all with one tap, or ask you to.` };
+    }
+    ctx.emit({ type: "progress", note: `Adding ${items.length} items to your cart…` });
+    const results = await addKitToCart(ctx.cartId, items, (done, total, r) =>
+      ctx.emit({ type: "progress", note: `${r.ok ? "✓" : "✗"} ${r.part} (${done}/${total})` }),
+    );
+    for (const r of results) if (r.ok) ctx.added.push(`${r.message} · ${r.title}`);
+    return { content: JSON.stringify(results) };
+  }
   if (name === "view_cart") {
     const cart = await loadCart(ctx.cartId);
     const items = cart?.items ?? [];
@@ -354,7 +436,9 @@ export async function chatTurn(
   messages.push({ role: "user", content: text });
   const client = new Anthropic();
   const usage = { in: 0, out: 0 };
-  const ctx: Ctx = { cartId, cards: [], added: [], emit, client, usage };
+  const known = new Map<string, ProductCard>();
+  for (const e of JSON.parse(chat.uiJson) as UiEntry[]) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage };
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
 
@@ -399,7 +483,7 @@ export async function chatTurn(
     if (round === MAX_TOOL_ROUNDS - 1) reply ||= "I found a lot to go through. Tell me which part to look at next.";
   }
 
-  const entry: UiEntry & { role: "assistant" } = { role: "assistant", text: reply || "Done.", cards: ctx.cards.slice(0, 30), added: ctx.added };
+  const entry: UiEntry & { role: "assistant" } = { role: "assistant", text: reply || "Done.", cards: ctx.cards.slice(0, 30), added: ctx.added, ...(ctx.kit ? { kit: ctx.kit } : {}) };
   const ui = JSON.parse(chat.uiJson) as UiEntry[];
   ui.push({ role: "user", text }, entry);
   await prisma.assistantChat.update({
