@@ -878,3 +878,10 @@ a.battery-tile:hover { border-color: var(--ink); color: var(--ink); }
 .ai-group-label { font: 500 11px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--field); margin-bottom: 6px; }
 .ai-group .ai-cards { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .ai-live, .ai-live-card { animation: none; } }
+.ai-card-foot button:disabled { opacity: 0.7; cursor: progress; }
+.ai-card-foot button.is-added { background: var(--ok); }
+.ai-pick { display: grid; gap: 5px; padding: 6px 8px 8px; margin-top: auto; }
+.ai-pick select { width: 100%; font-size: 16px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.ai-pick button { font: 600 12.5px/1 var(--text); padding: 7px 10px; border-radius: 6px; border: 0; background: var(--signal); color: #fff; cursor: pointer; }
+.ai-pick button:disabled { opacity: 0.6; }
+.ai-cards { grid-auto-columns: 160px; }
