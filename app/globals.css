@@ -782,3 +782,24 @@ a.battery-tile:hover { border-color: var(--ink); color: var(--ink); }
 @media (max-width: 600px) { .email-test { flex-direction: column; } }
 .email-home { display: block; text-decoration: none; color: inherit; } .email-home p { margin: 0; }
 .mini-list li .mini-row a { display: inline; padding: 0; border: 0; color: inherit; text-decoration: underline; }
+
+/* China No. 1 rebrand */
+.cn-hero { padding: 80px 0 56px; }
+.cn-hero-inner { display: grid; gap: 4px; }
+.cn-hero h1 { margin-bottom: 8px; }
+.cn-hero .hero-lede { font-size: clamp(1.15rem, 2.2vw, 1.5rem); color: var(--on-dark); margin-bottom: 26px; }
+.cn-strip { justify-content: flex-start; margin-top: 30px; }
+.aisle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.aisle { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 22px; background: #fff; border: 1.5px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); transition: border-color 0.15s, transform 0.15s; }
+.aisle:hover { border-color: var(--ink); transform: translateY(-1px); }
+.aisle-name { font: 700 1.6rem/1 var(--display); text-transform: uppercase; letter-spacing: 0.02em; }
+.aisle-note { grid-column: 1; font-size: 14px; color: var(--muted); }
+.aisle-go { grid-column: 2; grid-row: 1 / span 2; font: 600 1.4rem/1 var(--mono); color: var(--signal-ink); }
+.feature-row .section-lede { margin-top: -10px; }
+@media (max-width: 960px) { .aisle-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) {
+  .cn-hero { padding: 48px 0 40px; }
+  .aisle-grid { grid-template-columns: 1fr; gap: 10px; }
+  .aisle { padding: 16px 18px; }
+  .aisle-name { font-size: 1.35rem; }
+}

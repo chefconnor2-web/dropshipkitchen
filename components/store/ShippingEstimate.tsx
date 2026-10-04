@@ -4,8 +4,8 @@ import { useActionState } from "react";
 import { estimateShipping, type ShipEstimateState } from "@/app/(store)/actions";
 
 const COUNTRIES = [
-  ["US", "United States"],
   ["CA", "Canada"],
+  ["US", "United States"],
   ["GB", "United Kingdom"],
   ["AU", "Australia"],
   ["NZ", "New Zealand"],

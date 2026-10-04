@@ -59,12 +59,12 @@ export interface ShipTo {
 }
 
 export async function getShipTo(): Promise<ShipTo> {
-  const fallback: ShipTo = { country: "US", zip: "", tier: "standard" };
+  const fallback: ShipTo = { country: "CA", zip: "", tier: "standard" };
   try {
     const v = JSON.parse((await cookies()).get(SHIP_COOKIE)?.value ?? "null") as Partial<ShipTo> | null;
     if (!v) return fallback;
     return {
-      country: typeof v.country === "string" && /^[A-Z]{2}$/.test(v.country) ? v.country : "US",
+      country: typeof v.country === "string" && /^[A-Z]{2}$/.test(v.country) ? v.country : "CA",
       zip: typeof v.zip === "string" ? v.zip.slice(0, 12) : "",
       tier: v.tier === "express" ? "express" : "standard",
     };

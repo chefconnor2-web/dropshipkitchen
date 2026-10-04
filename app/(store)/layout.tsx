@@ -14,7 +14,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
   const [count, categories] = await Promise.all([cartCount(), publishedCategories()]);
   return (
     <div className="store">
-      <div className="announce">Stock confirmed with our supplier before every order · Secure checkout</div>
+      <div className="announce">Shipping across Canada · Price and shipping shown before you pay</div>
       <header className="store-header">
         <div className="wrap header-row">
           <Link href="/" className="brand" aria-label={`${config.storeName} home`}>
@@ -24,13 +24,10 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <span className="brand-name">{config.storeName}</span>
           </Link>
           <nav className="header-nav" aria-label="Main">
-            <Link href="/link">Link line</Link>
+            <Link href="/link">Adapters</Link>
             <Link href="/shop">
-              <span className="hide-xs">Off-grid gear</span>
+              <span className="hide-xs">Shop all</span>
               <span className="show-xs">Shop</span>
-            </Link>
-            <Link href="/runtime" className="hide-sm">
-              Runtime
             </Link>
           </nav>
           <Link href="/search" className="search-link" aria-label="Search all products">
@@ -60,16 +57,16 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               </span>
               <span className="brand-name">{config.storeName}</span>
             </div>
-            <p className="footer-blurb">Off-grid power for portable Starlink, and the field gear around it.</p>
+            <p className="footer-blurb">Canada’s trusted source for Chinese tools &amp; gadgets.</p>
           </div>
           <div>
             <div className="footer-h">Shop</div>
             <ul className="footer-links">
               <li>
-                <Link href="/link">Link line</Link>
+                <Link href="/link">Battery adapters</Link>
               </li>
               <li>
-                <Link href="/shop">All off-grid gear</Link>
+                <Link href="/shop">All tools</Link>
               </li>
               {categories.map((c) => (
                 <li key={c.name}>
