@@ -3,7 +3,6 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   ClipIcon,
@@ -55,7 +54,6 @@ export interface ChatEvents {
 }
 
 export default function Chat({ chatId, configured, cartCount, events }: { chatId: string | null; configured: boolean; cartCount: number; events: ChatEvents }) {
-  const router = useRouter();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(chatId !== null);
   const [input, setInput] = useState("");
@@ -89,6 +87,13 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const dragDepth = useRef(0);
   const ev = useRef(events);
+  const cartRef = useRef(cartCount);
+  cartRef.current = cartCount;
+  const pendingAdds = useRef(0);
+  const setCart = (n: number) => {
+    cartRef.current = n;
+    ev.current.onCart(n);
+  };
   ev.current = events;
 
   const busy = turn !== null;
@@ -258,7 +263,6 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
           if (!me.detached) setEntries((en) => [...en, { ...e.entry, steps: t.steps, groups: t.groups }]);
           else if (id) cache.current.delete(id);
           ev.current.onCart(e.cartCount ?? 0);
-          if (e.entry?.added?.length) router.refresh();
         }
       });
       if (id) ev.current.onTouched(id);
@@ -350,8 +354,27 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
     speak(text).then(() => setSpeakingIdx((s) => (s === i ? null : s)));
   }
 
+  // Optimistic: the button, badge and toast update on tap; the server's answer confirms or rolls back.
   async function quickAdd(card: Card, variantId?: string) {
+    if (adding[card.pid]) return;
+    const pick = picking[card.pid];
     setAdding((a) => ({ ...a, [card.pid]: true }));
+    setAddedPids((a) => ({ ...a, [card.pid]: true }));
+    setPicking((p) => {
+      const n = { ...p };
+      delete n[card.pid];
+      return n;
+    });
+    pendingAdds.current++;
+    setCart(cartRef.current + 1);
+    flash("Added to cart", true);
+    const undo = (message: string) => {
+      setAddedPids((a) => ({ ...a, [card.pid]: false }));
+      if (pick) setPicking((p) => ({ ...p, [card.pid]: pick }));
+      flash(message);
+    };
+    let serverCount: number | undefined;
+    let ok = false;
     try {
       const r = await fetch("/api/assistant/add", {
         method: "POST",
@@ -359,24 +382,20 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         body: JSON.stringify(variantId ? { variantId } : { pid: card.pid }),
       });
       const d = await r.json().catch(() => ({}));
+      if (typeof d.cartCount === "number") serverCount = d.cartCount;
       if (d.choose) {
+        setAddedPids((a) => ({ ...a, [card.pid]: false }));
         setPicking((p) => ({ ...p, [card.pid]: { options: d.options, selected: d.options.find((o: Option) => o.available)?.id ?? d.options[0]?.id } }));
-        return;
-      }
-      if (typeof d.cartCount === "number") ev.current.onCart(d.cartCount);
-      if (d.ok) {
-        setAddedPids((a) => ({ ...a, [card.pid]: true }));
-        setPicking((p) => {
-          const n = { ...p };
-          delete n[card.pid];
-          return n;
-        });
-        router.refresh();
-      }
-      flash(d.message ?? (d.ok ? "Added to cart" : "Couldn’t add that"), !!d.ok);
+        flash("Pick an option, then tap Add");
+      } else if (d.ok) ok = true;
+      else undo(d.message ?? "Couldn’t add that");
     } catch {
-      flash("Couldn’t add that. Please try again.");
+      undo("Couldn’t add that. Please try again.");
     } finally {
+      pendingAdds.current--;
+      // The server's count plus any other taps still on their way; a failure without a count takes ours back.
+      if (serverCount !== undefined) setCart(serverCount + pendingAdds.current);
+      else if (!ok) setCart(Math.max(0, cartRef.current - 1));
       setAdding((a) => ({ ...a, [card.pid]: false }));
     }
   }
@@ -396,7 +415,6 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
           ev.current.onCart(e.cartCount ?? 0);
           const ok = e.results.filter((x: { ok: boolean }) => x.ok).length;
           flash(`Added ${ok} of ${e.results.length} items`, ok > 0);
-          router.refresh();
         } else if (e.type === "error") throw new Error(e.error);
       });
     } catch (e) {

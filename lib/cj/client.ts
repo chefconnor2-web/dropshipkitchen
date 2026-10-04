@@ -25,6 +25,7 @@
 
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
+import { makeThrottle } from "./lanes";
 import type {
   CjEnvelope,
   CjListV2Data,
@@ -48,23 +49,8 @@ export class CjApiError extends Error {
 
 const TOKEN_KEY = "cj.token";
 
-// ---- throttle: CJ rate-limits per account, so serialise calls in-process ----
-let queue: Promise<unknown> = Promise.resolve();
-let lastCallAt = 0;
-
-function throttled<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(async () => {
-    const wait = lastCallAt + config.cj.minIntervalMs - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    try {
-      return await fn();
-    } finally {
-      lastCallAt = Date.now();
-    }
-  });
-  queue = run.catch(() => undefined);
-  return run;
-}
+// ---- throttle: CJ rate-limits per account, so serialise calls in-process (urgent calls first) ----
+const throttled = makeThrottle(() => config.cj.minIntervalMs);
 
 async function rawCall<T>(
   method: "GET" | "POST" | "PATCH",

@@ -7,30 +7,38 @@ import { cjConfigured } from "@/lib/config";
 import { importCjProduct } from "@/lib/cj/import";
 import { applyPricingRule } from "@/lib/pricing";
 import { blockedListing } from "@/lib/catalog-search";
+import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
 
 export const PID_RE = /^[A-Za-z0-9-]{6,64}$/;
 
 // One import per PID at a time: a background warm-up and a shopper's tap on Add share the same work.
-const inflight = new Map<string, Promise<Awaited<ReturnType<typeof open>>>>();
+// A more urgent caller joining a running import raises its CJ priority, so a tap on a product the
+// warm-up is still importing doesn't wait behind the rest of the warm-up.
+const inflight = new Map<string, { lane: CjLane; promise: Promise<Awaited<ReturnType<typeof open>>> }>();
 
 /** Returns the published product, or null when it can't be sold (blocked, hidden, no variants, CJ error). */
 export function openCjProduct(pid: string) {
+  const caller = currentCjLane();
   const running = inflight.get(pid);
-  if (running) return running;
-  const p = open(pid).finally(() => inflight.delete(pid));
-  inflight.set(pid, p);
-  return p;
+  if (running) {
+    running.lane.priority = Math.max(running.lane.priority, caller.priority);
+    return running.promise;
+  }
+  const lane: CjLane = { priority: caller.priority };
+  const promise = withCjPriority(lane, () => open(pid)).finally(() => inflight.delete(pid));
+  inflight.set(pid, { lane, promise });
+  return promise;
 }
 
 /** Import products in the background (one at a time, CJ is rate-limited) so Add is instant later. */
 export function prewarmProducts(pids: string[]) {
   const unique = [...new Set(pids)].filter((p) => PID_RE.test(p)).slice(0, 12);
-  void (async () => {
+  void withCjPriority("background", async () => {
     for (const pid of unique) {
       const known = await prisma.product.findFirst({ where: { supplierProduct: { cjProductId: pid } }, select: { id: true } }).catch(() => null);
       if (!known) await openCjProduct(pid).catch(() => null);
     }
-  })();
+  });
 }
 
 async function open(pid: string) {
