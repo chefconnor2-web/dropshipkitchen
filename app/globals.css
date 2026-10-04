@@ -949,3 +949,17 @@ p.ai-kit-err { margin: 0; padding: 0 12px 10px; font-size: 13px; }
 .box-badge { position: absolute; left: 12px; bottom: 12px; font: 600 12.5px/1 var(--mono); font-style: normal; letter-spacing: 0.04em; text-shadow: none; background: #fff; color: var(--ok); padding: 7px 9px; border-radius: 6px; }
 .box-value { display: block; font: 600 14px/1.4 var(--mono); color: var(--ok); margin-top: 4px; }
 .box-card-body h3 { margin: 0; font-size: 1.6rem; }
+
+/* homepage = full-screen chat */
+.chat-home { background: var(--graphite); color: var(--on-dark); padding: 20px 0 24px; }
+.chat-home-inner { max-width: 860px; display: flex; flex-direction: column; gap: 14px; min-height: calc(100dvh - 140px); }
+.chat-home-head h1 { font: 700 clamp(1.8rem, 4.5vw, 2.8rem)/1 var(--display); text-transform: uppercase; margin: 6px 0 6px; }
+.chat-home-head p { margin: 0; color: var(--on-dark-2); font-size: 15px; line-height: 1.5; }
+.chat-home-head a { color: var(--on-dark); }
+.chat-home .ai { flex: 1; height: auto; min-height: 420px; max-height: none; }
+@media (max-width: 600px) {
+  .chat-home { padding: 12px 0 16px; }
+  .chat-home-inner { min-height: calc(100dvh - 120px); gap: 10px; }
+  .chat-home-head p { font-size: 13.5px; }
+  .chat-home .ai { min-height: 0; }
+}
