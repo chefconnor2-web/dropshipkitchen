@@ -5,6 +5,7 @@ import Link from "next/link";
 import { addToCart, type CartActionState } from "../../actions";
 import type { PublicVariant } from "@/lib/storefront";
 import ShippingEstimate from "@/components/store/ShippingEstimate";
+import { bulkPricingLabel } from "@/lib/volume";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -64,6 +65,7 @@ export default function VariantPicker({
     <>
     <form action={action} className="picker">
       <div className="price">{match ? money(match.priceCents) : "—"}</div>
+      <div className="vol-tiers small">{bulkPricingLabel()}</div>
       {match && optionNames.length === 0 && variants.length > 1 && <div className="muted small">{match.name}</div>}
       {optionNames
         .filter((name) => values[name].length > 1)

@@ -10,8 +10,30 @@ import { blockedListing } from "@/lib/catalog-search";
 
 export const PID_RE = /^[A-Za-z0-9-]{6,64}$/;
 
+// One import per PID at a time: a background warm-up and a shopper's tap on Add share the same work.
+const inflight = new Map<string, Promise<Awaited<ReturnType<typeof open>>>>();
+
 /** Returns the published product, or null when it can't be sold (blocked, hidden, no variants, CJ error). */
-export async function openCjProduct(pid: string) {
+export function openCjProduct(pid: string) {
+  const running = inflight.get(pid);
+  if (running) return running;
+  const p = open(pid).finally(() => inflight.delete(pid));
+  inflight.set(pid, p);
+  return p;
+}
+
+/** Import products in the background (one at a time, CJ is rate-limited) so Add is instant later. */
+export function prewarmProducts(pids: string[]) {
+  const unique = [...new Set(pids)].filter((p) => PID_RE.test(p)).slice(0, 12);
+  void (async () => {
+    for (const pid of unique) {
+      const known = await prisma.product.findFirst({ where: { supplierProduct: { cjProductId: pid } }, select: { id: true } }).catch(() => null);
+      if (!known) await openCjProduct(pid).catch(() => null);
+    }
+  })();
+}
+
+async function open(pid: string) {
   if (!PID_RE.test(pid) || !cjConfigured()) return null;
   const known = await prisma.product.findFirst({ where: { supplierProduct: { cjProductId: pid } } });
   if (known) return known.status === "PUBLISHED" ? known : null;
