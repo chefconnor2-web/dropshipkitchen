@@ -257,3 +257,12 @@ export async function resendOrderEmailAction(form: FormData) {
       : `error=${encodeURIComponent(log.error || "Email not sent.")}`;
   redirect(`/admin/orders/${id}?${q}`);
 }
+
+export async function setFreightStatusAction(form: FormData) {
+  const id = String(form.get("id") || "");
+  const status = String(form.get("status") || "");
+  if (!["new", "quoted", "won", "lost"].includes(status)) redirect("/admin/freight");
+  await prisma.freightRequest.update({ where: { id }, data: { status } });
+  revalidatePath("/admin/freight");
+  redirect("/admin/freight?notice=" + encodeURIComponent(`Marked ${status}`));
+}

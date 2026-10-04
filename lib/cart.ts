@@ -88,5 +88,6 @@ export function cartShipItems(cart: LoadedCart | null) {
       vid: i.variant.offer!.cjSupplierVariant.cjVariantId,
       quantity: i.quantity,
       inventoryJson: i.variant.offer!.cjSupplierVariant.inventoryJson,
+      weightGrams: i.variant.offer!.cjSupplierVariant.weightGrams,
     }));
 }

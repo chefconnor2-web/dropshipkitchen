@@ -22,6 +22,7 @@ export interface ShipItem {
   vid: string;
   quantity: number;
   inventoryJson: string | null;
+  weightGrams?: number | null;
 }
 
 /** One customer-facing option. `method` is CJ's logistic name, kept server-side for placing the order. */
@@ -84,7 +85,7 @@ export async function quoteTiers(items: ShipItem[], country: string, zip?: strin
   // Too heavy or big for one parcel: split it into several CJ parcels and quote each one.
   const units = items.reduce((n, i) => n + i.quantity, 0);
   if (!options.length && units > 1) {
-    const planned = await planParcels(items.map((i) => ({ vid: i.vid, quantity: i.quantity })), fromCountry, country, zip);
+    const planned = await planParcels(items.map((i) => ({ vid: i.vid, quantity: i.quantity, weightGrams: i.weightGrams })), fromCountry, country, zip);
     if (planned) {
       for (const [key, fast] of [["standard", false], ["express", true]] as const) {
         const plan = choosePlan(planned, fast);
