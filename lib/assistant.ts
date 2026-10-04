@@ -17,9 +17,9 @@ import { addKitToCart, type Kit, type KitItem } from "@/lib/kit";
 import { bulkPricingLabel, priceOrder } from "@/lib/volume";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
-const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
+export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
 const SCOUT_MODEL = process.env.ASSISTANT_SCOUT_MODEL?.trim() || "claude-haiku-4-5";
-const EFFORT = (process.env.ASSISTANT_EFFORT?.trim() || "medium") as "low" | "medium" | "high";
+export const EFFORT = (process.env.ASSISTANT_EFFORT?.trim() || "medium") as "low" | "medium" | "high";
 const MAX_TOOL_ROUNDS = 8;
 const MAX_SCOUT_ROUNDS = 3;
 // CJ answers one search at a time (~1 req/s), so every extra search is felt by the shopper.
@@ -215,12 +215,12 @@ const SCOUT_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-interface Part {
+export interface Part {
   name: string;
   need: string;
   queries: string[];
 }
-interface ScoutResult {
+export interface ScoutResult {
   part: string;
   picks: Array<{ pid: string; title: string; from_price_usd: string; note: string }>;
 }
@@ -296,7 +296,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
 }
 
 /** Run up to SCOUT_CONCURRENCY scouts at a time. */
-async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number }) {
+export async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number }) {
   const results: ScoutResult[] = new Array(parts.length);
   let next = 0;
   await Promise.all(

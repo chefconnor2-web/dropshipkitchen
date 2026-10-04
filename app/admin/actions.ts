@@ -266,3 +266,22 @@ export async function setFreightStatusAction(form: FormData) {
   revalidatePath("/admin/freight");
   redirect("/admin/freight?notice=" + encodeURIComponent(`Marked ${status}`));
 }
+
+export async function setBoxStatusAction(form: FormData) {
+  const id = String(form.get("id") || "");
+  const status = form.get("status") === "PUBLISHED" ? "PUBLISHED" : "DRAFT";
+  await prisma.mysteryBox.update({ where: { id }, data: { status } });
+  revalidatePath("/admin/boxes");
+  redirect(`/admin/boxes/${id}?notice=${encodeURIComponent(status === "PUBLISHED" ? "Box is live in the store" : "Box unpublished")}`);
+}
+
+export async function removePoolItemAction(form: FormData) {
+  const boxId = String(form.get("boxId") || "");
+  await prisma.mysteryBoxPoolItem.deleteMany({ where: { id: String(form.get("id") || ""), boxId } });
+  redirect(`/admin/boxes/${boxId}?notice=${encodeURIComponent("Removed from the pool")}`);
+}
+
+export async function deleteBoxAction(form: FormData) {
+  await prisma.mysteryBox.delete({ where: { id: String(form.get("id") || "") } });
+  redirect(`/admin/boxes?notice=${encodeURIComponent("Box deleted")}`);
+}

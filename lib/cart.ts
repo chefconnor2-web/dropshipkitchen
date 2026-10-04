@@ -27,6 +27,7 @@ export async function loadCart(cartId: string | null) {
   return prisma.cart.findUnique({
     where: { id: cartId },
     include: {
+      boxes: { orderBy: { createdAt: "asc" }, include: { box: true } },
       items: {
         orderBy: { id: "asc" },
         include: {
@@ -45,8 +46,11 @@ export async function loadCart(cartId: string | null) {
 export async function cartCount(): Promise<number> {
   const id = await getCartId();
   if (!id) return 0;
-  const agg = await prisma.cartItem.aggregate({ where: { cartId: id }, _sum: { quantity: true } });
-  return agg._sum.quantity ?? 0;
+  const [agg, boxes] = await Promise.all([
+    prisma.cartItem.aggregate({ where: { cartId: id }, _sum: { quantity: true } }),
+    prisma.cartBox.count({ where: { cartId: id } }),
+  ]);
+  return (agg._sum.quantity ?? 0) + boxes;
 }
 
 // ---- ship-to: where the shopper wants it sent and which tier they picked, for the shipping quote ----
@@ -80,8 +84,36 @@ export async function setShipTo(v: ShipTo) {
 
 type LoadedCart = NonNullable<Awaited<ReturnType<typeof loadCart>>>;
 
-/** The cart's sellable lines as exact CJ VIDs, for a freight quote. */
-export function cartShipItems(cart: LoadedCart | null) {
+/** The cart's sellable lines as exact CJ VIDs, for a freight quote (box contents included). */
+export function cartShipItems(cart: LoadedCart | null, boxPicks: BoxPickVariant[] = []) {
+  const merged = new Map<string, { vid: string; quantity: number; inventoryJson: string | null; weightGrams: number | null }>();
+  for (const l of [...cartLineShipItems(cart), ...boxPicks.map((b) => ({ vid: b.vid, quantity: 1, inventoryJson: b.inventoryJson, weightGrams: b.weightGrams }))]) {
+    const m = merged.get(l.vid);
+    if (m) m.quantity += l.quantity;
+    else merged.set(l.vid, { ...l, weightGrams: l.weightGrams ?? null });
+  }
+  return [...merged.values()];
+}
+
+export interface BoxPickVariant {
+  vid: string;
+  inventoryJson: string | null;
+  weightGrams: number | null;
+}
+
+/** The CJ variants drawn for the cart's mystery boxes (hidden from the shopper; used for shipping). */
+export async function cartBoxPicks(cart: LoadedCart | null): Promise<BoxPickVariant[]> {
+  const ids = (cart?.boxes ?? []).flatMap((b) => JSON.parse(b.picksJson) as string[]);
+  if (!ids.length) return [];
+  const vs = await prisma.productVariant.findMany({ where: { id: { in: ids } }, include: { offer: { include: { cjSupplierVariant: true } } } });
+  const byId = new Map(vs.map((v) => [v.id, v]));
+  return ids.flatMap((id) => {
+    const sv = byId.get(id)?.offer?.cjSupplierVariant;
+    return sv ? [{ vid: sv.cjVariantId, inventoryJson: sv.inventoryJson, weightGrams: sv.weightGrams }] : [];
+  });
+}
+
+function cartLineShipItems(cart: LoadedCart | null) {
   return (cart?.items ?? [])
     .filter((i) => i.variant.enabled && i.variant.product.status === "PUBLISHED" && i.variant.offer)
     .map((i) => ({

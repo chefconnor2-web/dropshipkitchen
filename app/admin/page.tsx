@@ -7,7 +7,7 @@ import { emailConfigured } from "@/lib/email";
 
 export default async function AdminHome() {
   const since = new Date(Date.now() - 30 * 86400_000);
-  const [awaiting, waitingOrders, paid30, published, calls, waitlist, lastEmail, freightNew] = await Promise.all([
+  const [awaiting, waitingOrders, paid30, published, calls, waitlist, lastEmail, freightNew, liveBoxes] = await Promise.all([
     prisma.order.count({ where: { status: "AWAITING_MERCHANT_APPROVAL" } }),
     prisma.order.findMany({ where: { status: "AWAITING_MERCHANT_APPROVAL" }, orderBy: { paidAt: "asc" }, take: 3, include: { items: true } }),
     prisma.order.findMany({ where: { paidAt: { gte: since }, status: { notIn: ["DECLINED_REFUNDED", "PENDING_PAYMENT"] } }, select: { subtotalCents: true } }),
@@ -16,6 +16,7 @@ export default async function AdminHome() {
     prisma.waitlistEntry.count(),
     prisma.emailLog.findFirst({ orderBy: { createdAt: "desc" } }),
     prisma.freightRequest.count({ where: { status: "new" } }),
+    prisma.mysteryBox.count({ where: { status: "PUBLISHED" } }),
   ]);
   const balance = supplierMode() === "live" ? await cjBalanceCents() : null;
   const revenue = paid30.reduce((n, o) => n + o.subtotalCents, 0);
@@ -41,6 +42,10 @@ export default async function AdminHome() {
         <Link href="/admin/freight" className={`kpi ${freightNew ? "kpi-action" : ""}`}>
           <span className="kpi-v">{freightNew}</span>
           <span className="kpi-k">Freight requests</span>
+        </Link>
+        <Link href="/admin/boxes" className="kpi">
+          <span className="kpi-v">{liveBoxes}</span>
+          <span className="kpi-k">Mystery boxes live</span>
         </Link>
         <Link href="/admin/waitlist" className="kpi">
           <span className="kpi-v">{waitlist}</span>

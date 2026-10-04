@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { config, stripeKeyProblem } from "@/lib/config";
-import { cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
+import { cartBoxPicks, cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
+import { allocatePrice, drawBox, loadPool, type PoolVariant } from "@/lib/mystery";
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
 import { createFreightRequest } from "@/lib/freight";
@@ -40,7 +41,32 @@ export async function checkout() {
 
   const cart = await loadCart(await getCartId());
   const items = cart?.items.filter((i) => i.variant.enabled && i.variant.product.status === "PUBLISHED" && i.variant.offer) ?? [];
-  if (!cart || items.length === 0) redirect("/cart");
+  if (!cart || (items.length === 0 && cart.boxes.length === 0)) redirect("/cart");
+
+  // Mystery boxes: confirm each drawn item is still sellable and in stock; redraw a box whose draw went stale.
+  const boxes: Array<{ cartBoxId: string; name: string; priceCents: number; picks: PoolVariant[] }> = [];
+  for (const cb of cart.boxes) {
+    if (cb.box.status !== "PUBLISHED") redirect(`/cart?error=${encodeURIComponent(`${cb.box.name} isn’t available any more. Remove it to continue.`)}`);
+    const pool = await loadPool(cb.boxId);
+    const wanted = JSON.parse(cb.picksJson) as string[];
+    const svIds = (await prisma.supplierOffer.findMany({ where: { productVariantId: { in: wanted } }, select: { cjSupplierVariantId: true } })).map((o) => o.cjSupplierVariantId);
+    await ensureFreshInventory(svIds);
+    const fresh = await loadPool(cb.boxId);
+    let picks: PoolVariant[] | null = wanted.map((id) => fresh.find((v) => v.variantId === id)).filter((v): v is PoolVariant => !!v && v.inStock);
+    if (picks.length !== wanted.length) {
+      picks = drawBox(fresh.length ? fresh : pool, cb.box);
+      if (!picks) redirect(`/cart?error=${encodeURIComponent(`${cb.box.name} is sold out right now. Remove it to continue.`)}`);
+      await prisma.cartBox.update({ where: { id: cb.id }, data: { picksJson: JSON.stringify(picks.map((v) => v.variantId)) } });
+    }
+    boxes.push({ cartBoxId: cb.id, name: cb.box.name, priceCents: cb.box.priceCents, picks });
+  }
+  const boxVariants = boxes.length
+    ? await prisma.productVariant.findMany({
+        where: { id: { in: boxes.flatMap((b) => b.picks.map((p) => p.variantId)) } },
+        include: { product: true, offer: { include: { cjSupplierVariant: true } } },
+      })
+    : [];
+  const boxVariantById = new Map(boxVariants.map((v) => [v.id, v]));
 
   // Re-validate stale stock for every exact CJ VID before taking payment.
   const fresh = await ensureFreshInventory(items.map((i) => i.variant.offer!.cjSupplierVariantId));
@@ -63,7 +89,7 @@ export async function checkout() {
   if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
   let tiers;
   try {
-    tiers = await quoteTiers(cartShipItems(cart), shipTo.country, shipTo.zip);
+    tiers = await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
   } catch {
     redirect(`/cart?error=${encodeURIComponent("We couldn’t get a shipping price right now. Please try again in a minute.")}`);
   }
@@ -80,13 +106,41 @@ export async function checkout() {
     data: {
       number: newOrderNumber(),
       status: ORDER_STATUS.PENDING_PAYMENT,
-      subtotalCents: items.reduce((s, i) => s + unitPrice(i) * i.quantity, 0),
+      subtotalCents: items.reduce((s, i) => s + unitPrice(i) * i.quantity, 0) + boxes.reduce((n, b) => n + b.priceCents, 0),
       shippingCents: tier.cents,
       customerShipMethod: tier.method,
       customerShipCountry: shipTo.country,
       parcelPlanJson: tier.parcels ? JSON.stringify(tier.parcels) : null,
       items: {
-        create: items.map((i) => {
+        create: [
+          // Mystery box contents: the box price is spread over its items so totals and margins stay exact.
+          ...boxes.flatMap((b) => {
+            const prices = allocatePrice(b.priceCents, b.picks);
+            return b.picks.map((p, n) => {
+              const v = boxVariantById.get(p.variantId)!;
+              const offer = v.offer!;
+              return {
+                productId: v.productId,
+                productVariantId: v.id,
+                productTitle: v.product.title,
+                variantName: v.name,
+                internalSku: v.internalSku,
+                quantity: 1,
+                customerPriceCents: prices[n],
+                supplier: offer.supplier,
+                supplierProductId: offer.supplierProductId,
+                supplierProductSku: offer.supplierProductSku,
+                supplierVariantId: offer.supplierVariantId,
+                supplierSku: offer.supplierSku,
+                supplierPriceAtOrderCents: offer.cjSupplierVariant.supplierPriceCents,
+                supplierInventoryAtOrder: offer.cjSupplierVariant.inventoryTotal,
+                supplierInventoryCheckedAt: offer.cjSupplierVariant.inventoryCheckedAt,
+                mysteryBoxName: b.name,
+                mysteryBoxGroup: b.cartBoxId,
+              };
+            });
+          }),
+          ...items.map((i) => {
           const offer = i.variant.offer!;
           const sv = svById.get(offer.cjSupplierVariantId);
           return {
@@ -106,7 +160,8 @@ export async function checkout() {
             supplierInventoryAtOrder: sv?.inventoryTotal ?? null,
             supplierInventoryCheckedAt: sv?.inventoryCheckedAt ?? null,
           };
-        }),
+          }),
+        ],
       },
     },
   });
@@ -114,14 +169,21 @@ export async function checkout() {
   // Stripe only ever sees OUR product names and prices.
   const session = await stripe().checkout.sessions.create({
     mode: "payment",
-    line_items: items.map((i) => ({
-      quantity: i.quantity,
-      price_data: {
-        currency: "usd",
-        unit_amount: unitPrice(i),
-        product_data: { name: `${i.variant.product.title} — ${i.variant.name}` },
-      },
-    })),
+    line_items: [
+      ...items.map((i) => ({
+        quantity: i.quantity,
+        price_data: {
+          currency: "usd",
+          unit_amount: unitPrice(i),
+          product_data: { name: `${i.variant.product.title} — ${i.variant.name}` },
+        },
+      })),
+      // A box shows as one line: its contents stay a surprise until after payment.
+      ...boxes.map((b) => ({
+        quantity: 1,
+        price_data: { currency: "usd", unit_amount: b.priceCents, product_data: { name: `Mystery box: ${b.name}` } },
+      })),
+    ],
     // The address must be in the country the shipping price was quoted for.
     shipping_address_collection: { allowed_countries: [shipTo.country as "US"] },
     shipping_options: [
@@ -229,7 +291,7 @@ export async function requestFreightQuote(form: FormData) {
   const shipTo = await getShipTo();
   let parcelQuoteCents: number | null = null;
   try {
-    parcelQuoteCents = (await quoteTiers(cartShipItems(cart), shipTo.country, shipTo.zip))[0]?.cents ?? null;
+    parcelQuoteCents = (await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip))[0]?.cents ?? null;
   } catch {
     /* comparison only */
   }
@@ -250,4 +312,22 @@ export async function requestFreightQuote(form: FormData) {
     parcelQuoteCents,
   });
   redirect("/cart?freight=sent");
+}
+
+/** Box page: add a mystery box. Its contents are drawn now (hidden) so shipping can be quoted. */
+export async function addBoxToCart(form: FormData) {
+  const box = await prisma.mysteryBox.findUnique({ where: { id: String(form.get("boxId") || "") } });
+  if (!box || box.status !== "PUBLISHED") redirect("/boxes");
+  const picks = drawBox(await loadPool(box.id), box);
+  if (!picks) redirect(`/boxes/${box.slug}?error=${encodeURIComponent("This box is sold out right now. Check back soon.")}`);
+  const cartId = await getOrCreateCartId();
+  await prisma.cartBox.create({ data: { cartId, boxId: box.id, picksJson: JSON.stringify(picks.map((p) => p.variantId)) } });
+  revalidatePath("/", "layout");
+  redirect("/cart");
+}
+
+export async function removeCartBox(form: FormData) {
+  const cartId = await getCartId();
+  if (cartId) await prisma.cartBox.deleteMany({ where: { id: String(form.get("id") || ""), cartId } });
+  revalidatePath("/", "layout");
 }
