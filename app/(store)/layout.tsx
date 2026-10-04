@@ -24,9 +24,12 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <span className="brand-name">{config.storeName}</span>
           </Link>
           <nav className="header-nav" aria-label="Main">
-            <Link href="/">Assistant</Link>
-            <Link href="/boxes" className="hide-xs">
-              Mystery boxes
+            <Link href="/" className="hide-xs">
+              Assistant
+            </Link>
+            <Link href="/boxes">
+              <span className="hide-xs">Mystery boxes</span>
+              <span className="show-xs">Boxes</span>
             </Link>
             <Link href="/shop">
               <span className="hide-xs">Catalog</span>
