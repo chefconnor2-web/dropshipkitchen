@@ -57,7 +57,17 @@ export async function POST(req: Request) {
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (o: unknown) => controller.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+      // If the shopper's connection drops, keep going: the turn still finishes and is saved to the chat.
+      let open = true;
+      const send = (o: unknown) => {
+        if (!open) return;
+        try {
+          controller.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+        } catch {
+          open = false;
+        }
+      };
+      const ping = setInterval(() => send({ type: "ping" }), 5000);
       try {
         const entry = await chatTurn(chat.id, cartId, message, (note) => send({ type: "progress", note }));
         send({ type: "done", entry, cartCount: await cartCount() });
@@ -71,7 +81,13 @@ export async function POST(req: Request) {
         } else console.error("[assistant]", e);
         send({ type: "error", error });
       } finally {
-        controller.close();
+        clearInterval(ping);
+        if (open)
+          try {
+            controller.close();
+          } catch {
+            /* already closed by the client */
+          }
       }
     },
   });

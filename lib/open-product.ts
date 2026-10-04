@@ -18,7 +18,8 @@ export async function openCjProduct(pid: string) {
 
   let productId: string;
   try {
-    productId = (await importCjProduct(pid)).productId;
+    // Check stock for a few options now; the rest are re-checked live at add-to-cart and checkout.
+    productId = (await importCjProduct(pid, { maxStockChecks: 3 })).productId;
   } catch {
     return null;
   }
