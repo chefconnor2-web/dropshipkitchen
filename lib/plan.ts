@@ -56,3 +56,55 @@ export function planRules(box: { itemCount: number }, plan: Plan): BoxRules {
 export function maxItemListCents(plan: Plan, itemCount: number): number {
   return retailCents(Math.floor(maxBoxCostCents(plan) / Math.max(1, itemCount)));
 }
+
+// ---------- Lite: AI only, no box ----------
+// A cheaper monthly plan with a smaller AI allowance. What the AI may cost us per subscriber per month is
+// price × (1 − margin), less Stripe's fee on the charge; each Lite subscriber's measured AI spend is capped
+// at that, so the margin holds however long or short their messages are.
+
+export interface LitePlan {
+  enabled: boolean;
+  priceCents: number;
+  /** Required margin after AI cost and Stripe's fee, in percent. */
+  marginPct: number;
+}
+
+// 10% margin: nearly all of the price goes to AI (about $4.05 at $5), and the per-subscriber cap means Lite
+// never loses money; the 10% covers the last message running over, refunds and hosting.
+export const DEFAULT_LITE: LitePlan = { enabled: true, priceCents: 500, marginPct: 10 };
+const LITE_KEY = "subscription.lite";
+
+export function normalizeLite(raw: Partial<LitePlan> | null | undefined): LitePlan {
+  const price = Math.round(Number(raw?.priceCents ?? DEFAULT_LITE.priceCents));
+  const margin = Number(raw?.marginPct ?? DEFAULT_LITE.marginPct);
+  return {
+    enabled: raw?.enabled !== false,
+    priceCents: Number.isFinite(price) ? Math.min(100_000, Math.max(100, price)) : DEFAULT_LITE.priceCents,
+    marginPct: Number.isFinite(margin) ? Math.min(99, Math.max(0, margin)) : DEFAULT_LITE.marginPct,
+  };
+}
+
+export async function getLitePlan(): Promise<LitePlan> {
+  const row = await prisma.setting.findUnique({ where: { key: LITE_KEY } }).catch(() => null);
+  try {
+    return normalizeLite(row ? JSON.parse(row.value) : null);
+  } catch {
+    return DEFAULT_LITE;
+  }
+}
+
+export async function saveLitePlan(p: LitePlan) {
+  const value = JSON.stringify(normalizeLite(p));
+  await prisma.setting.upsert({ where: { key: LITE_KEY }, create: { key: LITE_KEY, value }, update: { value } });
+}
+
+/** Stripe's standard card fee on one charge: 2.9% + 30¢. */
+export function stripeFeeCents(chargeCents: number): number {
+  return Math.round(chargeCents * 0.029) + 30;
+}
+
+/** What one Lite subscriber's AI may cost us per 30 days, in micro-dollars (never negative). */
+export function liteAiBudgetMicros(p: LitePlan): number {
+  const cents = p.priceCents * (1 - p.marginPct / 100) - stripeFeeCents(p.priceCents);
+  return Math.max(0, Math.floor(cents * 10_000));
+}

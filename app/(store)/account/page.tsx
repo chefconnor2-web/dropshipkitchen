@@ -38,7 +38,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <SignInForm next={safeNext(next)} />
         <div className="account-cta">
           <strong>New here?</strong> Subscribe to the AI sourcing assistant and get your first mystery box free.{" "}
-          <Link href="/boxes">Pick your box →</Link>
+          <Link href="/plans">See plans →</Link>
         </div>
       </div>
     );
@@ -67,17 +67,18 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <h2 className="section-title">AI assistant subscription</h2>
         {subs.length === 0 ? (
           <p>
-            No subscription yet. <Link href="/boxes">Subscribe to the AI assistant</Link> and your first mystery box is free (you just pay its shipping).
+            No subscription yet. <Link href="/plans">See plans</Link>: Lite for AI only, or the full plan with your first mystery box free.
           </p>
         ) : (
           <ul className="sub-list">
             {subs.map((s) => (
               <li key={s.id}>
                 <div>
-                  <strong>AI assistant</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
+                  <strong>{s.plan === "lite" ? "AI assistant Lite" : "AI assistant"}</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
                 </div>
                 <div className="muted small">
-                  {formatMoney(s.priceCents)}/month · free welcome box: {s.boxName} (shipping to {countryLabel(s.shipCountry)} paid)
+                  {formatMoney(s.priceCents)}/month
+                  {s.plan === "lite" ? " · AI only" : ` · free welcome box: ${s.boxName} (shipping to ${countryLabel(s.shipCountry)} paid)`}
                   {s.currentPeriodEnd && s.status !== "canceled" && (s.cancelAtPeriodEnd ? ` · ends ${fmtDate(s.currentPeriodEnd)}` : ` · renews ${fmtDate(s.currentPeriodEnd)}`)}
                 </div>
               </li>
@@ -106,9 +107,14 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             {nextTier && ` Spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more for ${nextTier.limit} a month.`}
           </p>
         )}
+        {allowance.basis === "lite" && (
+          <p className="muted small">
+            Lite gives you a monthly AI allowance; short questions use less of it than big sourcing searches. <Link href="/plans">Upgrade to the full plan</Link> for many more messages and a free mystery box.
+          </p>
+        )}
         {!allowance.subscriber && (
           <p className="muted small">
-            <Link href="/boxes">Subscribe</Link> to keep using the assistant every month, with a free mystery box to start.
+            <Link href="/plans">Subscribe</Link> to keep using the assistant every month.
           </p>
         )}
         <Link href="/" className="btn">

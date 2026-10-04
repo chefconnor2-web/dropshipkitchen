@@ -203,6 +203,8 @@ model Subscription {
   id                   String    @id @default(cuid())
   customerId           String
   customer             Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// "full" ($30-style: welcome box + AI by spend tier) or "lite" (AI only, capped by cost to keep the margin).
+  plan                 String    @default("full")
   boxId                String
   boxName              String
   stripeSubscriptionId String    @unique
@@ -236,6 +238,8 @@ model AiUsage {
   customerId String?
   visitorId  String?
   chatId     String?
+  /// What the message cost us in micro-dollars ($1 = 1,000,000); null for messages from before this was measured.
+  costMicros Int?
   createdAt  DateTime @default(now())
 
   @@index([customerId, createdAt])

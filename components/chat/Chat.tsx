@@ -758,7 +758,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
                 {error.limit ? (
                   <span className="cx-error-actions">
                     {!error.limit.subscriber && (
-                      <Link href="/boxes" className="cx-btn cx-btn-primary">
+                      <Link href="/plans" className="cx-btn cx-btn-primary">
                         Subscribe
                       </Link>
                     )}

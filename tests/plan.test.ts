@@ -1,7 +1,9 @@
 // The subscription plan: $30/month with a free welcome box that keeps an 86% margin.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_PLAN, maxBoxCostCents, maxItemListCents, normalizePlan, planRules } from "../lib/plan";
+import { DEFAULT_LITE, DEFAULT_PLAN, liteAiBudgetMicros, maxBoxCostCents, maxItemListCents, normalizeLite, normalizePlan, planRules, stripeFeeCents } from "../lib/plan";
+import { costMicros } from "../lib/ai-cost";
+import { messagesFor } from "../lib/membership";
 import { priceBand } from "../lib/box-builder";
 import { drawBox, type PoolVariant } from "../lib/mystery";
 
@@ -36,4 +38,28 @@ test("draws never break the plan's margin", () => {
 test("normalizePlan clamps silly values", () => {
   assert.deepEqual(normalizePlan({ priceCents: 1, marginPct: 150 }), { priceCents: 500, marginPct: 95 });
   assert.deepEqual(normalizePlan(null), DEFAULT_PLAN);
+});
+
+test("Lite at $5 with a 10% margin leaves $4.05 of AI per subscriber after Stripe's fee, and never loses money", () => {
+  assert.equal(stripeFeeCents(500), 45); // 2.9% of $5 (14.5¢, rounded) + 30¢
+  assert.deepEqual(DEFAULT_LITE, { enabled: true, priceCents: 500, marginPct: 10 });
+  // 500 × 90% = 450¢, minus 45¢ fee = 405¢
+  assert.equal(liteAiBudgetMicros(DEFAULT_LITE), 4_050_000);
+  // Margin check: revenue 500, costs = 45 fee + 405 AI = 450 → 10% kept.
+  assert.equal(Math.round((1 - (stripeFeeCents(500) + liteAiBudgetMicros(DEFAULT_LITE) / 10_000) / 500) * 100), 10);
+  // The 86% version (25¢ of AI) is still possible from the admin.
+  assert.equal(liteAiBudgetMicros(normalizeLite({ priceCents: 500, marginPct: 86 })), 250_000);
+  // A price too low for the margin leaves nothing, never a negative budget.
+  assert.equal(liteAiBudgetMicros(normalizeLite({ priceCents: 100, marginPct: 86 })), 0);
+  assert.equal(normalizeLite({ enabled: false }).enabled, false);
+});
+
+test("AI cost is priced from the response's token counts", () => {
+  // Sonnet 5.5: $2 in, $10 out, $0.20 cache read, $2.50 cache write per MTok (= micros per token).
+  assert.equal(costMicros("claude-sonnet-5-5", { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000 }), 2000 + 5000 + 2000 + 5000);
+  assert.equal(costMicros("claude-haiku-4-5-20251001", { input_tokens: 1000, output_tokens: 1000 }), 6000);
+  // An unknown model is priced high, so margins are never overstated.
+  assert.ok(costMicros("claude-future-9", { input_tokens: 1000, output_tokens: 0 }) >= 10_000);
+  assert.equal(messagesFor(250_000, 40_000), 6);
+  assert.equal(messagesFor(-5, 40_000), 0);
 });

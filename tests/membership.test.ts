@@ -31,10 +31,13 @@ test("normalizeLimits sorts tiers, starts them at $0 and clamps bad input", () =
   assert.equal(normalizeLimits({ freeMessages: 99999 }).freeMessages, 1000);
 });
 
-test("limitMessage points non-subscribers to a subscription", () => {
+test("limitMessage points non-subscribers to both plans, and Lite subscribers to the upgrade", () => {
   const base = { used: 5, remaining: 0, spendCents: 0 };
-  assert.match(limitMessage({ ...base, subscriber: false, limit: 3, basis: "free" }, "$30.00"), /3 free AI messages.*Subscribe for \$30\.00\/month.*free mystery box/);
-  assert.match(limitMessage({ ...base, subscriber: true, limit: 100, basis: "tier" }), /all 100 AI messages for this month/);
+  const prices = { full: "$30.00", lite: "$5.00" };
+  assert.match(limitMessage({ ...base, subscriber: false, plan: null, limit: 3, basis: "free" }, prices), /3 free AI messages.*Lite for \$5\.00\/month.*full plan for \$30\.00\/month.*free mystery box/);
+  assert.match(limitMessage({ ...base, subscriber: false, plan: null, limit: 3, basis: "free" }, { full: "$30.00", lite: null }), /^(?!.*Lite).*full plan for \$30/);
+  assert.match(limitMessage({ ...base, subscriber: true, plan: "full", limit: 100, basis: "tier" }), /all 100 AI messages for this month/);
+  assert.match(limitMessage({ ...base, subscriber: true, plan: "lite", limit: 6, basis: "lite" }, prices), /Lite plan.*upgrade to the full plan \(\$30\.00\/month\)/);
 });
 
 test("signed cookie values verify, and tampering fails", () => {

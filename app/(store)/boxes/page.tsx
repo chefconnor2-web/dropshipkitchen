@@ -16,7 +16,7 @@ export default async function BoxesPage() {
         <div className="wrap">
           <p className="eyebrow">Mystery boxes</p>
           <h1 className="section-title">Surprise picks from Chinese factories. Always worth more than you pay.</h1>
-          <p className="section-lede">Subscribe to our AI sourcing assistant for {formatMoney(plan.priceCents)}/month and your first mystery box is free: pick one below and just pay its shipping.</p>
+          <p className="section-lede">Subscribe to our AI sourcing assistant for {formatMoney(plan.priceCents)}/month and your first mystery box is free: pick one below and just pay its shipping. Just want the AI? <Link href="/plans">See the Lite plan</Link>.</p>
         </div>
       </section>
       <section className="band">
