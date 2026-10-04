@@ -3,6 +3,7 @@
 
 import { freightCalculate } from "@/lib/cj/client";
 import { chooseFromCountry } from "@/lib/fulfillment";
+import { choosePlan, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
 
 export const SHIP_COUNTRIES: Array<{ code: string; name: string }> = [
   { code: "CA", name: "Canada" },
@@ -32,12 +33,18 @@ export interface ShipTier {
   maxDays: number | null;
   method: string;
   fromCountry: string;
+  /** Set when the order ships as several parcels; `method` is then "SPLIT". */
+  parcels?: ParcelPlanEntry[];
 }
 
 function days(aging: string | undefined): [number | null, number | null] {
   const n = String(aging ?? "").match(/\d+/g)?.map(Number) ?? [];
   if (!n.length) return [null, null];
   return [Math.min(...n), Math.max(...n)];
+}
+
+export function parcelsLabel(t: Pick<ShipTier, "parcels">): string {
+  return t.parcels && t.parcels.length > 1 ? `${t.parcels.length} parcels` : "";
 }
 
 export function daysLabel(t: Pick<ShipTier, "minDays" | "maxDays">): string {
@@ -74,6 +81,20 @@ export async function quoteTiers(items: ShipItem[], country: string, zip?: strin
     .sort((a, b) => a.cents - b.cents);
 
   const tiers: ShipTier[] = [];
+  // Too heavy or big for one parcel: split it into several CJ parcels and quote each one.
+  const units = items.reduce((n, i) => n + i.quantity, 0);
+  if (!options.length && units > 1) {
+    const planned = await planParcels(items.map((i) => ({ vid: i.vid, quantity: i.quantity })), fromCountry, country, zip);
+    if (planned) {
+      for (const [key, fast] of [["standard", false], ["express", true]] as const) {
+        const plan = choosePlan(planned, fast);
+        const cents = plan.reduce((n, e) => n + e.cents, 0);
+        const w = planWindow(planned, plan);
+        if (key === "express" && (w.maxDays ?? 999) >= (tiers[0]?.maxDays ?? 999)) continue;
+        tiers.push({ key, label: key === "standard" ? "Standard" : "Express", cents, ...w, method: "SPLIT", fromCountry, parcels: plan });
+      }
+    }
+  }
   const cheapest = options[0];
   if (cheapest) {
     tiers.push({ key: "standard", label: "Standard", fromCountry, ...cheapest });

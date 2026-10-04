@@ -7,7 +7,7 @@ import { config, stripeKeyProblem } from "@/lib/config";
 import { cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
-import { daysLabel, isShipCountry, quoteTiers } from "@/lib/shipping";
+import { daysLabel, isShipCountry, parcelsLabel, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
@@ -83,6 +83,7 @@ export async function checkout() {
       shippingCents: tier.cents,
       customerShipMethod: tier.method,
       customerShipCountry: shipTo.country,
+      parcelPlanJson: tier.parcels ? JSON.stringify(tier.parcels) : null,
       items: {
         create: items.map((i) => {
           const offer = i.variant.offer!;
@@ -127,7 +128,7 @@ export async function checkout() {
         shipping_rate_data: {
           type: "fixed_amount",
           fixed_amount: { amount: tier.cents, currency: "usd" },
-          display_name: `${tier.label} shipping (${daysLabel(tier)})`,
+          display_name: `${tier.label} shipping (${[parcelsLabel(tier), daysLabel(tier)].filter(Boolean).join(", ")})`,
           ...(tier.minDays != null && tier.maxDays != null
             ? {
                 delivery_estimate: {
