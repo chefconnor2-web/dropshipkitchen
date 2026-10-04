@@ -14,7 +14,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
   const [count, categories] = await Promise.all([cartCount(), publishedCategories()]);
   return (
     <div className="store">
-      <div className="announce">Shipping across Canada · Price and shipping shown before you pay</div>
+      <div className="announce">B2B sourcing from China · Shipping to Canada shown before you pay</div>
       <header className="store-header">
         <div className="wrap header-row">
           <Link href="/" className="brand" aria-label={`${config.storeName} home`}>
@@ -24,10 +24,10 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <span className="brand-name">{config.storeName}</span>
           </Link>
           <nav className="header-nav" aria-label="Main">
-            <Link href="/link">Adapters</Link>
+            <Link href="/">Assistant</Link>
             <Link href="/shop">
-              <span className="hide-xs">Shop all</span>
-              <span className="show-xs">Shop</span>
+              <span className="hide-xs">Catalog</span>
+              <span className="show-xs">Catalog</span>
             </Link>
           </nav>
           <Link href="/search" className="search-link" aria-label="Search all products">
@@ -57,16 +57,16 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               </span>
               <span className="brand-name">{config.storeName}</span>
             </div>
-            <p className="footer-blurb">Canada’s trusted source for Chinese tools &amp; gadgets.</p>
+            <p className="footer-blurb">Order anything from China, shipped to Canada. B2B sourcing with an AI assistant.</p>
           </div>
           <div>
             <div className="footer-h">Shop</div>
             <ul className="footer-links">
               <li>
-                <Link href="/link">Battery adapters</Link>
+                <Link href="/">Sourcing assistant</Link>
               </li>
               <li>
-                <Link href="/shop">All tools</Link>
+                <Link href="/search">Search everything</Link>
               </li>
               {categories.map((c) => (
                 <li key={c.name}>
@@ -79,9 +79,6 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <div className="footer-h">Tools</div>
             <ul className="footer-links">
               <li>
-                <Link href="/runtime">Runtime calculator</Link>
-              </li>
-              <li>
                 <Link href="/cart">Your cart</Link>
               </li>
             </ul>
@@ -92,8 +89,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             © {new Date().getFullYear()} {config.storeName}
           </span>
           <span>
-            DeWalt, 20V MAX, Milwaukee, M18, Makita, LXT, Ryobi, ONE+ and Bosch are trademarks of their owners. Starlink is a trademark of SpaceX.{" "}
-            {config.storeName} is not affiliated with any of them; names are used only to describe compatibility.
+            Product and brand names belong to their owners.
           </span>
         </div>
       </footer>

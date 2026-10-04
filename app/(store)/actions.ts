@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { config, stripeKeyProblem } from "@/lib/config";
 import { cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
+import { addVariantToCart } from "@/lib/cart-add";
 import { daysLabel, isShipCountry, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
@@ -16,32 +17,9 @@ export type CartActionState = { ok: boolean; message: string } | null;
 export async function addToCart(_prev: CartActionState, form: FormData): Promise<CartActionState> {
   const variantId = String(form.get("variantId") || "");
   const quantity = Math.max(1, Math.min(99, Number(form.get("quantity")) || 1));
-  const variant = await prisma.productVariant.findUnique({
-    where: { id: variantId },
-    include: { product: true, offer: true },
-  });
-  if (!variant || !variant.enabled || variant.product.status !== "PUBLISHED" || !variant.offer)
-    return { ok: false, message: "Please choose an available option." };
-
-  // Revalidate the exact supplier variant's stock if our cached value is stale.
-  const fresh = (await ensureFreshInventory([variant.offer.cjSupplierVariantId])).get(variant.offer.cjSupplierVariantId);
-  const status = stockStatus(fresh?.total);
-  if (status === "UNKNOWN") return { ok: false, message: "We couldn't confirm availability right now. Please try again shortly." };
-  if (status === "UNAVAILABLE") return { ok: false, message: "Sorry, that option is currently unavailable." };
-
-  const cartId = await getOrCreateCartId();
-  const existing = await prisma.cartItem.findUnique({ where: { cartId_variantId: { cartId, variantId } } });
-  const newQty = (existing?.quantity ?? 0) + quantity;
-  if (fresh?.total !== null && fresh?.total !== undefined && newQty > fresh.total)
-    return { ok: false, message: "Not enough stock for that quantity." };
-
-  await prisma.cartItem.upsert({
-    where: { cartId_variantId: { cartId, variantId } },
-    update: { quantity: newQty },
-    create: { cartId, productId: variant.productId, variantId, quantity },
-  });
+  const r = await addVariantToCart(await getOrCreateCartId(), variantId, quantity);
   revalidatePath("/", "layout");
-  return { ok: true, message: `Added ${quantity} × ${variant.product.title} (${variant.name}) to your cart.` };
+  return r;
 }
 
 export async function updateCartItem(form: FormData) {
