@@ -13,6 +13,6 @@ RUN DATABASE_URL="file:/tmp/build.db" npm run build
 
 # /data exists even without a volume, so a first boot works anywhere (the data is then lost on redeploy).
 RUN mkdir -p /data
-ENV NODE_ENV=production PORT=3000 DATABASE_URL="file:/data/store.db"
+ENV NODE_ENV=production PORT=3000 DATABASE_URL="file:/data/store.db?socket_timeout=30&connection_limit=1"
 EXPOSE 3000
 CMD ["sh", "scripts/start.sh"]
