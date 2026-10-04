@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import DesignModal from "./DesignModal";
+import PlanPicker from "@/components/PlanPicker";
+import type { PlanOffer } from "@/lib/plan-offer";
 import type { ChatDesigner } from "@/lib/personalize";
 import {
   ArrowUp,
@@ -62,6 +64,9 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
   const [turn, setTurn] = useState<Turn | null>(null);
   const [error, setError] = useState<{ message: string; retryIndex: number; limit?: { subscriber: boolean; signedIn: boolean } } | null>(null);
   const [allowance, setAllowance] = useState<{ remaining: number; limit: number; subscriber: boolean } | null>(null);
+  // The plans offered to this shopper (null for subscribers), and whether the plan sheet is open.
+  const [plans, setPlans] = useState<PlanOffer | null>(null);
+  const [showPlans, setShowPlans] = useState(false);
   const [toast, setToast] = useState<{ text: string; cart?: boolean } | null>(null);
   const [adding, setAdding] = useState<Record<string, boolean>>({});
   const [addedPids, setAddedPids] = useState<Record<string, boolean>>({});
@@ -141,10 +146,13 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
       setEntries([]);
       setLoading(false);
       focusComposer();
-      // How many AI messages this shopper has left (shown under the composer).
+      // Whether this shopper is on the free preview (and the plans to offer when it runs out).
       fetch("/api/assistant")
         .then((r) => r.json())
-        .then((d) => d.allowance && setAllowance(d.allowance))
+        .then((d) => {
+          if (d.allowance) setAllowance(d.allowance);
+          setPlans(d.plans ?? null);
+        })
         .catch(() => null);
       return;
     }
@@ -159,6 +167,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         setEntries(d.entries ?? []);
         ev.current.onCart(d.cartCount ?? 0);
         if (d.allowance) setAllowance(d.allowance);
+        setPlans(d.plans ?? null);
       })
       .catch(() => null)
       .finally(() => activeId.current === chatId && setLoading(false));
@@ -241,6 +250,11 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         const d = await r.json().catch(() => ({}));
         if (d.limit) {
           setAllowance((a) => (a ? { ...a, remaining: 0 } : a));
+          // Out of messages: offer the plans right here, without leaving the chat.
+          if (d.plans) {
+            setPlans(d.plans);
+            setShowPlans(true);
+          }
           throw Object.assign(new Error(d.error), { limit: d.limit });
         }
         throw new Error(d.error || "Something went wrong.");
@@ -492,7 +506,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         maxLength={1000}
         value={input}
         enterKeyHint="send"
-        placeholder={dictating ? "Listening…" : entries.length ? "Reply…" : "Describe your project, or attach a photo…"}
+        placeholder={dictating ? "Listening…" : entries.length ? "Reply…" : "Tell me what you’re looking for…"}
         onChange={(e) => setInput(e.target.value)}
         onPaste={(e) => {
           const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
@@ -589,15 +603,27 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         {empty ? (
           <div className="cx-empty">
             <div className="cx-hello">
-              <h1>What are you building?</h1>
-              <p>Describe a project or snap a photo of a part. I’ll find everything from Chinese factories and fill your cart, with shipping to Canada shown before you pay.</p>
+              <h1>What do you need?</h1>
+              <p>Tell me like you’d tell a friend who knows every factory in China. I’ll find it, compare the options and fill your cart.</p>
             </div>
             {composer}
+            <ol className="cx-how" aria-label="How it works">
+              <li>
+                <b>1</b> Say what you need: type it, talk, or send a photo
+              </li>
+              <li>
+                <b>2</b> I find and compare the best options
+              </li>
+              <li>
+                <b>3</b> You check your cart and pay, shipping shown upfront
+              </li>
+            </ol>
             {!configured && (
               <p className="cx-err">
                 The assistant is switched off right now. You can still <Link href="/search">search the catalog</Link>.
               </p>
             )}
+            <p className="cx-try">Try one</p>
             <div className="cx-examples">
               {EXAMPLES.map((x) => (
                 <button key={x} type="button" className="cx-example" onClick={() => send(x)} disabled={!configured}>
@@ -757,10 +783,10 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
                 <span>{error.message}</span>
                 {error.limit ? (
                   <span className="cx-error-actions">
-                    {!error.limit.subscriber && (
-                      <Link href="/plans" className="cx-btn cx-btn-primary">
-                        Subscribe
-                      </Link>
+                    {plans && (
+                      <button type="button" className="cx-btn cx-btn-primary" onClick={() => setShowPlans(true)}>
+                        See plans
+                      </button>
                     )}
                     {!error.limit.signedIn && (
                       <Link href={`/account?next=${encodeURIComponent(activeId.current ? `/c/${activeId.current}` : "/")}`} className="cx-btn">
@@ -789,10 +815,10 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
           {composer}
           <p className="cx-disclaimer">
             The assistant can make mistakes. Check specs before you order.{" "}
-            {allowance && (
-              <Link href="/account">
-                {allowance.remaining} {allowance.subscriber ? "" : "free "}AI message{allowance.remaining === 1 ? "" : "s"} left
-              </Link>
+            {allowance && !allowance.subscriber && plans && (
+              <button type="button" className="cx-plan-link" onClick={() => setShowPlans(true)}>
+                {allowance.remaining <= 0 ? "Free preview ended · Keep going" : allowance.remaining === 1 ? "Last free message · Keep going" : "Free preview · Plans"}
+              </button>
             )}{" "}
             {cartCount > 0 && <Link href="/cart">Cart ({cartCount})</Link>}
           </p>
@@ -829,6 +855,18 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
             flash("Personalized item added to cart", true);
           }}
         />
+      )}
+      {showPlans && plans && (
+        <div className="pp-sheet-backdrop" onClick={(e) => e.target === e.currentTarget && setShowPlans(false)}>
+          <div className="pp-sheet" role="dialog" aria-modal="true" aria-labelledby="pp-sheet-title">
+            <button type="button" className="pp-sheet-close" aria-label="Close" onClick={() => setShowPlans(false)}>
+              ×
+            </button>
+            <h2 id="pp-sheet-title">Keep your shopping assistant</h2>
+            <p className="pp-lede">Pick up right where you left off. Your chat and cart stay as they are.</p>
+            <PlanPicker offer={plans} next={activeId.current ? `/c/${activeId.current}` : "/"} compact />
+          </div>
+        </div>
       )}
       {toast && (
         <div className="cx-toast" role="status">

@@ -8,7 +8,7 @@ import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type
 import { ensureVisitorId, findOwnChat, getVisitorId, ownedBy } from "@/lib/chat-session";
 import { getMemberId } from "@/lib/session";
 import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
-import { getLitePlan, getPlan } from "@/lib/plan";
+import { planOffer } from "@/lib/plan-offer";
 import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +33,7 @@ export async function GET(req: Request) {
   return Response.json({
     configured: assistantConfigured(),
     allowance: { remaining: allowance.remaining, limit: allowance.limit, subscriber: allowance.subscriber },
+    plans: allowance.subscriber ? null : await planOffer(),
     chat: chat ? { id: chat.id, title: chat.title } : null,
     entries: chat ? (JSON.parse(chat.uiJson) as UiEntry[]) : [],
     cartCount: await cartCount(),
@@ -55,9 +56,12 @@ export async function POST(req: Request) {
   const memberId = await getMemberId();
   const allowance = await aiAllowance({ customerId: memberId, visitorId });
   if (allowance.remaining <= 0) {
-    const [plan, lite] = await Promise.all([getPlan(), getLitePlan()]);
-    const prices = { full: formatMoney(plan.priceCents), lite: lite.enabled ? formatMoney(lite.priceCents) : null };
-    return Response.json({ error: limitMessage(allowance, prices), limit: { subscriber: allowance.subscriber, signedIn: !!memberId, plan: allowance.plan } }, { status: 402 });
+    const offer = await planOffer();
+    const prices = { full: formatMoney(offer.full.priceCents), lite: offer.lite.enabled ? formatMoney(offer.lite.priceCents) : null };
+    return Response.json(
+      { error: limitMessage(allowance, prices), limit: { subscriber: allowance.subscriber, signedIn: !!memberId, plan: allowance.plan }, plans: allowance.plan === "full" ? null : offer },
+      { status: 402 },
+    );
   }
   let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId) : null;
   if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });

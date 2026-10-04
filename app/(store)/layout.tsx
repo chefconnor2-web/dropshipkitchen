@@ -79,7 +79,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <div className="footer-h">Shop</div>
             <ul className="footer-links">
               <li>
-                <Link href="/">Sourcing assistant</Link>
+                <Link href="/">Shopping assistant</Link>
               </li>
               <li>
                 <Link href="/search">Search everything</Link>

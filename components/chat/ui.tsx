@@ -52,11 +52,12 @@ export interface KitState {
   error?: string;
 }
 
+// Everyday asks first (for people who've never used an assistant like this), then bigger projects.
 export const EXAMPLES = [
-  "Battery setup for a custom 48V e-bike, plus the tools to build it",
+  "A gift for my dad who loves grilling, under $50",
   "Stock a small café: 200 compostable cups, lids and a milk frother",
-  "Solar kit to run a fridge and lights in a cabin",
-  "Everything to start screen-printing t-shirts at home",
+  "Everything for a road trip with two kids",
+  "Battery setup for a custom 48V e-bike, plus the tools to build it",
 ];
 
 export function money(cents: number) {

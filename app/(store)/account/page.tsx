@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { activeSessionCount, getMember, safeNext } from "@/lib/session";
 import { getVisitorId } from "@/lib/chat-session";
-import { aiAllowance, getLimits, tierFor } from "@/lib/membership";
+import { aiAllowance, getLimits } from "@/lib/membership";
 import { countryLabel } from "@/lib/shipping";
 import { openBillingPortal, signOutAction, signOutEverywhereAction } from "../actions";
 import SignInForm from "./SignInForm";
@@ -21,6 +21,13 @@ const STATUS: Record<string, string> = {
   incomplete_expired: "Not started",
   paused: "Paused",
 };
+
+/** A word for how much AI allowance is left (never the number). */
+function allowanceWord(remaining: number, limit: number): string {
+  if (remaining <= 0) return "Used up for now; it refills over the month";
+  const share = limit > 0 ? remaining / limit : 0;
+  return share > 0.5 ? "Plenty left" : share > 0.15 ? "Some left" : "Almost used up";
+}
 
 const fmtDate = (d: Date) => d.toLocaleDateString("en-CA", { month: "long", day: "numeric" });
 
@@ -64,7 +71,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </p>
 
       <section className="account-card">
-        <h2 className="section-title">AI assistant subscription</h2>
+        <h2 className="section-title">Your plan</h2>
         {subs.length === 0 ? (
           <p>
             No subscription yet. <Link href="/plans">See plans</Link>: Lite for AI only, or the full plan with your first mystery box free.
@@ -74,7 +81,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             {subs.map((s) => (
               <li key={s.id}>
                 <div>
-                  <strong>{s.plan === "lite" ? "AI assistant Lite" : "AI assistant"}</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
+                  <strong>{s.plan === "lite" ? "Lite" : "Full"}</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
                 </div>
                 <div className="muted small">
                   {formatMoney(s.priceCents)}/month
@@ -93,28 +100,28 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </section>
 
       <section className="account-card">
-        <h2 className="section-title">AI assistant</h2>
-        <div className="ai-meter" role="meter" aria-valuemin={0} aria-valuemax={allowance.limit} aria-valuenow={allowance.used} aria-label="AI messages used">
-          <span style={{ width: `${pct}%` }} />
+        <h2 className="section-title">Shopping assistant</h2>
+        {/* How much is left, as a bar and a word: customers never see message counts. */}
+        <div className="ai-meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100 - pct} aria-label="Assistant use left this month">
+          <span style={{ width: `${100 - pct}%` }} />
         </div>
         <p>
-          <strong>{allowance.remaining}</strong> of {allowance.limit} messages left
-          {allowance.subscriber ? " (last 30 days)" : " (free trial)"}.
+          <strong>{allowanceWord(allowance.remaining, allowance.limit)}</strong>
+          {allowance.subscriber ? (allowance.basis === "lite" ? " · Lite plan" : "") : " · free preview"}
         </p>
         {allowance.subscriber && allowance.basis === "tier" && (
           <p className="muted small">
-            Your allowance grows with your orders: you’ve spent {formatMoney(allowance.spendCents)}, {tierFor(allowance.spendCents, limits.tiers).limit} messages a month.
-            {nextTier && ` Spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more for ${nextTier.limit} a month.`}
+            You get more the more you shop{nextTier ? `: spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more to unlock the next level.` : ", and you’re at the top level."}
           </p>
         )}
         {allowance.basis === "lite" && (
           <p className="muted small">
-            Lite gives you a monthly AI allowance; short questions use less of it than big sourcing searches. <Link href="/plans">Upgrade to the full plan</Link> for many more messages and a free mystery box.
+            Quick questions use less than big shopping searches. <Link href="/plans">Upgrade to Full</Link>, our most generous plan, with a free mystery box.
           </p>
         )}
         {!allowance.subscriber && (
           <p className="muted small">
-            <Link href="/plans">Subscribe</Link> to keep using the assistant every month.
+            <Link href="/plans">Pick a plan</Link> to keep your shopping assistant.
           </p>
         )}
         <Link href="/" className="btn">

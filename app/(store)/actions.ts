@@ -370,11 +370,11 @@ export async function subscribeToBox(form: FormData) {
 }
 
 /** Plans page: subscribe to Lite (AI only) and go to Stripe. Signing in comes first, as for the full plan. */
-export async function subscribeLite() {
+export async function subscribeLite(form?: FormData) {
   const problem = stripeKeyProblem();
   if (problem) redirect(`/plans?error=${encodeURIComponent("Subscriptions aren’t switched on yet: " + problem)}`);
   const member = await getMember();
-  if (!member) redirect(`/account?next=${encodeURIComponent("/plans")}&why=subscribe`);
+  if (!member) redirect(`/account?next=${encodeURIComponent(safeNext(form?.get("next") ?? "/plans"))}&why=subscribe`);
   let url: string;
   try {
     url = await startLiteSubscription(member);
