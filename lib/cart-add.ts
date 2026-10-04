@@ -2,14 +2,27 @@
 import { prisma } from "@/lib/db";
 import { ensureFreshInventory, isStale, stockStatus } from "@/lib/inventory";
 import { withCjPriority } from "@/lib/cj/lanes";
+import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 
-export async function addVariantToCart(cartId: string, variantId: string, quantity: number): Promise<{ ok: boolean; message: string }> {
+export async function addVariantToCart(
+  cartId: string,
+  variantId: string,
+  quantity: number,
+  personalizationId?: string,
+): Promise<{ ok: boolean; message: string }> {
   const variant = await prisma.productVariant.findUnique({
     where: { id: variantId },
     include: { product: true, offer: true },
   });
   if (!variant || !variant.enabled || variant.product.status !== "PUBLISHED" || !variant.offer)
     return { ok: false, message: "Please choose an available option." };
+  // A personalizable item needs the shopper's design first (made in the product page or chat designer).
+  if (!personalizationId && parsePersonalizeConfig(variant.product.personalizeJson))
+    return { ok: false, message: `${variant.product.title} is made with your own photo or text. Open its designer to personalize it first.` };
+  if (personalizationId) {
+    const design = await prisma.personalization.findUnique({ where: { id: personalizationId }, select: { variantId: true } });
+    if (design?.variantId !== variantId) return { ok: false, message: "That design doesn’t match this option. Please design it again." };
+  }
 
   // A known cached stock count answers at once (checkout re-checks stale stock live before payment), and
   // a stale one is refreshed in the background. Only a variant we have never counted waits on CJ.
@@ -26,14 +39,12 @@ export async function addVariantToCart(cartId: string, variantId: string, quanti
   if (status === "UNKNOWN") return { ok: false, message: "We couldn't confirm availability right now. Please try again shortly." };
   if (status === "UNAVAILABLE") return { ok: false, message: "Sorry, that option is currently unavailable." };
 
-  const existing = await prisma.cartItem.findUnique({ where: { cartId_variantId: { cartId, variantId } } });
+  // Each design is its own cart line; plain lines of the same variant merge.
+  const existing = personalizationId ? null : await prisma.cartItem.findFirst({ where: { cartId, variantId, personalizationId: null } });
   const newQty = (existing?.quantity ?? 0) + quantity;
   if (fresh?.total !== null && fresh?.total !== undefined && newQty > fresh.total) return { ok: false, message: "Not enough stock for that quantity." };
 
-  await prisma.cartItem.upsert({
-    where: { cartId_variantId: { cartId, variantId } },
-    update: { quantity: newQty },
-    create: { cartId, productId: variant.productId, variantId, quantity },
-  });
-  return { ok: true, message: `Added ${quantity} × ${variant.product.title} (${variant.name}) to your cart.` };
+  if (existing) await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity: newQty } });
+  else await prisma.cartItem.create({ data: { cartId, productId: variant.productId, variantId, quantity, personalizationId: personalizationId ?? null } });
+  return { ok: true, message: `Added ${quantity} × ${variant.product.title} (${variant.name}${personalizationId ? ", personalized" : ""}) to your cart.` };
 }

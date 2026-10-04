@@ -44,7 +44,7 @@ function address(o: Loaded): string[] {
 
 function itemsTable(o: Loaded): { html: string; text: string } {
   const rows = o.items.map((i) => {
-    const variant = [i.variantName && !/^default$/i.test(i.variantName) ? i.variantName : "", i.mysteryBoxName ? `from your ${i.mysteryBoxName}` : ""].filter(Boolean).join(" · ");
+    const variant = [i.variantName && !/^default$/i.test(i.variantName) ? i.variantName : "", i.mysteryBoxName ? `from your ${i.mysteryBoxName}` : "", i.personalizationId ? "personalized" : ""].filter(Boolean).join(" · ");
     return { name: i.productTitle, variant, qty: i.quantity, total: formatMoney(i.customerPriceCents * i.quantity) };
   });
   const total = o.subtotalCents + o.shippingCents;

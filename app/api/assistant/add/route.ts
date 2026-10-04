@@ -6,6 +6,7 @@ import { addVariantToCart } from "@/lib/cart-add";
 import { openCjProduct } from "@/lib/open-product";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { withCjPriority } from "@/lib/cj/lanes";
+import { chatDesigner } from "@/lib/personalize";
 
 export const dynamic = "force-dynamic";
 
@@ -19,12 +20,18 @@ async function add(req: Request) {
   const qty = Math.max(1, Math.min(999, Number(quantity) || 1));
 
   if (variantId) {
+    const v = await prisma.productVariant.findUnique({ where: { id: String(variantId) }, select: { productId: true } });
+    const designer = v && (await chatDesigner(v.productId));
+    if (designer) return Response.json({ ok: false, personalize: designer });
     const r = await addVariantToCart(await getOrCreateCartId(), String(variantId), qty);
     return Response.json({ ...r, cartCount: await cartCount() });
   }
 
   const product = await openCjProduct(String(pid ?? ""));
   if (!product) return Response.json({ ok: false, message: "Sorry, that product isn't available." }, { status: 404 });
+  // Made with the shopper's own photo or text: the chat opens its designer instead of adding.
+  const designer = await chatDesigner(product.id);
+  if (designer) return Response.json({ ok: false, personalize: designer });
   const variants = await prisma.productVariant.findMany({
     where: { productId: product.id, enabled: true },
     orderBy: { position: "asc" },

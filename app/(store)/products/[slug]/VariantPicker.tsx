@@ -6,6 +6,9 @@ import { addToCart, type CartActionState } from "../../actions";
 import type { PublicVariant } from "@/lib/storefront";
 import ShippingEstimate from "@/components/store/ShippingEstimate";
 import { bulkPricingLabel } from "@/lib/volume";
+import { useRouter } from "next/navigation";
+import Personalizer from "@/components/store/Personalizer";
+import type { DesignerConfig } from "@/lib/personalize-shared";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -17,7 +20,11 @@ export default function VariantPicker({
   initial,
   onChange,
   shipTo,
+  personalize,
+  mockupSrc,
 }: {
+  personalize?: DesignerConfig | null;
+  mockupSrc?: string | null;
   shipTo: { country: string; zip: string };
   optionNames: string[];
   variants: PublicVariant[];
@@ -26,6 +33,7 @@ export default function VariantPicker({
 }) {
   const [selected, setSelected] = useState<Record<string, string>>(initial?.options ?? {});
   const [state, action, pending] = useActionState<CartActionState, FormData>(addToCart, null);
+  const router = useRouter();
 
   const values = useMemo(
     () =>
@@ -106,18 +114,29 @@ export default function VariantPicker({
         )}
       </p>
       <input type="hidden" name="variantId" value={match?.id ?? ""} />
+      {personalize ? null : (
       <div className="buy-row">
         <input className="qty" type="number" name="quantity" min={1} max={99} defaultValue={1} aria-label="Quantity" />
         <button className="btn primary lg grow-btn" disabled={!match || match.stock === "UNAVAILABLE" || pending}>
           {pending ? "Checking stock…" : "Add to cart"}
         </button>
       </div>
+      )}
       {state && (
         <p className={state.ok ? "notice ok" : "notice err"}>
           {state.message} {state.ok && <Link href="/cart">View cart →</Link>}
         </p>
       )}
     </form>
+    {personalize && (
+      <Personalizer
+        config={personalize}
+        imageSrc={mockupSrc ?? null}
+        variantId={match?.id ?? null}
+        disabled={!match || match.stock === "UNAVAILABLE"}
+        onAdded={(r) => r.ok && router.refresh()}
+      />
+    )}
     <ShippingEstimate key={match?.id ?? "none"} variantId={match?.id ?? null} country={shipTo.country} zip={shipTo.zip} />
     </>
   );

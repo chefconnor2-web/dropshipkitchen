@@ -25,7 +25,8 @@ export async function loadPool(boxId: string): Promise<PoolVariant[]> {
     include: { variant: { include: { product: true, offer: { include: { cjSupplierVariant: true } } } } },
   });
   return rows
-    .filter((r) => r.variant.enabled && r.variant.product.status === "PUBLISHED" && r.variant.offer?.cjSupplierVariant.supplierPriceCents != null)
+    // Personalized products need the shopper's own design, so they never go in a surprise box.
+    .filter((r) => r.variant.enabled && r.variant.product.status === "PUBLISHED" && !r.variant.product.personalizeJson && r.variant.offer?.cjSupplierVariant.supplierPriceCents != null)
     .map((r) => ({
       variantId: r.variant.id,
       productId: r.variant.productId,

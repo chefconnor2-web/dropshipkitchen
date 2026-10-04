@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { previewSupplierOrderPayload } from "@/lib/orders";
+import { podPropertiesForItems } from "@/lib/personalize";
 import { cjBalanceCents, quoteShipping, supplierMode } from "@/lib/fulfillment";
 import type { CjFreightOption } from "@/lib/cj/client";
 import { Flash, StatusChip, fmtTime, timeAgo } from "@/components/admin";
@@ -39,7 +40,8 @@ export default async function AdminOrder({
   });
   if (!order) notFound();
 
-  const [svs, variants, images, emails] = await Promise.all([
+  const designIds = order.items.map((i) => i.personalizationId).filter((x): x is string => !!x);
+  const [svs, variants, images, emails, designs] = await Promise.all([
     prisma.cjSupplierVariant.findMany({ where: { cjVariantId: { in: order.items.map((i) => i.supplierVariantId) } } }),
     prisma.productVariant.findMany({
       where: { id: { in: order.items.map((i) => i.productVariantId).filter((x): x is string => !!x) } },
@@ -50,7 +52,19 @@ export default async function AdminOrder({
       select: { id: true, productId: true },
     }),
     prisma.emailLog.findMany({ where: { orderId: id }, orderBy: { createdAt: "desc" } }),
+    designIds.length
+      ? prisma.personalization.findMany({ where: { id: { in: designIds } }, select: { id: true, kind: true, text: true, podVersion: true, areaName: true } })
+      : Promise.resolve([]),
   ]);
+  const designById = new Map(designs.map((d) => [d.id, d]));
+  // What CJ will receive for each personalized line, or why it can't be sent yet.
+  let pod = new Map<string, string>();
+  let podError: string | null = null;
+  try {
+    pod = await podPropertiesForItems(order.items);
+  } catch (e) {
+    podError = e instanceof Error ? e.message : String(e);
+  }
   const svByVid = new Map(svs.map((s) => [s.cjVariantId, s]));
   const variantImg = new Set(variants.filter((v) => v.imageUrl).map((v) => v.id));
   const productImg = new Map(images.map((i) => [i.productId, i.id]));
@@ -205,6 +219,7 @@ export default async function AdminOrder({
                     CJ {formatMoney(i.supplierPriceAtOrderCents)} each ·{" "}
                     <span className={`stock stock-${stockStatus(inv)}`}>{stockLabel(stockStatus(inv))}</span>
                   </div>
+                  {i.personalizationId && <DesignReview id={i.personalizationId} design={designById.get(i.personalizationId)} />}
                 </div>
                 <div className="item-amt">{formatMoney(i.customerPriceCents * i.quantity)}</div>
               </li>
@@ -212,6 +227,13 @@ export default async function AdminOrder({
           })}
         </ul>
       </section>
+
+      {designIds.length > 0 && (
+        <p className={podError ? "notice err" : "notice"}>
+          {podError ??
+            `${designIds.length === 1 ? "This order has a personalized item" : `This order has ${designIds.length} personalized items`}. Check each design above before you approve: CJ prints exactly that artwork, and personalized items can’t be resold.`}
+        </p>
+      )}
 
       {awaiting && (
         <section className="a-card fulfil" aria-label="Fulfil this order">
@@ -505,10 +527,30 @@ export default async function AdminOrder({
           </p>
           <details>
             <summary className="small">CJ order request (address &amp; items sent to CJ)</summary>
-            <pre className="wrap-pre">{JSON.stringify(previewSupplierOrderPayload(order), null, 2)}</pre>
+            <pre className="wrap-pre">{JSON.stringify(previewSupplierOrderPayload(order, pod), null, 2)}</pre>
           </details>
         </div>
       </details>
     </>
+  );
+}
+
+function DesignReview({ id, design }: { id: string; design?: { kind: string; text: string | null; podVersion: number; areaName: string } }) {
+  if (!design) return <div className="err-text small">Design missing: CJ would have nothing to print.</div>;
+  return (
+    <div className="design-review">
+      <a href={`/pod/${id}/preview`} target="_blank" rel="noreferrer" title="Open the mock-up">
+        <img src={`/pod/${id}/preview`} alt="Mock-up of the customer's design" loading="lazy" />
+      </a>
+      <a href={`/pod/${id}/art`} target="_blank" rel="noreferrer" className="design-art" title="Open the print file">
+        <img src={`/pod/${id}/art`} alt="Print file" loading="lazy" />
+      </a>
+      <div className="small">
+        <strong>{design.kind === "text" ? `Text: “${design.text}”` : "Customer photo"}</strong>
+        <div className="muted">
+          CJ POD {design.podVersion}.0{design.podVersion === 2 ? ` · area ${design.areaName}` : ""} · tap a picture to open it full size
+        </div>
+      </div>
+    </div>
   );
 }

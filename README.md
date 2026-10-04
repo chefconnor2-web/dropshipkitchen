@@ -60,6 +60,30 @@ balance**. The flow is CJ's own: `createOrderV3` (create only) → `confirmOrder
 `sandbox/simulatePay`). An order can only be placed once; if payment fails the order stays created and
 **Retry payment** pays it. **Refresh CJ status** pulls CJ's status and tracking number.
 
+## Personalized (print-on-demand) products
+
+Shoppers can put their own photo or text on CJ print-on-demand products. You approve each order, and the
+CJ payment, after the customer has paid, exactly like any other order.
+
+1. **Set up a product** (`/admin/products/[id]` → *Personalization*): switch it on, enter the CJ POD version
+   and print area name from your CJ POD template, choose photo and/or text, the print file size, and where the
+   print sits on the main photo (for the shopper's mock-up). Only CJ POD products can be printed; the panel
+   shows any POD-related fields CJ's product data has.
+2. **Shoppers design it** on the product page, or in the chat (tapping Add on the product's card opens the
+   designer, with photos they sent the assistant one tap away). They see a live mock-up, drag and zoom the photo,
+   confirm the design, and add it. Each design is its own cart line. The assistant's
+   `show_personalized_products` tool shows these products when someone asks for something custom.
+3. **The design is stored** with the line (`Personalization`): the print file (at your print size) and the
+   mock-up, public at `/pod/<id>/art` and `/pod/<id>/preview` so CJ can download them (unguessable ids).
+4. **You review it** on the order page: mock-up, print file and the exact `podProperties` CJ will get.
+5. **On approval** the CJ order line carries `podProperties`: POD 2.0
+   `[{"areaName":…,"links":["…/art"],"type":"1"}]`, POD 3.0 `[{"links":["…/art"],"effectImgs":["…/preview"]}]`.
+
+`SITE_URL` must be the store's public https address, since that is where CJ downloads the artwork. Orders
+with personalized items can't ship as split parcels yet, and personalized products never go in mystery boxes.
+Test with a CJ **sandbox** order first: CJ documents `podProperties` on `createOrderV2`, and this store
+places orders with `createOrderV3`.
+
 ## Where things are
 
 | Path | What it is |
@@ -97,6 +121,8 @@ unmodified JSON, so field mappings can be checked against what CJ actually retur
 - **Our storefront data:** `Product` (title, description, internal SKU, categories, SEO, status,
   delivery estimate), `ProductImage`, and `ProductVariant` (name, options, internal SKU, our price).
 - **Bridge:** `SupplierOffer` links one `ProductVariant` to one CJ variant: supplier, PID, product SKU, VID, variant SKU.
+- **Personalization:** `Product.personalizeJson` (the POD set-up) and `Personalization` (one shopper design:
+  print file, mock-up, text), linked from `CartItem` and `OrderItem.personalizationId`.
 - **Orders:** each `OrderItem` copies supplier, PID, VID, SKU, supplier price, and inventory at order time,
   plus our title, variant name and price, so history does not depend on the live catalog.
   `SupplierCheck` records every later live recheck.

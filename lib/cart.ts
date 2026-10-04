@@ -31,6 +31,7 @@ export async function loadCart(cartId: string | null) {
       items: {
         orderBy: { id: "asc" },
         include: {
+          personalization: { select: { id: true, kind: true, text: true } },
           variant: {
             include: {
               product: { include: { images: { orderBy: { position: "asc" }, take: 1 } } },

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
 import { SHIP_COUNTRIES, daysLabel, parcelsLabel, quoteTiers, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
@@ -85,7 +86,14 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
               // Server component: only the derived label reaches the page, never the supplier's count.
               const s = stockStatus(i.variant.offer?.cjSupplierVariant.inventoryTotal);
               const productImg = i.variant.product.images[0];
-              const src = i.variant.imageUrl ? `/media/v/${i.variant.id}` : productImg ? `/media/${productImg.id}` : null;
+              const src = i.personalization
+                ? `/pod/${i.personalization.id}/preview`
+                : i.variant.imageUrl
+                  ? `/media/v/${i.variant.id}`
+                  : productImg
+                    ? `/media/${productImg.id}`
+                    : null;
+              const design = designLabel(i.personalization);
               return (
                 <li key={i.id} className="cart-item">
                   <Link href={`/products/${i.variant.product.slug}`} className="cart-thumb">
@@ -96,6 +104,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                       {i.variant.product.title}
                     </Link>
                     {i.variant.name && !/^default$/i.test(i.variant.name) && <div className="muted small">{i.variant.name}</div>}
+                    {design && <div className="cart-design small">{design}</div>}
                     <div className={`stock stock-${s} small`}>
                       <span className="dot" aria-hidden /> {stockLabel(s)}
                     </div>

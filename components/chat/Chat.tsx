@@ -3,6 +3,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import DesignModal from "./DesignModal";
+import type { ChatDesigner } from "@/lib/personalize";
 import {
   ArrowUp,
   ClipIcon,
@@ -64,6 +66,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
   const [addedPids, setAddedPids] = useState<Record<string, boolean>>({});
   const [kitState, setKitState] = useState<Record<string, KitState>>({});
   const [picking, setPicking] = useState<Record<string, { options: Option[]; selected?: string }>>({});
+  const [designing, setDesigning] = useState<{ pid: string; designer: ChatDesigner } | null>(null);
   const [copied, setCopied] = useState<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -383,7 +386,12 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
       });
       const d = await r.json().catch(() => ({}));
       if (typeof d.cartCount === "number") serverCount = d.cartCount;
-      if (d.choose) {
+      if (d.personalize) {
+        // Made with the shopper's own photo or text: open the designer instead of adding.
+        setAddedPids((a) => ({ ...a, [card.pid]: false }));
+        setDesigning({ pid: card.pid, designer: d.personalize });
+        setToast(null);
+      } else if (d.choose) {
         setAddedPids((a) => ({ ...a, [card.pid]: false }));
         setPicking((p) => ({ ...p, [card.pid]: { options: d.options, selected: d.options.find((o: Option) => o.available)?.id ?? d.options[0]?.id } }));
         flash("Pick an option, then tap Add");
@@ -775,6 +783,20 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
 
       {voiceMode && <VoiceMode onSend={(text) => send(text, { voice: true, images: [] })} onClose={() => setVoiceMode(false)} />}
 
+      {designing && (
+        <DesignModal
+          designer={designing.designer}
+          photos={[...new Set(entries.flatMap((e) => (e.role === "user" ? (e.images ?? []) : [])))].slice(-8).reverse().map(imageUrl)}
+          onClose={() => setDesigning(null)}
+          onAdded={(r) => {
+            if (!r.ok) return;
+            if (typeof r.cartCount === "number") setCart(r.cartCount);
+            setAddedPids((a) => ({ ...a, [designing.pid]: true }));
+            setDesigning(null);
+            flash("Personalized item added to cart", true);
+          }}
+        />
+      )}
       {toast && (
         <div className="cx-toast" role="status">
           {toast.text}

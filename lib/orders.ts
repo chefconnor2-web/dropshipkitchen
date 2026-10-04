@@ -84,8 +84,8 @@ export function previewSupplierOrderPayload(order: {
   number: string;
   shippingAddressJson: string | null;
   customerName: string | null;
-  items: Array<{ supplierVariantId: string; quantity: number }>;
-}) {
+  items: Array<{ id: string; supplierVariantId: string; quantity: number }>;
+}, podProperties: Map<string, string> = new Map()) {
   const ship = order.shippingAddressJson ? JSON.parse(order.shippingAddressJson) : null;
   const addr = ship?.address ?? {};
   return {
@@ -97,7 +97,7 @@ export function previewSupplierOrderPayload(order: {
     shippingAddress: [addr.line1, addr.line2].filter(Boolean).join(", ") || null,
     shippingZip: addr.postal_code ?? null,
     shippingCustomerName: ship?.name ?? order.customerName,
-    products: order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity })),
+    products: order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity, ...(podProperties.has(i.id) ? { podProperties: podProperties.get(i.id) } : {}) })),
   };
 }
 

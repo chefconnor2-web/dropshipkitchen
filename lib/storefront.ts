@@ -3,6 +3,7 @@
 
 import { prisma } from "@/lib/db";
 import { stockLabel, stockStatus, type StockStatus } from "@/lib/inventory";
+import { designerConfig, parsePersonalizeConfig, type DesignerConfig } from "@/lib/personalize-shared";
 
 export interface PublicVariant {
   id: string;
@@ -28,6 +29,8 @@ export interface PublicProduct {
   variants: PublicVariant[];
   fromPriceCents: number | null;
   stock: StockStatus;
+  /** Print-on-demand set-up when shoppers design this product themselves. */
+  personalize: DesignerConfig | null;
 }
 
 const include = {
@@ -79,6 +82,7 @@ function toPublic(p: Loaded): PublicProduct {
       null,
     ),
     stock: variants.map((v) => v.stock).sort((a, b) => order.indexOf(a) - order.indexOf(b))[0] ?? "UNAVAILABLE",
+    personalize: designerConfig(parsePersonalizeConfig(p.personalizeJson)),
   };
 }
 
