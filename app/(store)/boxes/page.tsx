@@ -27,6 +27,7 @@ export default async function BoxesPage() {
                 <Link key={b.id} href={`/boxes/${b.slug}`} className="box-card">
                   <div className="box-art" aria-hidden>
                     <span>?</span>
+                    <em className="box-badge">Worth {formatMoney(b.guaranteedValueCents)}+</em>
                   </div>
                   <div className="box-card-body">
                     <h2>{b.name}</h2>

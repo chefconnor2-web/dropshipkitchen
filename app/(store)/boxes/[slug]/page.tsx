@@ -46,7 +46,12 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
           <p className="eyebrow">Mystery box</p>
           <h1 className="page-title">{box.name}</h1>
           <p className="box-tagline">{box.tagline}</p>
-          <div className="price">{formatMoney(box.priceCents)}</div>
+          <div className="price">
+            {formatMoney(box.priceCents)}
+            <span className="box-value">
+              worth {formatMoney(box.guaranteedValueCents)}+ · save {Math.round((1 - box.priceCents / box.guaranteedValueCents) * 100)}%+
+            </span>
+          </div>
           <ul className="box-promises">
             <li>
               <strong>{box.itemCount} different items</strong> in every box
