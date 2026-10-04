@@ -5,6 +5,7 @@ import { formatMoney } from "@/lib/money";
 import { stockLabel, stockStatus, isStale } from "@/lib/inventory";
 import { warehouseSummary } from "@/lib/cj/normalize";
 import { Flash, Source, fmtTime } from "@/components/admin";
+import PersonalizeSettings from "@/components/admin-personalize";
 import { addImage, importProduct, refreshVariantLive, removeImage, saveProduct, setPublished } from "@/app/admin/actions";
 
 export default async function EditProduct({
@@ -165,6 +166,8 @@ export default async function EditProduct({
           )}
         </section>
       </div>
+
+      <PersonalizeSettings productId={p.id} personalizeJson={p.personalizeJson} imageId={p.images[0]?.id ?? null} cjRawJson={sp?.rawJson ?? null} />
 
       <h2>Variants → exact CJ variant mapping</h2>
       <p className="muted small">

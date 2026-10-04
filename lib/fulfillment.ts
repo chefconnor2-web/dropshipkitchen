@@ -10,6 +10,7 @@ import { priceToCents } from "@/lib/money";
 import { ORDER_STATUS } from "@/lib/orders";
 import { sendOrderEmail } from "@/lib/order-emails";
 import { choosePlan, parcelOptions, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
+import { podPropertiesForItems } from "@/lib/personalize";
 
 /** The pseudo shipping method for orders that ship as several CJ parcels. */
 export const SPLIT_METHOD = "SPLIT";
@@ -68,7 +69,7 @@ export function buildCjOrderBody(input: {
   logisticName: string;
   fromCountryCode: string;
   sandbox: boolean;
-  items: Array<{ vid: string; quantity: number; lineItemId: string }>;
+  items: Array<{ vid: string; quantity: number; lineItemId: string; podProperties?: string }>;
 }) {
   const a = input.ship?.address ?? {};
   const missing = (["line1", "city", "state", "country"] as const).filter((k) => !a[k]);
@@ -90,7 +91,8 @@ export function buildCjOrderBody(input: {
     logisticName: input.logisticName,
     fromCountryCode: input.fromCountryCode,
     isSandbox: input.sandbox ? 1 : 0,
-    products: input.items.map((i) => ({ vid: i.vid, quantity: i.quantity, storeLineItemId: i.lineItemId })),
+    // A personalized line carries the shopper's artwork for CJ to print (see lib/personalize-shared.ts).
+    products: input.items.map((i) => ({ vid: i.vid, quantity: i.quantity, storeLineItemId: i.lineItemId, ...(i.podProperties ? { podProperties: i.podProperties } : {}) })),
   };
 }
 
@@ -166,6 +168,7 @@ export async function placeCjOrder(orderId: string, opts: { logisticName: string
   if (!quote.some((q) => q.logisticName === opts.logisticName)) throw new Error("Get a fresh shipping quote and choose one of its methods.");
   if (opts.logisticName === SPLIT_METHOD) return placeSplitCjOrder(orderId, opts.sandbox);
 
+  const pod = await podPropertiesForItems(order.items);
   const body = buildCjOrderBody({
     // A sandbox attempt gets its own number so a later real order for the same store order isn't a duplicate at CJ.
     orderNumber: opts.sandbox ? `${order.number}-SBX-${Date.now().toString(36).toUpperCase()}` : order.number,
@@ -176,7 +179,7 @@ export async function placeCjOrder(orderId: string, opts: { logisticName: string
     logisticName: opts.logisticName,
     fromCountryCode: order.cjFromCountry || fromCountry,
     sandbox: opts.sandbox,
-    items: order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity, lineItemId: i.id })),
+    items: order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity, lineItemId: i.id, podProperties: pod.get(i.id) })),
   });
 
   const locked = await prisma.order.updateMany({
@@ -293,6 +296,9 @@ async function placeSplitCjOrder(orderId: string, sandbox: boolean) {
   const { order, fromCountry, ship } = await loadOrder(orderId);
   const plan = JSON.parse(order.parcelPlanJson || "[]") as ParcelPlanEntry[];
   if (!plan.length) throw new Error("This order has no parcel plan. Refresh the shipping quote.");
+  // Parcels are planned by VID, so they can't tell two designs of the same variant apart.
+  if (order.items.some((i) => i.personalizationId))
+    throw new Error("Orders with personalized items can't ship as split parcels yet. Place this one in your CJ dashboard, or decline and refund it.");
   // Each CJ line points back at our order line; a line can span several parcels.
   const lineFor = new Map(order.items.map((i) => [i.supplierVariantId, i.id]));
 

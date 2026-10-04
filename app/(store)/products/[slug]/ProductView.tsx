@@ -16,7 +16,15 @@ export default function ProductView({ product: p, shipTo }: { product: PublicPro
       <div className="pdp-info">
         {p.categories.length > 0 && <div className="overline">{p.categories.join(" · ")}</div>}
         <h1 className="pdp-title">{p.title}</h1>
-        <VariantPicker shipTo={shipTo} optionNames={p.optionNames} variants={p.variants} initial={initial} onChange={setVariant} />
+        <VariantPicker
+          shipTo={shipTo}
+          optionNames={p.optionNames}
+          variants={p.variants}
+          initial={initial}
+          onChange={setVariant}
+          personalize={p.personalize}
+          mockupSrc={variant?.imageSrc ?? p.images[0]?.src ?? null}
+        />
         <ul className="assurances">
           {p.estimatedDelivery && (
             <li>

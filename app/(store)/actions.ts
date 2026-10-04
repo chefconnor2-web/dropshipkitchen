@@ -13,6 +13,8 @@ import { daysLabel, isShipCountry, parcelsLabel, quoteTiers } from "@/lib/shippi
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
+import { designLabel } from "@/lib/personalize";
+import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { linkProductById, platformById, platformName } from "@/lib/lineup";
 
 export type CartActionState = { ok: boolean; message: string } | null;
@@ -67,6 +69,10 @@ export async function checkout() {
       })
     : [];
   const boxVariantById = new Map(boxVariants.map((v) => [v.id, v]));
+
+  // A personalizable item can only be bought with the shopper's design (set-ups can change after adding).
+  const undesigned = items.find((i) => !i.personalizationId && parsePersonalizeConfig(i.variant.product.personalizeJson));
+  if (undesigned) redirect(`/cart?error=${encodeURIComponent(`${undesigned.variant.product.title} needs your photo or text now. Remove it and add it again from its page to design it.`)}`);
 
   // Re-validate stale stock for every exact CJ VID before taking payment.
   const fresh = await ensureFreshInventory(items.map((i) => i.variant.offer!.cjSupplierVariantId));
@@ -159,6 +165,7 @@ export async function checkout() {
             supplierPriceAtOrderCents: sv?.supplierPriceCents ?? null,
             supplierInventoryAtOrder: sv?.inventoryTotal ?? null,
             supplierInventoryCheckedAt: sv?.inventoryCheckedAt ?? null,
+            personalizationId: i.personalizationId,
           };
           }),
         ],
@@ -175,7 +182,7 @@ export async function checkout() {
         price_data: {
           currency: "usd",
           unit_amount: unitPrice(i),
-          product_data: { name: `${i.variant.product.title} — ${i.variant.name}` },
+          product_data: { name: [`${i.variant.product.title} — ${i.variant.name}`, designLabel(i.personalization)].filter(Boolean).join(" · ") },
         },
       })),
       // A box shows as one line: its contents stay a surprise until after payment.

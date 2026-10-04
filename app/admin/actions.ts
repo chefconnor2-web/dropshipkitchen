@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { testConnection } from "@/lib/cj/client";
 import { importCjProduct } from "@/lib/cj/import";
 import { slugify } from "@/lib/cj/normalize";
+import { normalizeConfig } from "@/lib/personalize-shared";
 import { refreshLive } from "@/lib/inventory";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
 import { sendOrderEmail, sendTestEmail, type OrderEmailKind } from "@/lib/order-emails";
@@ -290,4 +291,28 @@ export async function buildPresetBoxesAction() {
   const { startPresetBuild } = await import("@/lib/box-presets");
   const started = startPresetBuild();
   redirect(`/admin/boxes?notice=${encodeURIComponent(started ? "Building the preset boxes in the background. Each takes a few minutes; refresh to see progress." : "Preset boxes are already being built.")}`);
+}
+
+/** Product page: switch print-on-demand personalization on or off and save its set-up. */
+export async function savePersonalize(form: FormData) {
+  const id = String(form.get("id"));
+  const on = form.get("enabled") === "on";
+  const pct = (k: string) => Number(form.get(k)) / 100;
+  const cfg = on
+    ? normalizeConfig({
+        podVersion: Number(form.get("podVersion")) === 3 ? 3 : 2,
+        areaName: String(form.get("areaName") || ""),
+        allowPhoto: form.get("allowPhoto") === "on",
+        allowText: form.get("allowText") === "on",
+        maxTextLength: Number(form.get("maxTextLength")),
+        artWidth: Number(form.get("artWidth")),
+        artHeight: Number(form.get("artHeight")),
+        box: { x: pct("boxX"), y: pct("boxY"), w: pct("boxW"), h: pct("boxH") },
+        instructions: String(form.get("instructions") || ""),
+      })
+    : null;
+  if (on && !cfg) redirect(`/admin/products/${id}?error=${encodeURIComponent("Allow photos, text, or both.")}`);
+  await prisma.product.update({ where: { id }, data: { personalizeJson: cfg ? JSON.stringify(cfg) : null } });
+  revalidatePath("/", "layout");
+  redirect(`/admin/products/${id}?notice=${encodeURIComponent(cfg ? "Personalization saved" : "Personalization switched off")}`);
 }

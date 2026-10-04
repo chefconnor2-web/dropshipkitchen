@@ -15,6 +15,7 @@ import { loadCart } from "@/lib/cart";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { addKitToCart, type Kit, type KitItem } from "@/lib/kit";
 import { bulkPricingLabel, priceOrder } from "@/lib/volume";
+import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -69,6 +70,7 @@ How to work:
 - After you present picks for a project, call propose_kit once with your recommended pick for each part you found (sensible quantities; an option in words when it matters, e.g. "20Ah"). The shopper sees it as a kit card with an "Add entire kit" button.
 - When the shopper asks to add the whole kit, everything, or all of it, call add_kit in the same turn with the kit's items (adjusted for anything they changed). Don't ask again; afterwards, list what was added and anything that failed.
 - Shoppers can send photos: a broken or worn part, a product they want more of, a label, spec plate or packaging, a sketch, or a space to fit out. Say briefly what you see and read any model numbers, voltages, sizes or connectors in it, then search for that exact item or compatible parts. If a key spec isn't visible, ask for it or for another photo.
+- Some products are made with the shopper's own photo or text (print on demand). When they want something custom, personalized, printed with a photo, logo or name, or a personal gift, call show_personalized_products and point them to those cards. You can't add these to the cart yourself: tell them to tap Add on the card, which opens a designer where they upload a photo (any they already sent you is one tap away) or type text, see a preview, and add it. Personalized items can't be returned, so mention that they should check the preview.
 - Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
 }
 
@@ -228,6 +230,13 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
       required: ["items"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "show_personalized_products",
+    description:
+      "List the products this store prints with the shopper's own photo or text, and show them as cards the shopper taps to design. Returns each product's pid, title, starting price and whether it takes a photo, text or both.",
+    strict: true,
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   {
     name: "view_cart",
@@ -430,6 +439,9 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
             stock: stockLabel(stockStatus(v.offer?.cjSupplierVariant.inventoryTotal)),
           })),
         description: product.description.slice(0, 1500),
+        ...(product.personalizeJson
+          ? { personalized: "Made with the shopper's own photo or text. You can't add it: tell them to tap Add on its card to open the designer." }
+          : {}),
       }),
     };
   }
@@ -463,6 +475,24 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
     );
     for (const r of results) if (r.ok) ctx.added.push(`${r.message} · ${r.title}`);
     return { content: JSON.stringify(results) };
+  }
+  if (name === "show_personalized_products") {
+    const products = await prisma.product.findMany({
+      where: { status: "PUBLISHED", personalizeJson: { not: null }, supplierProduct: { isNot: null } },
+      include: { supplierProduct: { select: { cjProductId: true } }, variants: { where: { enabled: true, offer: { isNot: null } }, select: { priceCents: true } } },
+      take: 12,
+    });
+    const rows = products.flatMap((p) => {
+      const cfg = parsePersonalizeConfig(p.personalizeJson);
+      const from = Math.min(...p.variants.map((v) => v.priceCents));
+      if (!cfg || !p.supplierProduct || !Number.isFinite(from)) return [];
+      const card: ProductCard = { pid: p.supplierProduct.cjProductId, title: p.title, fromCents: from, group: "Personalize it" };
+      if (!ctx.cards.some((c) => c.pid === card.pid)) ctx.cards.push(card);
+      ctx.known.set(card.pid, card);
+      return [{ pid: card.pid, title: p.title, from_price_usd: (from / 100).toFixed(2), takes: [cfg.allowPhoto && "photo", cfg.allowText && "text"].filter(Boolean).join(" or ") }];
+    });
+    if (!rows.length) return { content: "This store has no personalized products right now. Say so, and offer to find regular products instead." };
+    return { content: JSON.stringify({ products: rows, note: "Shown as cards. The shopper taps Add on a card to design it; you can't add these yourself." }) };
   }
   if (name === "view_cart") {
     const cart = await loadCart(ctx.cartId);

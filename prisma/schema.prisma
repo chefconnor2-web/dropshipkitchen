@@ -79,10 +79,12 @@ model Product {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  images   ProductImage[]
-  variants ProductVariant[]
+  images          ProductImage[]
+  variants        ProductVariant[]
   /// false for products opened from storefront search: buyable by link, hidden from the shop grid.
-  listed   Boolean          @default(true)
+  listed          Boolean          @default(true)
+  /// Print-on-demand set-up (JSON, see lib/personalize-shared.ts). Null: not personalizable.
+  personalizeJson String?
 }
 
 // Customer-facing images are served through /media/<id> so supplier CDN URLs never reach the browser.
@@ -137,15 +139,37 @@ model Cart {
 }
 
 model CartItem {
-  id        String         @id @default(cuid())
-  cartId    String
-  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  productId String
-  variantId String
-  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  quantity  Int
+  id                String           @id @default(cuid())
+  cartId            String
+  cart              Cart             @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId         String
+  variantId         String
+  variant           ProductVariant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  quantity          Int
+  /// A personalized line (the shopper's own design). Each design is its own line, never merged.
+  personalizationId String?
+  personalization   Personalization? @relation(fields: [personalizationId], references: [id], onDelete: Cascade)
 
-  @@unique([cartId, variantId])
+  @@index([cartId, variantId])
+}
+
+/// A shopper's design for one print-on-demand item: the artwork CJ prints and a mock-up of the result.
+/// Files are public at /pod/<id>/art and /pod/<id>/preview so CJ can download them, so the id is a random
+/// UUID (v4), not a cuid, which is partly predictable.
+model Personalization {
+  id          String     @id @default(uuid())
+  productId   String
+  variantId   String
+  kind        String // photo | text
+  text        String? // the words, for text designs
+  podVersion  Int // CJ POD 2 or 3, copied from the product set-up at design time
+  areaName    String // CJ print area (POD 2.0)
+  artMime     String
+  art         Bytes
+  previewMime String
+  preview     Bytes
+  createdAt   DateTime   @default(now())
+  cartItems   CartItem[]
 }
 
 // One per email address, built from paid orders. Notes and tags are the merchant's own.
@@ -229,10 +253,12 @@ model OrderItem {
   supplierInventoryAtOrder   Int?
   supplierInventoryCheckedAt DateTime?
 
-  checks          SupplierCheck[]
+  checks            SupplierCheck[]
   /// Set on items that came out of a mystery box (revealed after payment); same group = same box.
-  mysteryBoxName  String?
-  mysteryBoxGroup String?
+  mysteryBoxName    String?
+  mysteryBoxGroup   String?
+  /// The shopper's design for a print-on-demand item (Personalization id); sent to CJ as podProperties.
+  personalizationId String?
 }
 
 // Every live re-check against CJ for an order item, kept as evidence.
