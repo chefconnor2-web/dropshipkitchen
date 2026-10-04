@@ -54,7 +54,10 @@ async function nextInternalSku(title: string): Promise<string> {
   }
 }
 
-export async function importCjProduct(pid: string, opts: { deliveryCycle?: string | null } = {}): Promise<ImportResult> {
+export async function importCjProduct(
+  pid: string,
+  opts: { deliveryCycle?: string | null; maxStockChecks?: number } = {},
+): Promise<ImportResult> {
   const detailEnv = await getProductDetail(pid);
   const detail = detailEnv.data;
   if (!detail?.pid) throw new Error(`CJ returned no product for PID ${pid}`);
@@ -113,7 +116,7 @@ export async function importCjProduct(pid: string, opts: { deliveryCycle?: strin
   // ---- live inventory per exact VID ----
   let stockChecked = 0;
   const stockErrors: string[] = [];
-  for (const { n } of variants.slice(0, MAX_STOCK_CHECKS_ON_IMPORT)) {
+  for (const { n } of variants.slice(0, opts.maxStockChecks ?? MAX_STOCK_CHECKS_ON_IMPORT)) {
     try {
       await refreshInventory(svByVid.get(n.cjVariantId)!);
       stockChecked++;
