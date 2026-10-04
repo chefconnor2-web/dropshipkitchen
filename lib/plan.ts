@@ -69,7 +69,9 @@ export interface LitePlan {
   marginPct: number;
 }
 
-export const DEFAULT_LITE: LitePlan = { enabled: true, priceCents: 500, marginPct: 86 };
+// 10% margin: nearly all of the price goes to AI (about $4.05 at $5), and the per-subscriber cap means Lite
+// never loses money; the 10% covers the last message running over, refunds and hosting.
+export const DEFAULT_LITE: LitePlan = { enabled: true, priceCents: 500, marginPct: 10 };
 const LITE_KEY = "subscription.lite";
 
 export function normalizeLite(raw: Partial<LitePlan> | null | undefined): LitePlan {

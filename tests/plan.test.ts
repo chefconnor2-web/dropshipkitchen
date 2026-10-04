@@ -40,13 +40,15 @@ test("normalizePlan clamps silly values", () => {
   assert.deepEqual(normalizePlan(null), DEFAULT_PLAN);
 });
 
-test("Lite at $5 with an 86% margin leaves 25¢ of AI per subscriber after Stripe's fee", () => {
+test("Lite at $5 with a 10% margin leaves $4.05 of AI per subscriber after Stripe's fee, and never loses money", () => {
   assert.equal(stripeFeeCents(500), 45); // 2.9% of $5 (14.5¢, rounded) + 30¢
-  assert.deepEqual(DEFAULT_LITE, { enabled: true, priceCents: 500, marginPct: 86 });
-  // 500 × 14% = 70¢, minus 45¢ fee = 25¢
-  assert.equal(liteAiBudgetMicros(DEFAULT_LITE), 250_000);
-  // Margin check: revenue 500, costs = 45 fee + 25 AI = 70 → 86% kept.
-  assert.equal(Math.round((1 - (stripeFeeCents(500) + liteAiBudgetMicros(DEFAULT_LITE) / 10_000) / 500) * 100), 86);
+  assert.deepEqual(DEFAULT_LITE, { enabled: true, priceCents: 500, marginPct: 10 });
+  // 500 × 90% = 450¢, minus 45¢ fee = 405¢
+  assert.equal(liteAiBudgetMicros(DEFAULT_LITE), 4_050_000);
+  // Margin check: revenue 500, costs = 45 fee + 405 AI = 450 → 10% kept.
+  assert.equal(Math.round((1 - (stripeFeeCents(500) + liteAiBudgetMicros(DEFAULT_LITE) / 10_000) / 500) * 100), 10);
+  // The 86% version (25¢ of AI) is still possible from the admin.
+  assert.equal(liteAiBudgetMicros(normalizeLite({ priceCents: 500, marginPct: 86 })), 250_000);
   // A price too low for the margin leaves nothing, never a negative budget.
   assert.equal(liteAiBudgetMicros(normalizeLite({ priceCents: 100, marginPct: 86 })), 0);
   assert.equal(normalizeLite({ enabled: false }).enabled, false);

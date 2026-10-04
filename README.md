@@ -112,11 +112,11 @@ becomes a box order waiting for your approval like any other. Later months are t
   price × (1 − margin) (default 86%: **$4.20 on $30**), and every box is worth at least the price at list prices.
   Shipping is charged once, at cost, on top. The AI box builder picks pool items within that (about $10–12 list for
   3 items). `/admin/members` shows each box's share of draws that fit; a box that can't fit shows as sold out.
-- **Lite plan.** $5/month, AI only, no box (`/plans`; edit in `/admin/members`). Its margin (default 86%) is
-  kept after Stripe's fee: at $5 that leaves 25¢ of AI per subscriber per 30 days, and each Lite subscriber is cut off
-  once their measured AI cost reaches it. Every message's real cost is recorded (`AiUsage.costMicros`, from the
-  API's token counts at Anthropic's prices in `lib/ai-cost.ts`), and Lite's "messages a month" is the budget divided
-  by the average measured cost. Someone on both plans gets the full plan's allowance.
+- **Lite plan.** $5/month, AI only, no box (`/plans`; edit in `/admin/members`). Its margin (default 10%) is
+  kept after Stripe's fee: at $5 that leaves $4.05 of AI per subscriber per 30 days, and each Lite subscriber is cut
+  off once their measured AI cost reaches it, so Lite never loses money. Every message's real cost is recorded
+  (`AiUsage.costMicros`, from the API's token counts at Anthropic's prices in `lib/ai-cost.ts`), and Lite's "messages a
+  month" is the budget divided by the average measured cost. Someone on both plans gets the full plan's allowance.
 - **Free trial.** People without a subscription get **3 free AI messages** (editable).
 - **AI limits.** Subscribers get messages per 30 days by lifetime spend, in tiers you set (default $0 → 100,
   $250 → 300, $1,000 → 1,000), so bigger spenders move up automatically. You can set anyone's limit by hand.
