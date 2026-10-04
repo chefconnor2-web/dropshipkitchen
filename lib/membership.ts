@@ -19,7 +19,7 @@ export interface LimitsConfig {
 }
 
 export const DEFAULT_LIMITS: LimitsConfig = {
-  freeMessages: 5,
+  freeMessages: 3,
   tiers: [
     { minSpendCents: 0, limit: 100 },
     { minSpendCents: 25_000, limit: 300 },
@@ -55,10 +55,13 @@ export function tierFor(spendCents: number, tiers: SpendTier[]): SpendTier {
   return [...tiers].reverse().find((t) => spendCents >= t.minSpendCents) ?? tiers[0];
 }
 
-/** Paid, not refunded: orders (subscription boxes included). */
+/** Paid, not refunded: orders (the welcome box order included) plus every later subscription month. */
 export async function lifetimeSpendCents(customerId: string): Promise<number> {
-  const agg = await prisma.order.aggregate({ where: { customerId, ...COUNTED_ORDER }, _sum: { subtotalCents: true, shippingCents: true } });
-  return (agg._sum.subtotalCents ?? 0) + (agg._sum.shippingCents ?? 0);
+  const [orders, months] = await Promise.all([
+    prisma.order.aggregate({ where: { customerId, ...COUNTED_ORDER }, _sum: { subtotalCents: true, shippingCents: true } }),
+    prisma.subscriptionPayment.aggregate({ where: { customerId }, _sum: { amountCents: true } }),
+  ]);
+  return (orders._sum.subtotalCents ?? 0) + (orders._sum.shippingCents ?? 0) + (months._sum.amountCents ?? 0);
 }
 
 const LIVE_STATUSES = ["active", "trialing", "past_due"];
@@ -101,11 +104,10 @@ export async function recordAiUse(who: { customerId: string | null; visitorId: s
   await prisma.aiUsage.create({ data: { customerId: who.customerId, visitorId: who.visitorId, chatId: who.chatId ?? null } });
 }
 
-/** What to tell someone who has run out. */
-export function limitMessage(a: Allowance): string {
+/** What to tell someone who has run out. `price` is the monthly subscription, e.g. "$30.00". */
+export function limitMessage(a: Allowance, price = "a small monthly fee"): string {
   if (a.subscriber)
     return `You've used all ${a.limit} AI messages for this month. Your allowance refills as older messages pass 30 days, and it grows as you spend more with us.`;
-  return a.basis === "custom"
-    ? "You've used your AI messages. Subscribe to a mystery box to keep going."
-    : `You've used your ${a.limit} free AI messages. Subscribe to a mystery box to keep using the assistant (sign in if you already have).`;
+  const pitch = `Subscribe for ${price}/month to keep using the assistant, and get a free mystery box (you just pay its shipping).`;
+  return a.basis === "custom" ? `You've used your AI messages. ${pitch}` : `You've used your ${a.limit} free AI messages. ${pitch} Already subscribed? Sign in.`;
 }

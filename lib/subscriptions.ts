@@ -1,7 +1,8 @@
-// Mystery box subscriptions. Stripe bills each subscriber monthly (the box plus a shipping line quoted when
-// they subscribed). Every paid invoice becomes a box order: items drawn at random from the box's pool, waiting
-// for the merchant's approval like any other order. Invoices are turned into orders from the webhook, from
-// the subscribe success page, and by syncSubscriptions (admin), whichever sees them first; never twice.
+// The AI assistant subscription (see lib/plan.ts for the price). The first payment is the first month plus the
+// shipping of a free welcome mystery box: that invoice becomes a box order (items drawn at random from the box's
+// pool within the plan's margin), waiting for the merchant's approval like any other order. Later months are the
+// assistant only and are recorded as SubscriptionPayments (they count toward spend tiers). Invoices are handled
+// from the webhook, the subscribe success page, and syncSubscriptions (admin), whichever sees them first; never twice.
 
 import type Stripe from "stripe";
 import { prisma } from "@/lib/db";
@@ -13,12 +14,13 @@ import { linkOrderToCustomer } from "@/lib/customers";
 import { sendOrderEmail } from "@/lib/order-emails";
 import { countryLabel, estimateFromHistory, isShipCountry, quoteCart } from "@/lib/shipping";
 import { processSingleton } from "@/lib/singleton";
+import { getPlan, planRules } from "@/lib/plan";
 
 /** Monthly shipping for a box to a country: a live quote for a sample draw, else an estimate. */
 export async function boxShippingCents(boxId: string, country: string, zip: string): Promise<number | null> {
   const box = await prisma.mysteryBox.findUnique({ where: { id: boxId } });
   if (!box) return null;
-  const picks = drawBox(await loadPool(box.id), box);
+  const picks = drawBox(await loadPool(box.id), planRules(box, await getPlan()));
   if (!picks) return null;
   const variants = await prisma.productVariant.findMany({
     where: { id: { in: picks.map((p) => p.variantId) } },
@@ -33,27 +35,29 @@ export async function boxShippingCents(boxId: string, country: string, zip: stri
   return (await estimateFromHistory(items, country))?.cents ?? null;
 }
 
-/** A Stripe Checkout page for a monthly subscription to this box. */
+/** A Stripe Checkout page for the subscription: the first month plus shipping for a free welcome box. */
 export async function startBoxSubscription(input: { boxId: string; country: string; zip: string; customer?: { email: string; stripeCustomerId: string | null } | null }) {
   const box = await prisma.mysteryBox.findUnique({ where: { id: input.boxId } });
   if (!box || box.status !== "PUBLISHED") throw new Error("This box isn’t available.");
   if (!isShipCountry(input.country)) throw new Error("Choose where we’re shipping to.");
+  const plan = await getPlan();
   const shippingCents = await boxShippingCents(box.id, input.country, input.zip);
-  if (shippingCents == null) throw new Error("This box is sold out or can’t ship to you right now. Check back soon.");
-  const meta = { kind: "box_subscription", boxId: box.id, shippingCents: String(shippingCents), country: input.country };
+  if (shippingCents == null) throw new Error("This box is sold out or can’t ship to you right now. Pick another one, or check back soon.");
+  const meta = { kind: "assistant_subscription", boxId: box.id, shippingCents: String(shippingCents), country: input.country };
   const session = await stripe().checkout.sessions.create({
     mode: "subscription",
     line_items: [
-      { quantity: 1, price_data: { currency: "usd", unit_amount: box.priceCents, recurring: { interval: "month" }, product_data: { name: `Monthly mystery box: ${box.name}` } } },
+      { quantity: 1, price_data: { currency: "usd", unit_amount: plan.priceCents, recurring: { interval: "month" }, product_data: { name: `${config.storeName} AI assistant`, description: `Monthly subscription. Your first month includes a free ${box.name} mystery box.` } } },
+      // One-time: charged with the first month only.
       ...(shippingCents > 0
-        ? [{ quantity: 1, price_data: { currency: "usd", unit_amount: shippingCents, recurring: { interval: "month" as const }, product_data: { name: `Shipping to ${countryLabel(input.country)}` } } }]
+        ? [{ quantity: 1, price_data: { currency: "usd", unit_amount: shippingCents, product_data: { name: `Shipping for your free ${box.name} to ${countryLabel(input.country)}` } } }]
         : []),
     ],
     ...(input.customer?.stripeCustomerId ? { customer: input.customer.stripeCustomerId } : input.customer?.email ? { customer_email: input.customer.email } : {}),
-    // Every box ships to the address given here, in the country the shipping was quoted for.
+    // The welcome box ships to the address given here, in the country the shipping was quoted for.
     shipping_address_collection: { allowed_countries: [input.country as "US"] },
     phone_number_collection: { enabled: true },
-    subscription_data: { description: `${box.name}: one mystery box a month`, metadata: meta },
+    subscription_data: { description: `${config.storeName} AI assistant (first month includes a free ${box.name})`, metadata: meta },
     metadata: meta,
     success_url: `${config.siteUrl}/subscribe/complete?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${config.siteUrl}/boxes/${box.slug}`,
@@ -91,7 +95,8 @@ async function saveSubscription(sub: Stripe.Subscription, fallback: { email?: st
   const boxId = sub.metadata.boxId;
   const box = boxId ? await prisma.mysteryBox.findUnique({ where: { id: boxId } }) : null;
   const shippingCents = Number(sub.metadata.shippingCents) || 0;
-  const priceCents = (sub.items?.data ?? []).reduce((n, i) => n + (i.price?.unit_amount ?? 0) * (i.quantity ?? 1), 0) - shippingCents;
+  // Subscription items are the recurring prices only (the welcome box's shipping was a one-time charge).
+  const priceCents = (sub.items?.data ?? []).reduce((n, i) => n + (i.price?.unit_amount ?? 0) * (i.quantity ?? 1), 0);
   return prisma.subscription.create({
     data: {
       customerId: customer.id,
@@ -132,7 +137,7 @@ export async function completeSubscriptionCheckout(sessionOrId: string | Stripe.
 
 const locks = processSingleton("box-invoice-locks", () => new Map<string, Promise<unknown>>());
 
-/** Turns one paid subscription invoice into a box order (once per invoice). */
+/** Handles one paid subscription invoice (once): the first becomes the welcome box order, later ones a payment. */
 export function orderForInvoice(invoiceId: string): Promise<string | null> {
   const running = locks.get(invoiceId) as Promise<string | null> | undefined;
   if (running) return running;
@@ -144,6 +149,7 @@ export function orderForInvoice(invoiceId: string): Promise<string | null> {
 async function createOrderForInvoice(invoiceId: string): Promise<string | null> {
   const done = await prisma.order.findFirst({ where: { stripeInvoiceId: invoiceId }, select: { id: true } });
   if (done) return done.id;
+  if (await prisma.subscriptionPayment.findUnique({ where: { invoiceId }, select: { invoiceId: true } })) return null;
   const invoice = await stripe().invoices.retrieve(invoiceId, { expand: ["payments"] });
   if (invoice.status !== "paid") return null;
   const subRef = invoice.parent?.subscription_details?.subscription;
@@ -156,10 +162,19 @@ async function createOrderForInvoice(invoiceId: string): Promise<string | null> 
   }
   const payment = invoice.payments?.data?.[0]?.payment;
   const paymentIntent = typeof payment?.payment_intent === "string" ? payment.payment_intent : payment?.payment_intent?.id ?? null;
+  const paidAt = invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000) : new Date();
 
-  // Draw this month's box. A pool that can't make one still creates the order, flagged for the merchant.
+  // Only the first month comes with a box; later months are the assistant only (recorded for spend tiers).
+  const first = invoice.billing_reason === "subscription_create" && !(await prisma.order.findFirst({ where: { subscriptionId: sub.id }, select: { id: true } }));
+  if (!first) {
+    const data = { subscriptionId: sub.id, customerId: sub.customerId, amountCents: invoice.amount_paid ?? 0, paidAt };
+    await prisma.subscriptionPayment.upsert({ where: { invoiceId }, create: { invoiceId, ...data }, update: data });
+    return null;
+  }
+
+  // Draw the welcome box within the plan's margin. A pool that can't make one still creates the order, flagged.
   const box = await prisma.mysteryBox.findUnique({ where: { id: sub.boxId } });
-  const picks = box ? drawBox(await loadPool(box.id), box) : null;
+  const picks = box ? drawBox(await loadPool(box.id), planRules(box, await getPlan())) : null;
   const variants = picks
     ? await prisma.productVariant.findMany({ where: { id: { in: picks.map((p) => p.variantId) } }, include: { product: true, offer: { include: { cjSupplierVariant: true } } } })
     : [];
@@ -179,11 +194,13 @@ async function createOrderForInvoice(invoiceId: string): Promise<string | null> 
       subtotalCents: sub.priceCents,
       shippingCents: sub.shippingCents,
       customerShipCountry: sub.shipCountry || null,
-      paidAt: invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000) : new Date(),
+      paidAt,
       stripePaymentIntent: paymentIntent,
       stripeInvoiceId: invoiceId,
       subscriptionId: sub.id,
-      decisionNote: picks ? null : `The ${sub.boxName} pool couldn’t make a box this month (sold out or out of rules). Add stock to the pool, or decline and refund.`,
+      decisionNote: picks
+        ? "Welcome box for a new AI assistant subscriber (first month + shipping paid)."
+        : `The ${sub.boxName} pool couldn’t make a welcome box within the plan's margin (sold out, or nothing cheap enough). Add stock to the pool, or decline and refund.`,
       items: {
         create: (picks ?? []).flatMap((p, n) => {
           const v = byId.get(p.variantId);
@@ -239,7 +256,9 @@ export async function syncSubscriptions(): Promise<{ checked: number; created: n
       await updateSubscriptionFromStripe(await stripe().subscriptions.retrieve(s.stripeSubscriptionId));
       const invoices = await stripe().invoices.list({ subscription: s.stripeSubscriptionId, status: "paid", limit: 12 });
       for (const inv of invoices.data) {
-        if (!inv.id || (await prisma.order.findFirst({ where: { stripeInvoiceId: inv.id }, select: { id: true } }))) continue;
+        if (!inv.id) continue;
+        if (await prisma.order.findFirst({ where: { stripeInvoiceId: inv.id }, select: { id: true } })) continue;
+        if (await prisma.subscriptionPayment.findUnique({ where: { invoiceId: inv.id }, select: { invoiceId: true } })) continue;
         if (await orderForInvoice(inv.id)) created++;
       }
     } catch (e) {

@@ -8,6 +8,8 @@ import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type
 import { ensureVisitorId, findOwnChat, getVisitorId } from "@/lib/chat-session";
 import { getMemberId } from "@/lib/session";
 import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
+import { getPlan } from "@/lib/plan";
+import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -52,7 +54,7 @@ export async function POST(req: Request) {
   const memberId = await getMemberId();
   const allowance = await aiAllowance({ customerId: memberId, visitorId });
   if (allowance.remaining <= 0)
-    return Response.json({ error: limitMessage(allowance), limit: { subscriber: allowance.subscriber, signedIn: !!memberId } }, { status: 402 });
+    return Response.json({ error: limitMessage(allowance, formatMoney((await getPlan()).priceCents)), limit: { subscriber: allowance.subscriber, signedIn: !!memberId } }, { status: 402 });
   let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId, visitorId) : null;
   if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });
   const isNew = !chat;

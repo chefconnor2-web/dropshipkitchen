@@ -7,7 +7,9 @@ import { COUNTED_ORDER } from "@/lib/customers";
 import { WINDOW_MS, getLimits, tierFor } from "@/lib/membership";
 import { syncSubscriptions } from "@/lib/subscriptions";
 import { config } from "@/lib/config";
-import { saveAiLimits, setMemberLimit, syncSubscriptionsAction } from "@/app/admin/actions";
+import { saveAiLimits, savePlanAction, setMemberLimit, syncSubscriptionsAction } from "@/app/admin/actions";
+import { getPlan, maxBoxCostCents, planRules } from "@/lib/plan";
+import { loadPool, simulate } from "@/lib/mystery";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +26,10 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
     void syncSubscriptions().catch(() => null);
   }
 
-  const limits = await getLimits();
+  const [limits, plan] = await Promise.all([getLimits(), getPlan()]);
+  // Can each published box be drawn within the plan's margin? (Welcome boxes are drawn under these rules.)
+  const boxes = await prisma.mysteryBox.findMany({ where: { status: "PUBLISHED" }, orderBy: { name: "asc" } });
+  const boxHealth = await Promise.all(boxes.map(async (b) => ({ b, stats: simulate(await loadPool(b.id), planRules(b, plan), 200) })));
   const since = new Date(Date.now() - WINDOW_MS);
   const members = await prisma.customer.findMany({
     where: { OR: [{ subscriptions: { some: {} } }, { aiLimitOverride: { not: null } }] },
@@ -35,18 +40,22 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
     orderBy: { updatedAt: "desc" },
     take: 500,
   });
+  const months = new Map(
+    (await prisma.subscriptionPayment.groupBy({ by: ["customerId"], where: { customerId: { in: members.map((m) => m.id) } }, _sum: { amountCents: true } })).map((p) => [p.customerId, p._sum.amountCents ?? 0]),
+  );
   const usage = new Map(
     (await prisma.aiUsage.groupBy({ by: ["customerId"], where: { customerId: { in: members.map((m) => m.id) }, createdAt: { gte: since } }, _count: true })).map((u) => [u.customerId, u._count]),
   );
   const rows = members.map((m) => {
-    const spend = m.orders.reduce((n, o) => n + o.subtotalCents + o.shippingCents, 0);
+    // Same as the spend tiers: paid orders (welcome box included) plus later subscription months.
+    const spend = m.orders.reduce((n, o) => n + o.subtotalCents + o.shippingCents, 0) + (months.get(m.id) ?? 0);
     const live = m.subscriptions.filter((s) => LIVE.includes(s.status));
     const tierLimit = tierFor(spend, limits.tiers).limit;
     const limit = m.aiLimitOverride ?? (live.length ? tierLimit : limits.freeMessages);
     return { m, spend, live, tierLimit, limit, used: usage.get(m.id) ?? 0 };
   });
   const active = rows.filter((r) => r.live.length);
-  const mrr = active.reduce((n, r) => n + r.live.reduce((k, s) => k + s.priceCents + s.shippingCents, 0), 0);
+  const mrr = active.reduce((n, r) => n + r.live.reduce((k, s) => k + s.priceCents, 0), 0);
   const tierRows = [...limits.tiers, ...Array(Math.max(0, 4 - limits.tiers.length)).fill(null)].slice(0, 6);
 
   return (
@@ -59,10 +68,11 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       </div>
       <Flash notice={notice} error={error} />
       <p className="muted small">
-        Mystery boxes are sold as monthly subscriptions. Each paid month becomes a box order in <Link href="/admin/orders">Orders</Link> for you to approve.
+        The AI assistant is a monthly subscription. A new subscriber’s first payment (first month + shipping) includes a free welcome mystery box, which becomes a box order in{" "}
+        <Link href="/admin/orders">Orders</Link> for you to approve; later months are the assistant only.
         {config.stripe.webhookSecret
           ? " Renewals arrive through the Stripe webhook."
-          : " The Stripe webhook isn’t set up, so renewals are picked up when this page syncs (every 15 minutes while you use it, or with the button). Add STRIPE_WEBHOOK_SECRET for instant renewals."}
+          : " The Stripe webhook isn’t set up, so new subscriptions and renewals are picked up when this page syncs (every 15 minutes while you use it, or with the button). Add STRIPE_WEBHOOK_SECRET to get them instantly."}
       </p>
 
       <div className="stat-row">
@@ -75,6 +85,48 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
           <strong>{formatMoney(mrr)}</strong>
         </div>
       </div>
+
+      <section className="a-card">
+        <h2 className="a-h2">Subscription plan</h2>
+        <form action={savePlanAction} className="row gap plan-form">
+          <label>
+            Price per month ($)
+            <input name="price" type="number" min={5} step="0.01" defaultValue={(plan.priceCents / 100).toFixed(2)} />
+          </label>
+          <label>
+            Welcome box margin (%)
+            <input name="margin" type="number" min={0} max={95} step="1" defaultValue={plan.marginPct} />
+          </label>
+          <button className="btn primary">Save plan</button>
+        </form>
+        <p className="muted small">
+          A welcome box’s products may cost at most {formatMoney(maxBoxCostCents(plan))} ({100 - plan.marginPct}% of {formatMoney(plan.priceCents)}); shipping is charged to the subscriber on top, at
+          cost. Every box is worth at least {formatMoney(plan.priceCents)} at list price.
+        </p>
+        <table className="table small">
+          <thead>
+            <tr>
+              <th>Box</th>
+              <th>Draws that fit the plan</th>
+              <th>Average product cost</th>
+              <th>Average margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {boxHealth.map(({ b, stats }) => (
+              <tr key={b.id}>
+                <td>
+                  <Link href={`/admin/boxes/${b.id}`}>{b.name}</Link> <span className="muted">· {b.itemCount} items</span>
+                </td>
+                <td className={stats.successRate > 0.5 ? "ok-text" : "err-text"}>{Math.round(stats.successRate * 100)}%{stats.successRate === 0 ? " (shown as sold out)" : ""}</td>
+                <td>{stats.successRate ? formatMoney(plan.priceCents - stats.avgProfitCents) : "—"}</td>
+                <td>{stats.successRate ? `${Math.round((stats.avgProfitCents / plan.priceCents) * 100)}%` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted small">Boxes built before the plan may hold items too expensive for it: rebuild them in Boxes (the builder now picks within the plan).</p>
+      </section>
 
       <section className="a-card">
         <h2 className="a-h2">AI assistant limits</h2>
@@ -135,7 +187,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
                       <div key={s.id}>
                         {s.boxName} <span className={`pill ${LIVE.includes(s.status) ? "pill-ok" : ""}`}>{s.status}</span>
                         <div className="muted">
-                          {formatMoney(s.priceCents + s.shippingCents)}/mo{s.cancelAtPeriodEnd ? " · cancels at period end" : ""} · since {timeAgo(s.createdAt)}
+                          {formatMoney(s.priceCents)}/mo{s.cancelAtPeriodEnd ? " · cancels at period end" : ""} · since {timeAgo(s.createdAt)}
                         </div>
                       </div>
                     ))}

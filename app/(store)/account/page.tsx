@@ -35,8 +35,8 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <p>Sign in to see your mystery box subscription, your orders and your AI assistant allowance. No password: we email you a one-tap link.</p>
         <SignInForm />
         <div className="account-cta">
-          <strong>New here?</strong> Subscribe to a monthly mystery box and get the AI sourcing assistant with it.{" "}
-          <Link href="/boxes">See the boxes →</Link>
+          <strong>New here?</strong> Subscribe to the AI sourcing assistant and get your first mystery box free.{" "}
+          <Link href="/boxes">Pick your box →</Link>
         </div>
       </div>
     );
@@ -54,28 +54,28 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   return (
     <div className="wrap page narrow account">
       <h1 className="page-title">Your account</h1>
-      {welcome && <p className="notice ok">You’re subscribed. Your first box is being packed; we’ll email you when it ships.</p>}
+      {welcome && <p className="notice ok">You’re subscribed. Your free mystery box is being packed; we’ll email you when it ships.</p>}
       {error && <p className="notice err">{error}</p>}
       <p className="muted">
         Signed in as <strong>{member.email}</strong>
       </p>
 
       <section className="account-card">
-        <h2 className="section-title">Mystery box subscription</h2>
+        <h2 className="section-title">AI assistant subscription</h2>
         {subs.length === 0 ? (
           <p>
-            No subscription yet. <Link href="/boxes">Pick a mystery box</Link> and get one every month, plus the AI sourcing assistant.
+            No subscription yet. <Link href="/boxes">Subscribe to the AI assistant</Link> and your first mystery box is free (you just pay its shipping).
           </p>
         ) : (
           <ul className="sub-list">
             {subs.map((s) => (
               <li key={s.id}>
                 <div>
-                  <strong>{s.boxName}</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
+                  <strong>AI assistant</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
                 </div>
                 <div className="muted small">
-                  {formatMoney(s.priceCents)}/month + {formatMoney(s.shippingCents)} shipping to {countryLabel(s.shipCountry)}
-                  {s.currentPeriodEnd && s.status !== "canceled" && (s.cancelAtPeriodEnd ? ` · ends ${fmtDate(s.currentPeriodEnd)}` : ` · next box ${fmtDate(s.currentPeriodEnd)}`)}
+                  {formatMoney(s.priceCents)}/month · free welcome box: {s.boxName} (shipping to {countryLabel(s.shipCountry)} paid)
+                  {s.currentPeriodEnd && s.status !== "canceled" && (s.cancelAtPeriodEnd ? ` · ends ${fmtDate(s.currentPeriodEnd)}` : ` · renews ${fmtDate(s.currentPeriodEnd)}`)}
                 </div>
               </li>
             ))}
@@ -105,7 +105,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         )}
         {!allowance.subscriber && (
           <p className="muted small">
-            Subscribe to a <Link href="/boxes">mystery box</Link> to keep using the assistant every month.
+            <Link href="/boxes">Subscribe</Link> to keep using the assistant every month, with a free mystery box to start.
           </p>
         )}
         <Link href="/" className="btn">

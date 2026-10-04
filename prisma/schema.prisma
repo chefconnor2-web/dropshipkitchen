@@ -193,7 +193,8 @@ model Customer {
   @@index([stripeCustomerId])
 }
 
-/// A mystery box subscription: Stripe bills it monthly and every paid invoice becomes a box order.
+/// The AI assistant subscription: billed monthly by Stripe. The first payment also buys a free welcome mystery box
+/// (the subscriber pays its shipping once); renewals are the assistant only.
 model Subscription {
   id                   String    @id @default(cuid())
   customerId           String
@@ -202,14 +203,25 @@ model Subscription {
   boxName              String
   stripeSubscriptionId String    @unique
   status               String // Stripe status: active, trialing, past_due, canceled, incomplete, unpaid…
-  priceCents           Int // the box, per month
-  shippingCents        Int // shipping, per month (quoted when they subscribed)
+  priceCents           Int // the subscription, per month
+  shippingCents        Int // welcome box shipping, paid once with the first month
   shipCountry          String
-  shippingAddressJson  String? // where every box goes
+  shippingAddressJson  String? // where the welcome box goes
   cancelAtPeriodEnd    Boolean   @default(false)
   currentPeriodEnd     DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+/// A paid month of a subscription that didn't come with a box (renewals): counts toward the customer's spend.
+model SubscriptionPayment {
+  invoiceId      String   @id
+  subscriptionId String
+  customerId     String
+  amountCents    Int
+  paidAt         DateTime
 
   @@index([customerId])
 }

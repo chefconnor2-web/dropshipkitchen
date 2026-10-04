@@ -33,7 +33,7 @@ test("normalizeLimits sorts tiers, starts them at $0 and clamps bad input", () =
 
 test("limitMessage points non-subscribers to a subscription", () => {
   const base = { used: 5, remaining: 0, spendCents: 0 };
-  assert.match(limitMessage({ ...base, subscriber: false, limit: 5, basis: "free" }), /5 free AI messages.*Subscribe/);
+  assert.match(limitMessage({ ...base, subscriber: false, limit: 3, basis: "free" }, "$30.00"), /3 free AI messages.*Subscribe for \$30\.00\/month.*free mystery box/);
   assert.match(limitMessage({ ...base, subscriber: true, limit: 100, basis: "tier" }), /all 100 AI messages for this month/);
 });
 
