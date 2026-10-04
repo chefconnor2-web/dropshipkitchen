@@ -52,17 +52,28 @@ export async function POST(req: Request) {
 
   const chat = (await currentChat(true))!;
   const cartId = await getOrCreateCartId();
-  try {
-    const entry = await chatTurn(chat.id, cartId, message);
-    return Response.json({ entry, cartCount: await cartCount() });
-  } catch (e) {
-    if (e instanceof AssistantLimitError) return Response.json({ error: e.message }, { status: 400 });
-    if (e instanceof Anthropic.RateLimitError) return Response.json({ error: "The assistant is busy. Try again in a minute." }, { status: 429 });
-    if (e instanceof Anthropic.AuthenticationError) {
-      console.error("[assistant] bad ANTHROPIC_API_KEY");
-      return Response.json({ error: "The assistant isn't set up correctly." }, { status: 503 });
-    }
-    console.error("[assistant]", e);
-    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
-  }
+
+  // NDJSON stream: progress notes while tools run (keeps the connection alive on slow turns), then the result.
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (o: unknown) => controller.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+      try {
+        const entry = await chatTurn(chat.id, cartId, message, (note) => send({ type: "progress", note }));
+        send({ type: "done", entry, cartCount: await cartCount() });
+      } catch (e) {
+        let error = "Something went wrong. Please try again.";
+        if (e instanceof AssistantLimitError) error = e.message;
+        else if (e instanceof Anthropic.RateLimitError) error = "The assistant is busy. Try again in a minute.";
+        else if (e instanceof Anthropic.AuthenticationError) {
+          console.error("[assistant] bad ANTHROPIC_API_KEY");
+          error = "The assistant isn't set up correctly.";
+        } else console.error("[assistant]", e);
+        send({ type: "error", error });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no" } });
 }
