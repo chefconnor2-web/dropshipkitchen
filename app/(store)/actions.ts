@@ -19,6 +19,9 @@ import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
 import { designLabel } from "@/lib/personalize";
 import { prewarmCartQuote } from "@/lib/cart-quote";
+import { createLoginToken, getMember, signOut } from "@/lib/session";
+import { billingPortalUrl, startBoxSubscription } from "@/lib/subscriptions";
+import { sendEmail } from "@/lib/email";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { linkProductById, platformById, platformName } from "@/lib/lineup";
 
@@ -341,4 +344,64 @@ export async function removeCartBox(form: FormData) {
   const cartId = await getCartId();
   if (cartId) await prisma.cartBox.deleteMany({ where: { id: String(form.get("id") || ""), cartId } });
   revalidatePath("/", "layout");
+}
+
+// ---------- accounts & mystery box subscriptions ----------
+
+/** Box page: subscribe (monthly) and go to Stripe. */
+export async function subscribeToBox(form: FormData) {
+  const boxId = String(form.get("boxId") || "");
+  const box = await prisma.mysteryBox.findUnique({ where: { id: boxId } });
+  if (!box) redirect("/boxes");
+  const problem = stripeKeyProblem();
+  if (problem) redirect(`/boxes/${box.slug}?error=${encodeURIComponent("Subscriptions aren’t switched on yet: " + problem)}`);
+  const shipTo = await getShipTo();
+  const member = await getMember();
+  let url: string;
+  try {
+    url = await startBoxSubscription({ boxId, country: shipTo.country, zip: shipTo.zip, customer: member });
+  } catch (e) {
+    redirect(`/boxes/${box.slug}?error=${encodeURIComponent(e instanceof Error ? e.message : "Couldn’t start the subscription.")}`);
+  }
+  redirect(url);
+}
+
+export type SignInState = { ok: boolean; message: string } | null;
+
+/** Account page: email a one-tap sign-in link. */
+export async function requestSignIn(_prev: SignInState, form: FormData): Promise<SignInState> {
+  const email = String(form.get("email") || "").trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, message: "Enter a valid email." };
+  // One link a minute per address, so the form can't be used to flood someone's inbox.
+  const recent = await prisma.loginToken.findFirst({ where: { email, createdAt: { gte: new Date(Date.now() - 60_000) } } });
+  if (recent) return { ok: true, message: `Check ${email} for a sign-in link.` };
+  const token = await createLoginToken(email);
+  const link = `${config.siteUrl}/account/verify?token=${encodeURIComponent(token)}`;
+  const log = await sendEmail({
+    to: email,
+    kind: "sign_in",
+    subject: `Sign in to ${config.storeName}`,
+    text: `Tap to sign in to ${config.storeName}: ${link}\n\nThe link works once and expires in 30 minutes. If you didn't ask for it, ignore this email.`,
+    html: `<p style="font-size:15px">Tap to sign in to ${config.storeName}:</p><p><a href="${link}" style="display:inline-block;padding:12px 20px;background:#E8551C;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">Sign in</a></p><p style="font-size:13px;color:#666">The link works once and expires in 30 minutes. If you didn't ask for it, ignore this email.</p>`,
+  });
+  if (log.status !== "sent") return { ok: false, message: "We couldn’t send the email right now. Please try again later." };
+  return { ok: true, message: `Check ${email} for a sign-in link.` };
+}
+
+export async function signOutAction() {
+  await signOut();
+  redirect("/account");
+}
+
+/** Account page: open Stripe's billing portal (card, address, cancel). */
+export async function openBillingPortal() {
+  const member = await getMember();
+  if (!member?.stripeCustomerId) redirect("/account");
+  let url: string;
+  try {
+    url = await billingPortalUrl(member.stripeCustomerId);
+  } catch (e) {
+    redirect(`/account?error=${encodeURIComponent(`Couldn’t open billing: ${e instanceof Error ? e.message : String(e)}`)}`);
+  }
+  redirect(url);
 }

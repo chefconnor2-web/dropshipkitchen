@@ -183,7 +183,68 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  orders Order[]
+  orders           Order[]
+  /// Their Stripe customer (set when they subscribe), for billing and the billing portal.
+  stripeCustomerId String?
+  /// The merchant's own AI message limit for this person (per 30 days); null = by spend tier.
+  aiLimitOverride  Int?
+  subscriptions    Subscription[]
+
+  @@index([stripeCustomerId])
+}
+
+/// The AI assistant subscription: billed monthly by Stripe. The first payment also buys a free welcome mystery box
+/// (the subscriber pays its shipping once); renewals are the assistant only.
+model Subscription {
+  id                   String    @id @default(cuid())
+  customerId           String
+  customer             Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  boxId                String
+  boxName              String
+  stripeSubscriptionId String    @unique
+  status               String // Stripe status: active, trialing, past_due, canceled, incomplete, unpaid…
+  priceCents           Int // the subscription, per month
+  shippingCents        Int // welcome box shipping, paid once with the first month
+  shipCountry          String
+  shippingAddressJson  String? // where the welcome box goes
+  cancelAtPeriodEnd    Boolean   @default(false)
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+/// A paid month of a subscription that didn't come with a box (renewals): counts toward the customer's spend.
+model SubscriptionPayment {
+  invoiceId      String   @id
+  subscriptionId String
+  customerId     String
+  amountCents    Int
+  paidAt         DateTime
+
+  @@index([customerId])
+}
+
+/// One AI assistant message. Limits count these over the last 30 days.
+model AiUsage {
+  id         String   @id @default(cuid())
+  customerId String?
+  visitorId  String?
+  chatId     String?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([visitorId, createdAt])
+}
+
+/// One-tap email sign-in links (only the hash is stored).
+model LoginToken {
+  tokenHash String    @id
+  email     String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 }
 
 model Order {
@@ -230,6 +291,11 @@ model Order {
   /// Set when the order ships as several CJ parcels (too heavy for one): [{items:[{vid,quantity}], method, cents}]
   parcelPlanJson      String?
   parcels             OrderParcel[]
+  /// Subscription box orders: the Stripe invoice that paid for this box (one order per invoice).
+  stripeInvoiceId     String?
+  subscriptionId      String?
+
+  @@index([stripeInvoiceId])
 }
 
 // Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.

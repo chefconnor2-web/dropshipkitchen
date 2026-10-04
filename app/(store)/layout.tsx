@@ -36,6 +36,13 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               <span className="show-xs">Catalog</span>
             </Link>
           </nav>
+          <Link href="/account" className="search-link account-link" aria-label="Your account">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M5 20a7 7 0 0 1 14 0" />
+            </svg>
+            <span className="hide-xs">Account</span>
+          </Link>
           <Link href="/search" className="search-link" aria-label="Search all products">
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
               <circle cx="11" cy="11" r="6.5" />

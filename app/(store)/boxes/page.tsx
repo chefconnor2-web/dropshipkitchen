@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getPlan } from "@/lib/plan";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
@@ -8,13 +9,14 @@ export const metadata = { title: `Mystery boxes — ${config.storeName}` };
 
 export default async function BoxesPage() {
   const boxes = await prisma.mysteryBox.findMany({ where: { status: "PUBLISHED" }, orderBy: { priceCents: "asc" } });
+  const plan = await getPlan();
   return (
     <>
       <section className="band band-dark search-hero">
         <div className="wrap">
           <p className="eyebrow">Mystery boxes</p>
           <h1 className="section-title">Surprise picks from Chinese factories. Always worth more than you pay.</h1>
-          <p className="section-lede">Every box has a set number of different items and a guaranteed minimum value. What’s inside is revealed the moment you pay.</p>
+          <p className="section-lede">Subscribe to our AI sourcing assistant for {formatMoney(plan.priceCents)}/month and your first mystery box is free: pick one below and just pay its shipping.</p>
         </div>
       </section>
       <section className="band">
@@ -27,15 +29,15 @@ export default async function BoxesPage() {
                 <Link key={b.id} href={`/boxes/${b.slug}`} className="box-card">
                   <div className="box-art" aria-hidden>
                     <span>?</span>
-                    <em className="box-badge">Worth {formatMoney(b.guaranteedValueCents)}+</em>
+                    <em className="box-badge">Free with the assistant</em>
                   </div>
                   <div className="box-card-body">
                     <h2>{b.name}</h2>
                     <p>{b.tagline}</p>
                     <div className="box-card-foot">
-                      <strong>{formatMoney(b.priceCents)}</strong>
+                      <strong>Free</strong>
                       <span>
-                        {b.itemCount} items · worth {formatMoney(b.guaranteedValueCents)}+
+                        {b.itemCount} items · worth {formatMoney(plan.priceCents)}+
                       </span>
                     </div>
                   </div>

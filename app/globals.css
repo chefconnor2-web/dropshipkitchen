@@ -1348,3 +1348,26 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .ship-est-note { margin: 6px 0 0; }
 .checkout-btn { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .checkout-btn .ship-pending-dot { background: #fff; }
+
+/* ---------- accounts & subscriptions ---------- */
+.account .account-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin: 18px 0; display: grid; gap: 10px; }
+.account .account-card .section-title { margin: 0; }
+.account .account-card p { margin: 0; }
+.account .account-card .btn { justify-self: start; }
+.account-cta { margin-top: 24px; padding: 16px; border-radius: 10px; background: #f6f3ee; }
+.signin-form { display: grid; gap: 8px; margin: 16px 0; max-width: 520px; }
+.signin-form label { margin: 0; }
+.signin-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.signin-row input { flex: 1 1 220px; }
+.sub-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.ai-meter { height: 8px; border-radius: 999px; background: #eee9e1; overflow: hidden; }
+.ai-meter span { display: block; height: 100%; background: var(--signal, #E8551C); border-radius: 999px; }
+.order-mini { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.order-mini li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.price .per-month { font-size: 0.55em; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.cx-error-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.stat-row .stat { padding: 14px 18px; min-width: 160px; }
+.stat-row .stat strong { font-size: 22px; }
+.limits-form { display: grid; gap: 10px; max-width: 520px; }
+.limits-form table input { width: 100%; }

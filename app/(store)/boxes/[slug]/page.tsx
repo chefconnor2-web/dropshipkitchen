@@ -4,7 +4,10 @@ import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { loadPool, simulate } from "@/lib/mystery";
-import { addBoxToCart } from "../../actions";
+import { subscribeToBox } from "../../actions";
+import { getShipTo } from "@/lib/cart";
+import { countryLabel } from "@/lib/shipping";
+import { getPlan, planRules } from "@/lib/plan";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +24,10 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
     include: { pool: { take: 8, include: { variant: { include: { product: { include: { images: { take: 1, orderBy: { position: "asc" } } } } } } } } },
   });
   if (!box) notFound();
-  const available = simulate(await loadPool(box.id), box, 40).successRate > 0;
+  // Sold only as the subscription's free welcome box: priced and drawn under the plan (price and margin).
+  const plan = await getPlan();
+  const available = simulate(await loadPool(box.id), planRules(box, plan), 40).successRate > 0;
+  const shipTo = await getShipTo();
   const teasers = [...new Map(box.pool.map((p) => [p.variant.productId, p.variant.product.images[0]?.id])).values()].filter(Boolean).slice(0, 6);
 
   return (
@@ -43,30 +49,30 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
           )}
         </div>
         <div>
-          <p className="eyebrow">Mystery box</p>
+          <p className="eyebrow">Free with the AI assistant</p>
           <h1 className="page-title">{box.name}</h1>
           <p className="box-tagline">{box.tagline}</p>
           <div className="price">
-            {formatMoney(box.priceCents)}
-            <span className="box-value">
-              worth {formatMoney(box.guaranteedValueCents)}+ · save {Math.round((1 - box.priceCents / box.guaranteedValueCents) * 100)}%+
-            </span>
+            Free
+            <span className="box-value">with your first month of the AI assistant · {formatMoney(plan.priceCents)}/month</span>
           </div>
           <ul className="box-promises">
             <li>
-              <strong>{box.itemCount} different items</strong> in every box
+              <strong>{box.itemCount} different items</strong>, worth at least {formatMoney(plan.priceCents)} at our regular prices
             </li>
             <li>
-              <strong>Worth at least {formatMoney(box.guaranteedValueCents)}</strong> at our regular prices
+              <strong>Free</strong>: you only pay its shipping to {countryLabel(shipTo.country)}, once, shown before you pay
             </li>
-            <li>Revealed on your order page and by email the moment you pay</li>
-            <li>Shipping quoted to your postal code in the cart</li>
+            <li>
+              <strong>The AI sourcing assistant</strong> for {formatMoney(plan.priceCents)}/month, with a bigger allowance the more you order
+            </li>
+            <li>Cancel any time from your account</li>
           </ul>
           {error && <p className="notice err">{error}</p>}
           {available ? (
-            <form action={addBoxToCart}>
+            <form action={subscribeToBox}>
               <input type="hidden" name="boxId" value={box.id} />
-              <button className="btn primary lg">Add box to cart</button>
+              <button className="btn primary lg">Subscribe · {formatMoney(plan.priceCents)}/month + free box</button>
             </form>
           ) : (
             <p className="notice">Sold out right now. Check back soon.</p>

@@ -60,7 +60,8 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
   const [loading, setLoading] = useState(chatId !== null);
   const [input, setInput] = useState("");
   const [turn, setTurn] = useState<Turn | null>(null);
-  const [error, setError] = useState<{ message: string; retryIndex: number } | null>(null);
+  const [error, setError] = useState<{ message: string; retryIndex: number; limit?: { subscriber: boolean; signedIn: boolean } } | null>(null);
+  const [allowance, setAllowance] = useState<{ remaining: number; limit: number; subscriber: boolean } | null>(null);
   const [toast, setToast] = useState<{ text: string; cart?: boolean } | null>(null);
   const [adding, setAdding] = useState<Record<string, boolean>>({});
   const [addedPids, setAddedPids] = useState<Record<string, boolean>>({});
@@ -140,6 +141,11 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
       setEntries([]);
       setLoading(false);
       focusComposer();
+      // How many AI messages this shopper has left (shown under the composer).
+      fetch("/api/assistant")
+        .then((r) => r.json())
+        .then((d) => d.allowance && setAllowance(d.allowance))
+        .catch(() => null);
       return;
     }
     const cached = cache.current.get(chatId);
@@ -152,6 +158,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         if (!d.chat) return ev.current.onMissing();
         setEntries(d.entries ?? []);
         ev.current.onCart(d.cartCount ?? 0);
+        if (d.allowance) setAllowance(d.allowance);
       })
       .catch(() => null)
       .finally(() => activeId.current === chatId && setLoading(false));
@@ -232,9 +239,14 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
       });
       if (!r.ok || !r.body) {
         const d = await r.json().catch(() => ({}));
+        if (d.limit) {
+          setAllowance((a) => (a ? { ...a, remaining: 0 } : a));
+          throw Object.assign(new Error(d.error), { limit: d.limit });
+        }
         throw new Error(d.error || "Something went wrong.");
       }
       await readNdjson(r, (e) => {
+        if (e.type === "done" && e.allowance) setAllowance(e.allowance);
         if (e.type === "chat") {
           if (!id) {
             id = e.id as string;
@@ -289,7 +301,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         // Keep what was written so far, like stopping a reply in ChatGPT.
         setEntries((en) => [...en, { role: "assistant", text: t.text, cards: [], added: [], steps: t.steps, groups: t.groups, stopped: true }]);
       } else {
-        setError({ message: e instanceof Error ? e.message : "Something went wrong.", retryIndex: userIndex });
+        setError({ message: e instanceof Error ? e.message : "Something went wrong.", retryIndex: userIndex, limit: (e as { limit?: { subscriber: boolean; signedIn: boolean } }).limit });
       }
     } finally {
       if (run.current === me) run.current = null;
@@ -743,9 +755,24 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
             {error && (
               <div className="cx-error" role="alert">
                 <span>{error.message}</span>
-                <button type="button" className="cx-btn" onClick={() => regenerate(error.retryIndex)}>
-                  <RetryIcon /> Try again
-                </button>
+                {error.limit ? (
+                  <span className="cx-error-actions">
+                    {!error.limit.subscriber && (
+                      <Link href="/boxes" className="cx-btn cx-btn-primary">
+                        Subscribe
+                      </Link>
+                    )}
+                    {!error.limit.signedIn && (
+                      <Link href="/account" className="cx-btn">
+                        Sign in
+                      </Link>
+                    )}
+                  </span>
+                ) : (
+                  <button type="button" className="cx-btn" onClick={() => regenerate(error.retryIndex)}>
+                    <RetryIcon /> Try again
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -761,7 +788,13 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
           )}
           {composer}
           <p className="cx-disclaimer">
-            The assistant can make mistakes. Check specs before you order. {cartCount > 0 && <Link href="/cart">Cart ({cartCount})</Link>}
+            The assistant can make mistakes. Check specs before you order.{" "}
+            {allowance && (
+              <Link href="/account">
+                {allowance.remaining} {allowance.subscriber ? "" : "free "}AI message{allowance.remaining === 1 ? "" : "s"} left
+              </Link>
+            )}{" "}
+            {cartCount > 0 && <Link href="/cart">Cart ({cartCount})</Link>}
           </p>
         </div>
       )}

@@ -7,6 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
+import { getPlan, maxItemListCents, planRules } from "@/lib/plan";
 import { slugify } from "@/lib/cj/normalize";
 import { openCjProduct } from "@/lib/open-product";
 import { EFFORT, MODEL, runScouts, type AssistantEvent, type Part, type ScoutResult } from "@/lib/assistant";
@@ -75,15 +76,22 @@ export function defaultRules(b: BoxBrief): BoxRules {
   };
 }
 
-/** List-price band each item should sit in so a draw can reach the guaranteed value. */
-export function priceBand(r: BoxRules) {
+/**
+ * List-price band each item should sit in so a draw can reach the guaranteed value, capped at `maxListCents`
+ * (the most an item can list at and still fit the plan's margin).
+ */
+export function priceBand(r: BoxRules, maxListCents = Infinity) {
   const avg = r.guaranteedValueCents / r.itemCount;
-  return { lo: Math.max(999, Math.round(avg * 0.7)), hi: Math.round(avg * 1.9) };
+  const lo = Math.max(999, Math.round(avg * 0.7));
+  return { lo, hi: Math.max(lo, Math.min(Math.round(avg * 1.9), maxListCents)) };
 }
 
 export async function buildBoxWithAI(b: BoxBrief, emit: (e: BuilderEvent) => void): Promise<string> {
-  const rules = defaultRules(b);
-  const band = priceBand(rules);
+  // Boxes are the subscription's free welcome box: priced and drawn under the plan (its price and margin),
+  // so the pool must be products cheap enough to keep that margin.
+  const plan = await getPlan();
+  const rules = planRules({ itemCount: b.itemCount }, plan);
+  const band = priceBand(rules, maxItemListCents(plan, rules.itemCount));
   const client = new Anthropic();
   const usage = { in: 0, out: 0 };
   const known = new Map<string, { title: string; fromCents: number }>();

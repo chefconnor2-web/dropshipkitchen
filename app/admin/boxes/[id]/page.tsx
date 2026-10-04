@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getPlan, planRules } from "@/lib/plan";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
@@ -17,7 +18,8 @@ export default async function BoxDetail({ params, searchParams }: { params: Prom
   });
   if (!box) notFound();
   const pool = await loadPool(box.id);
-  const stats = simulate(pool, box);
+  // Boxes are drawn under the subscription plan (price and margin), so check health under those rules.
+  const stats = simulate(pool, planRules(box, await getPlan()));
   const sample = drawBox(pool, box);
   const live = box.status === "PUBLISHED";
 
