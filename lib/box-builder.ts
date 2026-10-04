@@ -92,7 +92,7 @@ export async function buildBoxWithAI(b: BoxBrief, emit: (e: BuilderEvent) => voi
   const system = `You design mystery boxes for ${config.storeName}, a Canadian store selling products from Chinese factories. A box is sold at a fixed price and each buyer gets ${rules.itemCount} different products drawn at random from a pool you choose.
 
 Rules for the pool:
-- 15 to 25 products that clearly fit the brief and feel like a fun, useful surprise. Vary the types; don't pick near-duplicates.
+- 14 to 20 products that clearly fit the brief and feel like a fun, useful surprise. Vary the types; don't pick near-duplicates.
 - Every product's list price must be between ${formatMoney(band.lo)} and ${formatMoney(band.hi)} (the scouts return list prices). That keeps every box worth at least ${formatMoney(rules.guaranteedValueCents)}.
 - Nothing risky to ship or sell blind: no lithium batteries or power banks, liquids, aerosols, food, cosmetics or skincare, knives or weapons, adult items, medicine, fragile glass, branded or knock-off goods, clothing that needs a size.
 - Use find_products once with 8 to 12 categories (2-3 short keyword queries each, and the price band in each need), retry any empty category once, then call save_box with the best products.

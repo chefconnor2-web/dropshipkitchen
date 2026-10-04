@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { config } from "@/lib/config";
 import AssistantChat from "@/components/store/AssistantChat";
+import { prisma } from "@/lib/db";
+import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
@@ -21,7 +23,8 @@ const PROMISES = [
   { h: "Shipping upfront", p: "Your real shipping cost to Canada is shown in the cart, never a surprise." },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const boxes = await prisma.mysteryBox.findMany({ where: { status: "PUBLISHED" }, orderBy: { priceCents: "asc" }, take: 3 });
   return (
     <>
       <section className="hero ai-hero">
@@ -60,6 +63,38 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {boxes.length > 0 && (
+        <section className="band">
+          <div className="wrap">
+            <p className="eyebrow">Mystery boxes</p>
+            <div className="section-head">
+              <h2 className="section-title">Surprise picks, always worth more than you pay.</h2>
+              <Link href="/boxes" className="btn">
+                All boxes
+              </Link>
+            </div>
+            <div className="box-grid">
+              {boxes.map((b) => (
+                <Link key={b.id} href={`/boxes/${b.slug}`} className="box-card">
+                  <div className="box-art" aria-hidden>
+                    <span>?</span>
+                    <em className="box-badge">Worth {formatMoney(b.guaranteedValueCents)}+</em>
+                  </div>
+                  <div className="box-card-body">
+                    <h3>{b.name}</h3>
+                    <p>{b.tagline}</p>
+                    <div className="box-card-foot">
+                      <strong>{formatMoney(b.priceCents)}</strong>
+                      <span>{b.itemCount} items</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="band band-tight">
         <div className="wrap promise-row">

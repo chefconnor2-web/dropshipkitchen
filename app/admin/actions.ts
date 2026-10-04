@@ -285,3 +285,9 @@ export async function deleteBoxAction(form: FormData) {
   await prisma.mysteryBox.delete({ where: { id: String(form.get("id") || "") } });
   redirect(`/admin/boxes?notice=${encodeURIComponent("Box deleted")}`);
 }
+
+export async function buildPresetBoxesAction() {
+  const { startPresetBuild } = await import("@/lib/box-presets");
+  const started = startPresetBuild();
+  redirect(`/admin/boxes?notice=${encodeURIComponent(started ? "Building the preset boxes in the background. Each takes a few minutes; refresh to see progress." : "Preset boxes are already being built.")}`);
+}
