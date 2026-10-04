@@ -44,7 +44,13 @@ export type UiEntry =
   | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit };
 
 /** Live events for the chat panel while a turn runs. */
-export type AssistantEvent = { type: "progress"; note: string } | { type: "found"; group: string; cards: ProductCard[]; done: boolean };
+export type AssistantEvent =
+  | { type: "progress"; note: string }
+  | { type: "found"; group: string; cards: ProductCard[]; done: boolean }
+  /** Streamed words of the answer as the model writes them. */
+  | { type: "text"; delta: string }
+  /** The model finished a burst of text and is about to use tools. */
+  | { type: "break" };
 
 function systemPrompt(): string {
   return `You are the sourcing assistant for ${config.storeName}, a Canadian B2B store where businesses and makers order almost anything from Chinese factories. Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
@@ -445,10 +451,12 @@ export async function chatTurn(
   const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage };
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
+  const texts: string[] = [];
 
-  emit({ type: "progress", note: "Planning your parts list…" });
+  emit({ type: "progress", note: "Thinking…" });
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await client.beta.messages.create({
+    // Stream so the shopper sees the answer being written; finalMessage() gives the complete turn.
+    const stream = client.beta.messages.stream({
       model: MODEL,
       max_tokens: 8000,
       system: systemPrompt(),
@@ -458,20 +466,26 @@ export async function chatTurn(
       // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.
       ...(haikuPlanner ? {} : { output_config: { effort: EFFORT }, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
     });
+    stream.on("text", (delta) => emit({ type: "text", delta }));
+    const response = await stream.finalMessage();
     usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
     usage.out += response.usage.output_tokens;
     messages.push({ role: "assistant", content: response.content });
-    reply = response.content
+    const roundText = response.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
       .map((b) => b.text)
       .join("\n")
       .trim();
+    // The saved reply is everything the shopper watched being written, across rounds.
+    if (roundText) texts.push(roundText);
+    reply = texts.join("\n\n");
 
     if (response.stop_reason !== "tool_use") {
       if (response.stop_reason === "refusal") reply = "Sorry, I can't help with that one.";
       break;
     }
     const calls = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
+    if (roundText) emit({ type: "break" });
     const results: Anthropic.Beta.BetaToolResultBlockParam[] = await Promise.all(
       calls.map(async (c) => {
         try {
