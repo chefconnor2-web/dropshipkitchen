@@ -325,7 +325,7 @@ export function ProductCard({
         <div className="cx-card-foot">
           <span className="cx-price">{money(c.fromCents)}</span>
           <button type="button" className={`cx-btn cx-btn-primary${added ? " is-done" : ""}`} disabled={adding} onClick={() => onAdd()} aria-label={`Add ${c.title} to cart`}>
-            {adding ? <Spinner /> : added ? "✓ Added" : "Add"}
+            {added ? "✓ Added" : adding ? <Spinner /> : "Add"}
           </button>
         </div>
       )}

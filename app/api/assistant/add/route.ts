@@ -5,10 +5,16 @@ import { getOrCreateCartId, cartCount } from "@/lib/cart";
 import { addVariantToCart } from "@/lib/cart-add";
 import { openCjProduct } from "@/lib/open-product";
 import { stockLabel, stockStatus } from "@/lib/inventory";
+import { withCjPriority } from "@/lib/cj/lanes";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: Request) {
+export function POST(req: Request) {
+  // A shopper is waiting on this tap: its CJ calls go ahead of background imports.
+  return withCjPriority("urgent", () => add(req));
+}
+
+async function add(req: Request) {
   const { pid, variantId, quantity } = (await req.json().catch(() => ({}))) as { pid?: string; variantId?: string; quantity?: number };
   const qty = Math.max(1, Math.min(999, Number(quantity) || 1));
 

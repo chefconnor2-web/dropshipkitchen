@@ -4,6 +4,7 @@ import { cartCount, getOrCreateCartId } from "@/lib/cart";
 import { addKitToCart } from "@/lib/kit";
 import type { UiEntry } from "@/lib/assistant";
 import { findOwnChat, getVisitorId } from "@/lib/chat-session";
+import { withCjPriority } from "@/lib/cj/lanes";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
       };
       const ping = setInterval(() => send({ type: "ping" }), 5000);
       try {
-        const results = await addKitToCart(cartId, kit.items, (done, total, result) => send({ type: "item", done, total, result }));
+        const results = await withCjPriority("urgent", () => addKitToCart(cartId, kit.items, (done, total, result) => send({ type: "item", done, total, result })));
         send({ type: "done", results, cartCount: await cartCount() });
       } catch (e) {
         console.error("[kit]", e);
