@@ -4,7 +4,7 @@ import { config } from "@/lib/config";
 import ProductCard from "@/components/store/ProductCard";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: `Off-grid gear — ${config.storeName}` };
+export const metadata = { title: `Shop all tools — ${config.storeName}` };
 
 const SORTS = {
   featured: { label: "Featured", fn: null },
@@ -52,8 +52,8 @@ export default async function ShopPage({ searchParams }: { searchParams: Promise
                 <Link href="/shop">Shop</Link> / <span>{category}</span>
               </nav>
             )}
-            <p className="eyebrow">Off-grid gear</p>
-            <h1 className="section-title">{category ?? "Everything for the field"}</h1>
+            <p className="eyebrow">Tools &amp; gadgets</p>
+            <h1 className="section-title">{category ?? "Everything on the shelf"}</h1>
             <div className="muted small">
               {products.length} product{products.length === 1 ? "" : "s"}
             </div>

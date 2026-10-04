@@ -1,5 +1,5 @@
 /**
- * Demo seed: finds ~10 REAL chef-supply products through CJ's official Product List V2 API and
+ * Seed: finds REAL tools & gadgets through CJ's official Product List V2 API and
  * imports them (product/query + variant data + stock/queryByVid per VID). Nothing is invented.
  *
  *   npm run seed:cj                 # import as DRAFT
@@ -20,22 +20,23 @@ import { importCjProduct } from "@/lib/cj/import";
 // Search term + what a relevant title must / must not contain (keeps unrelated products out),
 // plus the clean storefront name we sell it under. CJ's keyword search is loose, so `must` matches
 // the actual use, not just the noun. BRANDED skips third-party brand listings.
-const BRANDED = /kegani|qulajoy|vevor|pasabahce|pasa baahce|flashfish|smith's|ezarc|ericsity|amazon|walmart|temu|prohibited/i;
+const BRANDED = /dewalt|milwaukee|makita|bosch|ryobi|stanley|black\s*\+?\s*decker|craftsman|klein|fluke|kegani|qulajoy|vevor|pasabahce|pasa baahce|flashfish|smith's|ezarc|ericsity|amazon|walmart|temu|prohibited/i;
 /** Variant names that are only a foreign plug standard. */
 const FOREIGN_PLUG = /\b(EU|UK|AU|GB)\b(?!.*\bUS\b)/i;
 // `title` may hold {W}: the wattage from the CJ listing name. `minWatts` skips listings below it.
 const TARGETS: Array<{ q: string; must: RegExp; not?: RegExp; variantNot?: RegExp; minWatts?: number; category: string; title: string }> = [
-  { q: "300W portable power station", must: /power station/i, not: /accessor|panel only|stall|night market/i, category: "Power", title: "{W}W Portable Power Station" },
-  { q: "solar power bank", must: /solar.*power bank|power bank.*solar/i, not: /keychain|shell|mini|lipstick/i, category: "Power", title: "Solar Power Bank" },
-  { q: "solar panel portable", must: /solar panel/i, minWatts: 30, not: /bag$|bag portable|power station|generator|kit|photovoltaic/i, category: "Solar", title: "{W}W Portable Solar Panel" },
-  { q: "camping lantern rechargeable", must: /lantern/i, not: /string|seven-color|vintage|retro/i, variantNot: /\bAA\b|\d+AA|aaa/i, category: "Light", title: "Rechargeable Camp Lantern" },
-  { q: "headlamp rechargeable", must: /headlamp/i, not: /laser|fishing|fluorescence/i, category: "Light", title: "Rechargeable Headlamp" },
-  { q: "water filter straw", must: /filter|purif/i, not: /case|box|bottle/i, category: "Water", title: "Filter Straw" },
-  { q: "gravity water filter bag", must: /(gravity|bag)/i, not: /case|box|bottle|garbage|dust/i, category: "Water", title: "Gravity Water Filter" },
-  { q: "hand crank radio", must: /crank/i, not: /speaker|lighter/i, category: "Comms", title: "Solar Hand-Crank Radio" },
-  { q: "fire starter", must: /flint|fire starter|spark/i, not: /wax|barbecue|car|motor|jump|tinder maker|bow drill/i, category: "Fire & Cook", title: "Ferro Rod Fire Starter" },
-  { q: "camping stove", must: /stove/i, not: /bracket|table|burner|kerosene|head|cassette|electric/i, category: "Fire & Cook", title: "Compact Camp Stove" },
-  { q: "emergency survival kit", must: /survival|emergency kit/i, not: /self.?defen|whip|medical|first.?aid|blanket/i, category: "Survival", title: "Emergency Survival Kit" },
+  { q: "cordless drill", must: /drill/i, not: /bit set|bits only|chuck|holder|stand|bracket|rack|accessor|toy|nail|dental/i, category: "Power Tools", title: "Cordless Drill Driver" },
+  { q: "angle grinder", must: /grinder/i, not: /disc|wheel|blade|cover|guard|bracket|stand|holder|rack|mount|accessor|coffee|pepper|herb|meat|spice/i, category: "Power Tools", title: "Angle Grinder" },
+  { q: "impact wrench", must: /impact/i, not: /socket only|adapter|rack|holder|stand|bracket|organizer|accessor|toy/i, category: "Power Tools", title: "Cordless Impact Wrench" },
+  { q: "heat gun", must: /heat gun|hot air gun/i, not: /nozzle only|stand|holder|bracket|accessor/i, category: "Power Tools", title: "Heat Gun" },
+  { q: "socket wrench set", must: /socket|wrench set|ratchet/i, not: /electrical socket|outlet|plug|toy/i, category: "Hand Tools", title: "Socket & Ratchet Set" },
+  { q: "precision screwdriver set", must: /screwdriver/i, not: /electric|toy/i, category: "Hand Tools", title: "Precision Screwdriver Set" },
+  { q: "laser level", must: /laser level|leveling|levelling|line laser/i, not: /tripod only|bracket|glasses/i, category: "Measuring", title: "Laser Level" },
+  { q: "digital caliper", must: /caliper/i, not: /brake|bike/i, category: "Measuring", title: "Digital Caliper" },
+  { q: "digital multimeter", must: /multimeter/i, not: /probe only|lead only|case only/i, category: "Measuring", title: "Digital Multimeter" },
+  { q: "led work light rechargeable", must: /work light|worklight|work lamp/i, not: /bulb only|strip/i, category: "Lighting", title: "Rechargeable LED Work Light" },
+  { q: "electric screwdriver", must: /electric screwdriver|cordless screwdriver/i, not: /bit only|toy/i, category: "Gadgets", title: "Electric Screwdriver" },
+  { q: "tool box organizer", must: /tool box|toolbox|tool case|tool storage/i, not: /kids|toy|makeup|cosmetic/i, category: "Storage", title: "Tool Box" },
 ];
 
 function watts(name: string): number | null {
@@ -136,7 +137,7 @@ async function main() {
   // Only swap catalogs when the new one actually imported, so a CJ outage never empties the shop.
   if (replace && keep.size > 0) {
     const hidden = await prisma.product.updateMany({
-      where: { status: "PUBLISHED", id: { notIn: [...keep] } },
+      where: { status: "PUBLISHED", listed: true, id: { notIn: [...keep] } },
       data: { status: "DRAFT" },
     });
     console.log(`Unpublished ${hidden.count} product(s) from the previous catalog (kept as DRAFT).`);

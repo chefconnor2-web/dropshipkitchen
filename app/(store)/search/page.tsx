@@ -7,7 +7,7 @@ import { PAGE_SIZE, searchCatalog, type CatalogHit } from "@/lib/catalog-search"
 export const dynamic = "force-dynamic";
 export const metadata = { title: `Search — ${config.storeName}`, robots: { index: false, follow: false } };
 
-const IDEAS = ["battery adapter", "solar panel", "power bank", "camping lantern", "water filter", "tent", "headlamp", "cooler"];
+const IDEAS = ["cordless drill", "angle grinder", "socket set", "laser level", "multimeter", "work light", "screwdriver", "battery adapter"];
 
 export default async function SearchPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
   const params = await searchParams;
@@ -36,7 +36,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
             <label className="sr-only" htmlFor="search-q">
               Search products
             </label>
-            <input id="search-q" name="q" type="search" defaultValue={q} placeholder="Try “battery adapter” or “solar panel”" autoFocus={!q} />
+            <input id="search-q" name="q" type="search" defaultValue={q} placeholder="Try “cordless drill” or “socket set”" autoFocus={!q} />
             <button className="btn primary lg">Search</button>
           </form>
           {!q && (

@@ -5,8 +5,8 @@ import { freightCalculate } from "@/lib/cj/client";
 import { chooseFromCountry } from "@/lib/fulfillment";
 
 export const SHIP_COUNTRIES: Array<{ code: string; name: string }> = [
-  { code: "US", name: "United States" },
   { code: "CA", name: "Canada" },
+  { code: "US", name: "United States" },
   { code: "GB", name: "United Kingdom" },
   { code: "AU", name: "Australia" },
   { code: "NZ", name: "New Zealand" },

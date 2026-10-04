@@ -6,7 +6,7 @@ npm run -s reprice || echo "[reprice] skipped"
 
 # Bump CATALOG when the seed targets change. The import runs in the background so the site comes up
 # at once; --replace hides the previous catalog only after the new one imported.
-CATALOG="offgrid-1"
+CATALOG="tools-1"
 MARKER=/data/catalog-version
 if [ -n "$CJ_API_KEY" ] && [ "$(cat "$MARKER" 2>/dev/null)" != "$CATALOG" ]; then
   echo "Catalog $CATALOG not imported yet: importing from CJ in the background"
