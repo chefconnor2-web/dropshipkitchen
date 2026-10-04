@@ -37,8 +37,8 @@ test("limitMessage points non-subscribers to both plans, and Lite subscribers to
   const free = limitMessage({ ...base, subscriber: false, plan: null, limit: 3, basis: "free" }, prices);
   assert.match(free, /end of your free preview.*Full \(\$30\.00\/month\) with a free mystery box, or Lite \(\$5\.00\/month\)/);
   assert.match(limitMessage({ ...base, subscriber: false, plan: null, limit: 3, basis: "free" }, { full: "$30.00", lite: null }), /^(?!.*Lite).*Full \(\$30/);
-  assert.match(limitMessage({ ...base, subscriber: true, plan: "full", limit: 100, basis: "tier" }), /used this month's AI allowance/);
-  assert.match(limitMessage({ ...base, subscriber: true, plan: "lite", limit: 6, basis: "lite" }, prices), /Lite allowance.*upgrade to Full \(\$30\.00\/month\)/);
+  assert.match(limitMessage({ ...base, subscriber: true, plan: "full", limit: 100, basis: "tier" }), /used this month's assistant time/);
+  assert.match(limitMessage({ ...base, subscriber: true, plan: "lite", limit: 6, basis: "lite" }, prices), /this month's Lite plan.*upgrade to Full \(\$30\.00\/month\)/);
   // Customers are never told how many messages they get.
   for (const a of [
     { ...base, subscriber: false, plan: null, limit: 3, basis: "free" },

@@ -142,9 +142,9 @@ export async function recordAiUse(who: { customerId: string | null; visitorId: s
 /** What to tell someone who has run out. `prices`: the full and Lite monthly prices, e.g. "$30.00" / "$5.00". */
 export function limitMessage(a: Allowance, prices: { full?: string; lite?: string | null } = {}): string {
   if (a.plan === "lite")
-    return `You've used this month's Lite allowance. It refills over the month, or upgrade to Full${prices.full ? ` (${prices.full}/month)` : ""} for our biggest allowance and a free mystery box.`;
+    return `You've used this month's Lite plan. It refills over the month, or upgrade to Full${prices.full ? ` (${prices.full}/month)` : ""}: our most generous plan, with a free mystery box.`;
   if (a.subscriber)
-    return `You've used this month's AI allowance. It refills over the month, and it grows as you shop with us.`;
+    return `You've used this month's assistant time. It refills over the month, and you get more the more you shop with us.`;
   const options = [`Full${prices.full ? ` (${prices.full}/month)` : ""} with a free mystery box`, prices.lite ? `Lite (${prices.lite}/month)` : null].filter(Boolean).join(", or ");
   const pitch = `Keep going with ${options}.`;
   return a.basis === "custom" ? `That's the end of your AI preview. ${pitch}` : `That's the end of your free preview. ${pitch} Already subscribed? Sign in.`;

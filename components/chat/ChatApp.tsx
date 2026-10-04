@@ -293,7 +293,7 @@ export default function ChatApp(props: { storeName: string; initials: string; co
               </button>
             </>
           )}
-          <div className="topbar-title">{active ? active.title : <span className="topbar-brand">{props.storeName} <span>Sourcing assistant</span></span>}</div>
+          <div className="topbar-title">{active ? active.title : <span className="topbar-brand">{props.storeName} <span>Shopping assistant</span></span>}</div>
           <button type="button" className="sb-icon show-mobile" onClick={newChat} aria-label="New chat">
             <NewChatIcon />
           </button>

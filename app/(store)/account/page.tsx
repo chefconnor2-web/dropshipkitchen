@@ -71,7 +71,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </p>
 
       <section className="account-card">
-        <h2 className="section-title">AI assistant subscription</h2>
+        <h2 className="section-title">Your plan</h2>
         {subs.length === 0 ? (
           <p>
             No subscription yet. <Link href="/plans">See plans</Link>: Lite for AI only, or the full plan with your first mystery box free.
@@ -81,7 +81,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             {subs.map((s) => (
               <li key={s.id}>
                 <div>
-                  <strong>{s.plan === "lite" ? "AI assistant Lite" : "AI assistant"}</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
+                  <strong>{s.plan === "lite" ? "Lite" : "Full"}</strong> <span className={`pill ${s.status === "active" || s.status === "trialing" ? "pill-ok" : ""}`}>{STATUS[s.status] ?? s.status}</span>
                 </div>
                 <div className="muted small">
                   {formatMoney(s.priceCents)}/month
@@ -100,9 +100,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </section>
 
       <section className="account-card">
-        <h2 className="section-title">AI assistant</h2>
+        <h2 className="section-title">Shopping assistant</h2>
         {/* How much is left, as a bar and a word: customers never see message counts. */}
-        <div className="ai-meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100 - pct} aria-label="AI allowance left">
+        <div className="ai-meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100 - pct} aria-label="Assistant use left this month">
           <span style={{ width: `${100 - pct}%` }} />
         </div>
         <p>
@@ -111,17 +111,17 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         </p>
         {allowance.subscriber && allowance.basis === "tier" && (
           <p className="muted small">
-            Your allowance grows as you shop{nextTier ? `: spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more to unlock a bigger one.` : ", and you’re at the top level."}
+            You get more the more you shop{nextTier ? `: spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more to unlock the next level.` : ", and you’re at the top level."}
           </p>
         )}
         {allowance.basis === "lite" && (
           <p className="muted small">
-            Short questions use less of your allowance than big sourcing searches. <Link href="/plans">Upgrade to Full</Link> for our biggest allowance and a free mystery box.
+            Quick questions use less than big shopping searches. <Link href="/plans">Upgrade to Full</Link>, our most generous plan, with a free mystery box.
           </p>
         )}
         {!allowance.subscriber && (
           <p className="muted small">
-            <Link href="/plans">Pick a plan</Link> to keep your sourcing assistant.
+            <Link href="/plans">Pick a plan</Link> to keep your shopping assistant.
           </p>
         )}
         <Link href="/" className="btn">

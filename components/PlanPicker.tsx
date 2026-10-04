@@ -34,10 +34,10 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
           </div>
           <div className="pp-sub">About {money(Math.round(perDay))} a day, with a free mystery box to start</div>
           <ul className="pp-list">
-            <li>Our biggest AI allowance</li>
-            <li>Free mystery box with your first month</li>
-            <li>Allowance grows as you shop</li>
-            <li>Find, compare and fill your cart from chat</li>
+            <li>Our most generous plan</li>
+            <li>A free mystery box with your first month</li>
+            <li>Even more help the more you shop</li>
+            <li>It finds, compares and fills your cart for you</li>
           </ul>
           <Link href="/boxes" className="pp-btn pp-btn-main">
             Get Full + free box
@@ -50,10 +50,10 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
               <strong>{money(offer.lite.priceCents)}</strong>
               <span>/month</span>
             </div>
-            <div className="pp-sub">Keep the assistant, skip the box</div>
+            <div className="pp-sub">Your shopping assistant, without the box</div>
             <ul className="pp-list">
-              <li>The AI sourcing assistant</li>
-              <li>Find, compare and fill your cart from chat</li>
+              <li>Ask for anything, by text, voice or photo</li>
+              <li>It finds, compares and fills your cart for you</li>
               <li>Upgrade any time</li>
             </ul>
             <form action={subscribeLite}>

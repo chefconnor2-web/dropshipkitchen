@@ -1021,7 +1021,12 @@ p.ai-kit-err { margin: 0; padding: 0 12px 10px; font-size: 13px; }
 .cx-hello h1 { font: 700 clamp(2.1rem, 6vw, 3.2rem)/1 var(--display); margin: 6px 0 0; letter-spacing: 0.01em; }
 .cx-hello p { margin: 0; color: var(--ink-2); max-width: 560px; font-size: 15.5px; line-height: 1.55; }
 .cx-hello .cx-logo { width: 44px; height: 44px; font-size: 26px; border-radius: 10px; }
-.cx-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cx-how { list-style: none; margin: 2px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; animation: cx-rise .5s ease both .1s; }
+.cx-how li { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.4; color: var(--ink-2); padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent, #b5462b) 5%, transparent); }
+.cx-how b { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--ink, #1d1c1a); color: #fff; font-size: 12px; }
+.cx-try { margin: 6px 0 -8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #9A958C; text-align: left; }
+@keyframes cx-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.cx-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; animation: cx-rise .5s ease both .2s; }
 .cx-example { text-align: left; font: inherit; font-size: 14px; line-height: 1.4; color: var(--ink-2); padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; cursor: pointer; }
 .cx-example:hover { border-color: #B9B3A7; color: var(--ink); background: #FFFDF9; }
 .cx-meta { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; font-size: 13.5px; color: var(--muted); margin: 4px 0 0; }
@@ -1259,6 +1264,8 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
   .cx-hello h1 { font-size: 2.2rem; }
   .cx-hello p { font-size: 14.5px; }
   .cx-examples { grid-template-columns: minmax(0, 1fr); }
+  .cx-how { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .cx-how li { padding: 8px 10px; }
   .cx-example:nth-child(n + 4) { display: none; }
   .cx-bot { gap: 0; }
   .cx-bot > .cx-logo { display: none; }

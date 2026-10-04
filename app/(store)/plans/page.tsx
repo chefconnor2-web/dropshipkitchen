@@ -10,9 +10,9 @@ export default async function PlansPage({ searchParams }: { searchParams: Promis
   return (
     <section className="band pp-page">
       <div className="wrap narrow">
-        <p className="eyebrow">AI sourcing assistant</p>
-        <h1 className="pp-title">Keep your sourcing assistant</h1>
-        <p className="pp-lede">It finds the products, compares them and fills your cart. Pick how you want to keep going.</p>
+        <p className="eyebrow">Your personal shopper</p>
+        <h1 className="pp-title">Keep your shopping assistant</h1>
+        <p className="pp-lede">Tell it what you need. It finds the products, compares prices with live stock and shipping, and fills your cart. Pick how you want to keep going.</p>
         {error && <p className="notice err">{error}</p>}
         <PlanPicker offer={await planOffer()} />
       </div>

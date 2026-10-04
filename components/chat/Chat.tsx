@@ -506,7 +506,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         maxLength={1000}
         value={input}
         enterKeyHint="send"
-        placeholder={dictating ? "Listening…" : entries.length ? "Reply…" : "Describe your project, or attach a photo…"}
+        placeholder={dictating ? "Listening…" : entries.length ? "Reply…" : "Tell me what you’re looking for…"}
         onChange={(e) => setInput(e.target.value)}
         onPaste={(e) => {
           const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
@@ -603,15 +603,27 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         {empty ? (
           <div className="cx-empty">
             <div className="cx-hello">
-              <h1>What are you building?</h1>
-              <p>Describe a project or snap a photo of a part. I’ll find everything from Chinese factories and fill your cart, with shipping to Canada shown before you pay.</p>
+              <h1>What do you need?</h1>
+              <p>Tell me like you’d tell a friend who knows every factory in China. I’ll find it, compare the options and fill your cart.</p>
             </div>
             {composer}
+            <ol className="cx-how" aria-label="How it works">
+              <li>
+                <b>1</b> Say what you need: type it, talk, or send a photo
+              </li>
+              <li>
+                <b>2</b> I find and compare the best options
+              </li>
+              <li>
+                <b>3</b> You check your cart and pay, shipping shown upfront
+              </li>
+            </ol>
             {!configured && (
               <p className="cx-err">
                 The assistant is switched off right now. You can still <Link href="/search">search the catalog</Link>.
               </p>
             )}
+            <p className="cx-try">Try one</p>
             <div className="cx-examples">
               {EXAMPLES.map((x) => (
                 <button key={x} type="button" className="cx-example" onClick={() => send(x)} disabled={!configured}>
@@ -850,7 +862,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
             <button type="button" className="pp-sheet-close" aria-label="Close" onClick={() => setShowPlans(false)}>
               ×
             </button>
-            <h2 id="pp-sheet-title">Keep your sourcing assistant</h2>
+            <h2 id="pp-sheet-title">Keep your shopping assistant</h2>
             <p className="pp-lede">Pick up right where you left off. Your chat and cart stay as they are.</p>
             <PlanPicker offer={plans} next={activeId.current ? `/c/${activeId.current}` : "/"} compact />
           </div>
