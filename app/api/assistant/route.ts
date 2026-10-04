@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { getOrCreateCartId, cartCount } from "@/lib/cart";
 import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type UiEntry } from "@/lib/assistant";
-import { ensureVisitorId, findOwnChat, getVisitorId } from "@/lib/chat-session";
+import { ensureVisitorId, findOwnChat, getVisitorId, ownedBy } from "@/lib/chat-session";
 import { getMemberId } from "@/lib/session";
 import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
 import { getPlan } from "@/lib/plan";
@@ -28,7 +28,7 @@ function allow(ip: string): boolean {
 
 export async function GET(req: Request) {
   const chatId = new URL(req.url).searchParams.get("chat");
-  const chat = await findOwnChat(chatId, await getVisitorId());
+  const chat = await findOwnChat(chatId);
   const allowance = await aiAllowance({ customerId: await getMemberId(), visitorId: await getVisitorId() });
   return Response.json({
     configured: assistantConfigured(),
@@ -55,12 +55,12 @@ export async function POST(req: Request) {
   const allowance = await aiAllowance({ customerId: memberId, visitorId });
   if (allowance.remaining <= 0)
     return Response.json({ error: limitMessage(allowance, formatMoney((await getPlan()).priceCents)), limit: { subscriber: allowance.subscriber, signedIn: !!memberId } }, { status: 402 });
-  let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId, visitorId) : null;
+  let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId) : null;
   if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });
   const isNew = !chat;
-  chat ??= await prisma.assistantChat.create({ data: { visitorId, title: message.replace(/\s+/g, " ").slice(0, 48) || "Photo search" } });
+  chat ??= await prisma.assistantChat.create({ data: { visitorId, customerId: memberId, title: message.replace(/\s+/g, " ").slice(0, 48) || "Photo search" } });
   const images = imageIds.length
-    ? await prisma.assistantImage.findMany({ where: { id: { in: imageIds }, visitorId }, select: { id: true, mime: true } })
+    ? await prisma.assistantImage.findMany({ where: { id: { in: imageIds }, ...ownedBy(memberId, visitorId) }, select: { id: true, mime: true } })
     : [];
   if (images.length) await prisma.assistantImage.updateMany({ where: { id: { in: images.map((i) => i.id) } }, data: { chatId: chat.id } });
   const editIndex = typeof body.editIndex === "number" && Number.isInteger(body.editIndex) ? body.editIndex : undefined;

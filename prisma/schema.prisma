@@ -131,11 +131,15 @@ model SupplierOffer {
 // ---------- CART / ORDERS ----------
 
 model Cart {
-  id        String     @id @default(cuid())
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  items     CartItem[]
-  boxes     CartBox[]
+  id         String     @id @default(cuid())
+  /// The signed-in owner. An owned cart only opens for that customer.
+  customerId String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  items      CartItem[]
+  boxes      CartBox[]
+
+  @@index([customerId])
 }
 
 model CartItem {
@@ -239,6 +243,37 @@ model AiUsage {
 }
 
 /// One-tap email sign-in links (only the hash is stored).
+/// A 6-digit sign-in code emailed to a shopper. Only an HMAC of the code is stored.
+model LoginCode {
+  id        String    @id @default(cuid())
+  email     String
+  codeHash  String
+  /// Wrong guesses against this code; it stops working after a few.
+  attempts  Int       @default(0)
+  ip        String?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
+/// A signed-in browser. The cookie holds a random token; only its SHA-256 is stored, so the table can't sign anyone in.
+model CustomerSession {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  customerId String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([customerId])
+}
+
+/// Magic-link tokens from before sign-in codes; no longer issued.
 model LoginToken {
   tokenHash String    @id
   email     String
@@ -400,6 +435,8 @@ model AssistantChat {
   id           String   @id @default(cuid())
   /// Anonymous browser id (cs_vid cookie): a visitor's chat history.
   visitorId    String?
+  /// The signed-in owner. Once set, only that customer can open the chat (the visitor id no longer counts).
+  customerId   String?
   title        String   @default("New chat")
   messagesJson String   @default("[]")
   uiJson       String   @default("[]")
@@ -410,16 +447,19 @@ model AssistantChat {
   updatedAt    DateTime @updatedAt
 
   @@index([visitorId, updatedAt])
+  @@index([customerId, updatedAt])
 }
 
 /// A photo a shopper attached in the assistant chat (resized in the browser, so small enough for SQLite).
 model AssistantImage {
-  id        String   @id @default(cuid())
-  visitorId String
-  chatId    String?
-  mime      String
-  data      Bytes
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  visitorId  String
+  /// Set with the chat's owner; then only that customer can see the photo.
+  customerId String?
+  chatId     String?
+  mime       String
+  data       Bytes
+  createdAt  DateTime @default(now())
 
   @@index([chatId])
 }

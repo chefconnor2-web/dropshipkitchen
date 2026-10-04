@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
-import { getMember } from "@/lib/session";
+import { activeSessionCount, getMember, safeNext } from "@/lib/session";
 import { getVisitorId } from "@/lib/chat-session";
 import { aiAllowance, getLimits, tierFor } from "@/lib/membership";
 import { countryLabel } from "@/lib/shipping";
-import { openBillingPortal, signOutAction } from "../actions";
+import { openBillingPortal, signOutAction, signOutEverywhereAction } from "../actions";
 import SignInForm from "./SignInForm";
 
 export const dynamic = "force-dynamic";
@@ -24,16 +24,18 @@ const STATUS: Record<string, string> = {
 
 const fmtDate = (d: Date) => d.toLocaleDateString("en-CA", { month: "long", day: "numeric" });
 
-export default async function AccountPage({ searchParams }: { searchParams: Promise<{ welcome?: string; error?: string }> }) {
-  const { welcome, error } = await searchParams;
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ welcome?: string; error?: string; next?: string; why?: string; signedout?: string }> }) {
+  const { welcome, error, next, why, signedout } = await searchParams;
   const member = await getMember();
   if (!member) {
     return (
       <div className="wrap page narrow account">
         <h1 className="page-title">Your account</h1>
         {error && <p className="notice err">{error}</p>}
-        <p>Sign in to see your mystery box subscription, your orders and your AI assistant allowance. No password: we email you a one-tap link.</p>
-        <SignInForm />
+        {signedout && <p className="notice ok">You’re signed out on every device.</p>}
+        {why === "subscribe" && <p className="notice ok">Sign in with your email first, then you’ll go straight to checkout. Your subscription and free box are saved to this account.</p>}
+        <p>Sign in to see your subscription, your orders, your AI chats on any device and your AI allowance. No password: we email you a 6-digit code.</p>
+        <SignInForm next={safeNext(next)} />
         <div className="account-cta">
           <strong>New here?</strong> Subscribe to the AI sourcing assistant and get your first mystery box free.{" "}
           <Link href="/boxes">Pick your box →</Link>
@@ -42,11 +44,12 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
     );
   }
 
-  const [subs, orders, allowance, limits] = await Promise.all([
+  const [subs, orders, allowance, limits, devices] = await Promise.all([
     prisma.subscription.findMany({ where: { customerId: member.id }, orderBy: { createdAt: "desc" } }),
     prisma.order.findMany({ where: { customerId: member.id, status: { not: "PENDING_PAYMENT" } }, orderBy: { createdAt: "desc" }, take: 10 }),
     aiAllowance({ customerId: member.id, visitorId: await getVisitorId() }),
     getLimits(),
+    activeSessionCount(member.id),
   ]);
   const nextTier = allowance.subscriber && allowance.basis === "tier" ? limits.tiers.find((t) => t.minSpendCents > allowance.spendCents) : undefined;
   const pct = allowance.limit ? Math.min(100, Math.round((allowance.used / allowance.limit) * 100)) : 100;
@@ -128,9 +131,16 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         </section>
       )}
 
-      <form action={signOutAction}>
-        <button className="link-btn">Sign out</button>
-      </form>
+      <div className="account-signout">
+        <form action={signOutAction}>
+          <button className="link-btn">Sign out</button>
+        </form>
+        {devices > 1 && (
+          <form action={signOutEverywhereAction}>
+            <button className="link-btn">Sign out on all {devices} devices</button>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { prisma } from "@/lib/db";
 import { ensureVisitorId } from "@/lib/chat-session";
+import { getMemberId } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,6 @@ export async function POST(req: Request) {
   const mime = sniff(bytes);
   if (!mime) return Response.json({ error: "Use a JPEG, PNG, WebP or GIF photo." }, { status: 415 });
   const visitorId = await ensureVisitorId();
-  const img = await prisma.assistantImage.create({ data: { visitorId, mime, data: Buffer.from(bytes) }, select: { id: true } });
+  const img = await prisma.assistantImage.create({ data: { visitorId, customerId: await getMemberId(), mime, data: Buffer.from(bytes) }, select: { id: true } });
   return Response.json({ id: img.id });
 }

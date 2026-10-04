@@ -36,14 +36,15 @@ export async function boxShippingCents(boxId: string, country: string, zip: stri
 }
 
 /** A Stripe Checkout page for the subscription: the first month plus shipping for a free welcome box. */
-export async function startBoxSubscription(input: { boxId: string; country: string; zip: string; customer?: { email: string; stripeCustomerId: string | null } | null }) {
+/** For a signed-in (email-verified) customer only: the subscription is tied to their account by id. */
+export async function startBoxSubscription(input: { boxId: string; country: string; zip: string; customer: { id: string; email: string; stripeCustomerId: string | null } }) {
   const box = await prisma.mysteryBox.findUnique({ where: { id: input.boxId } });
   if (!box || box.status !== "PUBLISHED") throw new Error("This box isn’t available.");
   if (!isShipCountry(input.country)) throw new Error("Choose where we’re shipping to.");
   const plan = await getPlan();
   const shippingCents = await boxShippingCents(box.id, input.country, input.zip);
   if (shippingCents == null) throw new Error("This box is sold out or can’t ship to you right now. Pick another one, or check back soon.");
-  const meta = { kind: "assistant_subscription", boxId: box.id, shippingCents: String(shippingCents), country: input.country };
+  const meta = { kind: "assistant_subscription", boxId: box.id, shippingCents: String(shippingCents), country: input.country, customerId: input.customer.id };
   const session = await stripe().checkout.sessions.create({
     mode: "subscription",
     line_items: [
@@ -53,7 +54,9 @@ export async function startBoxSubscription(input: { boxId: string; country: stri
         ? [{ quantity: 1, price_data: { currency: "usd", unit_amount: shippingCents, product_data: { name: `Shipping for your free ${box.name} to ${countryLabel(input.country)}` } } }]
         : []),
     ],
-    ...(input.customer?.stripeCustomerId ? { customer: input.customer.stripeCustomerId } : input.customer?.email ? { customer_email: input.customer.email } : {}),
+    // Their verified email, which Checkout shows but doesn't let them change.
+    ...(input.customer.stripeCustomerId ? { customer: input.customer.stripeCustomerId } : { customer_email: input.customer.email }),
+    client_reference_id: input.customer.id,
     // The welcome box ships to the address given here, in the country the shipping was quoted for.
     shipping_address_collection: { allowed_countries: [input.country as "US"] },
     phone_number_collection: { enabled: true },
@@ -70,7 +73,11 @@ function periodEnd(sub: Stripe.Subscription): Date | null {
   return end ? new Date(end * 1000) : null;
 }
 
-/** Saves (or updates) our copy of a Stripe subscription, linked to the customer with this email. */
+/**
+ * Saves (or updates) our copy of a Stripe subscription. It joins the account that started the checkout
+ * (metadata.customerId, set only for signed-in, email-verified customers); subscriptions from before that
+ * existed fall back to the customer with the checkout's email.
+ */
 async function saveSubscription(sub: Stripe.Subscription, fallback: { email?: string | null; name?: string | null; phone?: string | null; shipping?: unknown } = {}) {
   const stripeCustomerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
   const existing = await prisma.subscription.findUnique({ where: { stripeSubscriptionId: sub.id } });
@@ -80,14 +87,17 @@ async function saveSubscription(sub: Stripe.Subscription, fallback: { email?: st
       data: { status: sub.status, cancelAtPeriodEnd: sub.cancel_at_period_end, currentPeriodEnd: periodEnd(sub), ...(fallback.shipping ? { shippingAddressJson: JSON.stringify(fallback.shipping) } : {}) },
     });
   }
-  let email = fallback.email?.trim().toLowerCase();
+  const owner = sub.metadata.customerId ? await prisma.customer.findUnique({ where: { id: sub.metadata.customerId } }) : null;
+  let email = owner?.email ?? fallback.email?.trim().toLowerCase();
   if (!email && typeof sub.customer !== "string" && !("deleted" in sub.customer && sub.customer.deleted)) email = (sub.customer as Stripe.Customer).email?.toLowerCase();
   if (!email) {
     const c = await stripe().customers.retrieve(stripeCustomerId);
     email = !("deleted" in c && c.deleted) ? (c as Stripe.Customer).email?.toLowerCase() ?? undefined : undefined;
   }
   if (!email) throw new Error(`Stripe subscription ${sub.id} has no customer email.`);
-  const customer = await prisma.customer.upsert({
+  const customer = owner
+    ? await prisma.customer.update({ where: { id: owner.id }, data: { stripeCustomerId, ...(fallback.name && !owner.name ? { name: fallback.name } : {}), ...(fallback.phone && !owner.phone ? { phone: fallback.phone } : {}) } })
+    : await prisma.customer.upsert({
     where: { email },
     create: { email, name: fallback.name ?? null, phone: fallback.phone ?? null, stripeCustomerId },
     update: { stripeCustomerId, ...(fallback.name ? { name: fallback.name } : {}), ...(fallback.phone ? { phone: fallback.phone } : {}) },
@@ -129,10 +139,8 @@ export async function completeSubscriptionCheckout(sessionOrId: string | Stripe.
   });
   const invoiceId = typeof session.invoice === "string" ? session.invoice : session.invoice?.id;
   if (invoiceId) await orderForInvoice(invoiceId);
-  // The success page signs the subscriber in, but only soon after paying: an old checkout link in someone's
-  // browser history shouldn't open their account.
-  const fresh = Date.now() / 1000 - session.created < 2 * 3600;
-  return { ...row, canSignIn: fresh };
+  // Nobody is signed in here: only an emailed code signs a browser in (the subscriber already is).
+  return row;
 }
 
 const locks = processSingleton("box-invoice-locks", () => new Map<string, Promise<unknown>>());

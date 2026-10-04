@@ -118,7 +118,16 @@ becomes a box order waiting for your approval like any other. Later months are t
 - **Webhook.** Add a Stripe webhook for `checkout.session.completed`, `invoice.paid`,
   `customer.subscription.updated` and `customer.subscription.deleted`, and set `STRIPE_WEBHOOK_SECRET`. Without it,
   they're picked up when `/admin/members` syncs (every 15 minutes while it's open, or **Sync with Stripe**).
-- **Accounts.** One-tap email sign-in links (`/account`, via Resend), or signed in on subscribing.
+- **Accounts.** Shoppers sign in at `/account` with a 6-digit code emailed through Resend (`RESEND_API_KEY`;
+  set `EMAIL_FROM` on a domain verified in Resend so codes reach everyone, not just your own inbox). Codes expire
+  in 10 minutes, stop working after 5 wrong guesses, and are rate-limited per email and per network address; only
+  an HMAC of each code is stored. Sessions are kept in the database (the cookie is a random token, stored hashed),
+  so **Sign out** really ends them and **Sign out on all devices** ends them all. Subscribing requires signing in
+  first, and the subscription is tied to that account, not to whatever email is typed at Stripe.
+- **Tenancy.** Chats, chat photos and carts belong to the signed-in account (and follow it to any device), or to
+  the browser while signed out. Signing in moves the browser's chats and cart into the account; once a chat or
+  cart has an owner it only opens for that customer, whatever cookies a browser holds. Signing out gives the
+  browser a fresh anonymous identity, so the next person on a shared computer sees nothing.
 - **Billing portal.** Turn on Stripe's customer portal (Settings → Billing → Customer portal).
 
 ## Where things are
@@ -161,7 +170,7 @@ unmodified JSON, so field mappings can be checked against what CJ actually retur
   delivery estimate), `ProductImage`, and `ProductVariant` (name, options, internal SKU, our price).
 - **Bridge:** `SupplierOffer` links one `ProductVariant` to one CJ variant: supplier, PID, product SKU, VID, variant SKU.
 - **Members:** `Customer` (also the shopper's account: `stripeCustomerId`, `aiLimitOverride`), `Subscription`
-  (one Stripe subscription, with its welcome box), `SubscriptionPayment` (later paid months), `AiUsage` (one row per AI message), `LoginToken` (email sign-in links);
+  (one Stripe subscription, with its welcome box), `SubscriptionPayment` (later paid months), `AiUsage` (one row per AI message), `LoginCode` (emailed sign-in codes, hashed), `CustomerSession` (signed-in browsers, token hashed);
   box orders carry `Order.stripeInvoiceId` / `subscriptionId`.
 - **Personalization:** `Product.personalizeJson` (the POD set-up) and `Personalization` (one shopper design:
   print file, mock-up, text), linked from `CartItem` and `OrderItem.personalizationId`.

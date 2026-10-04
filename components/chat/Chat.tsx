@@ -763,7 +763,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
                       </Link>
                     )}
                     {!error.limit.signedIn && (
-                      <Link href="/account" className="cx-btn">
+                      <Link href={`/account?next=${encodeURIComponent(activeId.current ? `/c/${activeId.current}` : "/")}`} className="cx-btn">
                         Sign in
                       </Link>
                     )}

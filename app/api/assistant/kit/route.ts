@@ -3,7 +3,7 @@
 import { cartCount, getOrCreateCartId } from "@/lib/cart";
 import { addKitToCart } from "@/lib/kit";
 import type { UiEntry } from "@/lib/assistant";
-import { findOwnChat, getVisitorId } from "@/lib/chat-session";
+import { findOwnChat } from "@/lib/chat-session";
 import { withCjPriority } from "@/lib/cj/lanes";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const { kitId, chatId } = (await req.json().catch(() => ({}))) as { kitId?: string; chatId?: string };
-  const chat = await findOwnChat(chatId, await getVisitorId());
+  const chat = await findOwnChat(chatId);
   const kit = chat
     ? (JSON.parse(chat.uiJson) as UiEntry[]).flatMap((e) => (e.role === "assistant" && e.kit ? [e.kit] : [])).find((k) => k.id === kitId)
     : undefined;

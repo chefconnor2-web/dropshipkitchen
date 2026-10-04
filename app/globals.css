@@ -1359,6 +1359,10 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .signin-form label { margin: 0; }
 .signin-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .signin-row input { flex: 1 1 220px; }
+.signin-code { font-family: var(--mono, monospace); font-size: 22px; letter-spacing: 6px; max-width: 220px; }
+.signin-again { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.inline-form { display: inline; margin: 0; }
+.account-signout { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
 .sub-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 .ai-meter { height: 8px; border-radius: 999px; background: #eee9e1; overflow: hidden; }
 .ai-meter span { display: block; height: 100%; background: var(--signal, #E8551C); border-radius: 999px; }
