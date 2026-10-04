@@ -3,6 +3,7 @@
 // Checkout charges the parcels' total; approval places one CJ order per parcel.
 
 import { freightCalculate } from "@/lib/cj/client";
+import { processSingleton } from "@/lib/singleton";
 
 export interface ParcelOption {
   method: string;
@@ -38,7 +39,28 @@ function days(aging: string | undefined): [number | null, number | null] {
   return n.length ? [Math.min(...n), Math.max(...n)] : [null, null];
 }
 
-export async function parcelOptions(from: string, to: string, zip: string | undefined, items: Array<{ vid: string; quantity: number }>): Promise<ParcelOption[]> {
+/** CJ's answers are remembered this long, so a changed quantity or a re-quote only asks about what's new. */
+const FREIGHT_TTL_MS = 30 * 60_000;
+const FREIGHT_MEMO_MAX = 5000;
+const freightMemo = processSingleton("cj-freight-memo", () => new Map<string, { at: number; options: Promise<ParcelOption[]> }>());
+
+/** CJ's methods for these exact items from one warehouse, cheapest first (also shares a call already running). */
+export function parcelOptions(from: string, to: string, zip: string | undefined, items: Array<{ vid: string; quantity: number }>): Promise<ParcelOption[]> {
+  const key = JSON.stringify([from, to, zip || "", [...items].sort((a, b) => a.vid.localeCompare(b.vid)).map((i) => [i.vid, i.quantity])]);
+  const hit = freightMemo.get(key);
+  if (hit && Date.now() - hit.at < FREIGHT_TTL_MS) return hit.options;
+  const options = askCj(from, to, zip, items);
+  freightMemo.delete(key);
+  freightMemo.set(key, { at: Date.now(), options });
+  if (freightMemo.size > FREIGHT_MEMO_MAX) freightMemo.delete(freightMemo.keys().next().value!);
+  // A failed call isn't an answer: forget it so the next quote asks again.
+  options.catch(() => {
+    if (freightMemo.get(key)?.options === options) freightMemo.delete(key);
+  });
+  return options;
+}
+
+async function askCj(from: string, to: string, zip: string | undefined, items: Array<{ vid: string; quantity: number }>): Promise<ParcelOption[]> {
   const env = await freightCalculate({ startCountryCode: from, endCountryCode: to, zip: zip || undefined, products: items });
   return (env.data ?? [])
     .filter((o) => o.logisticName && Number.isFinite(Number(o.logisticPrice)))
@@ -58,6 +80,14 @@ export interface PlanLine {
   origins?: string[];
 }
 
+/** What CJ has said about one product alone in a parcel on one route: the most it shipped, the least it refused. */
+export interface ParcelLimitKnowledge {
+  get(key: string): { ok: number; fail: number; at: number } | undefined;
+  set(key: string, v: { ok: number; fail: number; at: number }): unknown;
+}
+const LIMIT_TTL_MS = 30 * 60_000;
+const sharedLimits = processSingleton("cj-parcel-limits", () => new Map<string, { ok: number; fail: number; at: number }>());
+
 /** Binary-search refinement steps after halving finds a size CJ ships (a few more CJ calls, fewer parcels). */
 const REFINE_STEPS = 4;
 
@@ -71,60 +101,65 @@ const REFINE_STEPS = 4;
  * parcel with products from the same warehouse. No plan when a product can't ship from any warehouse
  * (those are listed in `blocked`) or the plan needs more than MAX_PARCELS.
  */
-export async function planParcels(items: PlanLine[], from: string, to: string, zip?: string, quoter: typeof parcelOptions = parcelOptions): Promise<PlanResult> {
+export async function planParcels(
+  items: PlanLine[],
+  from: string,
+  to: string,
+  zip?: string,
+  quoter: typeof parcelOptions = parcelOptions,
+  limits: ParcelLimitKnowledge = quoter === parcelOptions ? sharedLimits : new Map(),
+): Promise<PlanResult> {
   const memo = new Map<string, Promise<ParcelOption[]>>();
   const originOf = new Map<string, string>();
+  const limitKey = (origin: string, vid: string) => `${origin}|${to}|${vid}`;
+  const known = (origin: string, vid: string) => {
+    const k = limits.get(limitKey(origin, vid));
+    return k && Date.now() - k.at < LIMIT_TTL_MS ? k : { ok: 0, fail: Infinity, at: 0 };
+  };
   const quoteFrom = (origin: string, parcel: Array<{ vid: string; quantity: number }>) => {
     const key = JSON.stringify([origin, [...parcel].sort((a, b) => a.vid.localeCompare(b.vid))]);
-    if (!memo.has(key)) memo.set(key, quoter(origin, to, zip, parcel).catch(() => []));
+    if (!memo.has(key)) {
+      const asked = quoter(origin, to, zip, parcel);
+      memo.set(key, asked.catch(() => []));
+      // Remember single-product answers (not failed calls) so later quotes of this product skip the search.
+      if (parcel.length === 1)
+        asked.then(
+          (o) => {
+            const k = known(origin, parcel[0].vid);
+            const q = parcel[0].quantity;
+            limits.set(limitKey(origin, parcel[0].vid), o.length ? { ok: Math.max(k.ok, q), fail: Math.max(k.fail, q + 1), at: Date.now() } : { ok: Math.min(k.ok, q - 1), fail: Math.min(k.fail, q), at: Date.now() });
+          },
+          () => undefined,
+        );
+    }
     return memo.get(key)!;
   };
   const quote = (parcel: Array<{ vid: string; quantity: number }>) => quoteFrom(originOf.get(parcel[0].vid) ?? from, parcel);
 
   // 0. Where each product can ship from: the first warehouse CJ quotes one unit from. Check every product,
   // so the shopper hears about all the blockers at once.
+  // Products are checked side by side (CJ calls overlap); each tries its warehouses in order.
+  const origins = await Promise.all(
+    items.map(async (line) => {
+      for (const origin of line.origins?.length ? line.origins : [from]) if ((await quoteFrom(origin, [{ vid: line.vid, quantity: 1 }])).length) return origin;
+      return undefined;
+    }),
+  );
   const blocked: string[] = [];
-  for (const line of items) {
-    let found: string | undefined;
-    for (const origin of line.origins?.length ? line.origins : [from]) {
-      if ((await quoteFrom(origin, [{ vid: line.vid, quantity: 1 }])).length) {
-        found = origin;
-        break;
-      }
-    }
-    if (found) originOf.set(line.vid, found);
-    else blocked.push(line.vid);
-  }
+  items.forEach((line, i) => (origins[i] ? originOf.set(line.vid, origins[i]) : blocked.push(line.vid)));
   if (blocked.length) return { parcels: null, blocked };
 
   // 1. Largest single-product parcel per line.
-  const limits = new Map<string, number>();
-  for (const line of items) {
-    if ((await quote([{ vid: line.vid, quantity: line.quantity }])).length) {
-      limits.set(line.vid, line.quantity);
-      continue;
-    }
-    let lo = 0;
-    let hi = line.quantity;
-    for (let size = Math.ceil(line.quantity / 2); size >= 1; size = size === 1 ? 0 : Math.ceil(size / 2)) {
-      if ((await quote([{ vid: line.vid, quantity: size }])).length) {
-        lo = size;
-        break;
-      }
-      hi = size;
-    }
-    if (!lo) return { parcels: null, blocked: [line.vid] };
-    for (let i = 0; i < REFINE_STEPS && hi - lo > 1; i++) {
-      const mid = Math.floor((lo + hi) / 2);
-      if ((await quote([{ vid: line.vid, quantity: mid }])).length) lo = mid;
-      else hi = mid;
-    }
-    limits.set(line.vid, lo);
+  const sizes = new Map<string, number>();
+  const found = await Promise.all(items.map((line) => largestParcel(line, quote, known(originOf.get(line.vid)!, line.vid))));
+  for (const [i, line] of items.entries()) {
+    if (!found[i]) return { parcels: null, blocked: [line.vid] };
+    sizes.set(line.vid, found[i]);
   }
 
   // Single-product parcels: full parcels at the limit plus a remainder.
   const perLine = (line: PlanLine) => {
-    const size = limits.get(line.vid)!;
+    const size = sizes.get(line.vid)!;
     const out: Array<Array<{ vid: string; quantity: number }>> = [];
     for (let left = line.quantity; left > 0; left -= size) out.push([{ vid: line.vid, quantity: Math.min(size, left) }]);
     return out;
@@ -139,7 +174,7 @@ export async function planParcels(items: PlanLine[], from: string, to: string, z
     for (const line of [...items].sort((a, b) => b.weightGrams! - a.weightGrams!)) {
       const w = line.weightGrams!;
       // A product that shipped whole has no known limit of its own; the other products' limits and CJ's quote decide.
-      const capLine = limits.get(line.vid)! >= line.quantity ? Infinity : limits.get(line.vid)! * w;
+      const capLine = sizes.get(line.vid)! >= line.quantity ? Infinity : sizes.get(line.vid)! * w;
       let left = line.quantity;
       const origin = originOf.get(line.vid)!;
       for (const bin of bins) {
@@ -154,7 +189,7 @@ export async function planParcels(items: PlanLine[], from: string, to: string, z
         left -= n;
       }
       while (left > 0) {
-        const n = Math.min(left, limits.get(line.vid)!);
+        const n = Math.min(left, sizes.get(line.vid)!);
         bins.push({ items: new Map([[line.vid, n]]), grams: n * w, cap: Number.isFinite(capLine) ? capLine : Math.max(n * w, ...bins.map((b) => b.cap).filter(Number.isFinite)), from: origin });
         left -= n;
       }
@@ -166,8 +201,9 @@ export async function planParcels(items: PlanLine[], from: string, to: string, z
   if (groups.length > MAX_PARCELS) return { parcels: null, blocked: [] };
 
   const parcels: PlannedParcel[] = [];
-  for (const g of groups) {
-    const options = await quote(g);
+  const groupOptions = await Promise.all(groups.map((g) => quote(g)));
+  for (const [gi, g] of groups.entries()) {
+    const options = groupOptions[gi];
     if (options.length) {
       parcels.push({ items: g, options, from: originOf.get(g[0].vid)! });
       continue;
@@ -182,6 +218,39 @@ export async function planParcels(items: PlanLine[], from: string, to: string, z
     }
   }
   return { parcels: parcels.length > MAX_PARCELS ? null : parcels, blocked: [] };
+}
+
+/**
+ * The largest quantity of one product CJ quotes in a single parcel (0 if not even one): halve until it
+ * ships, then binary-search back up between the size that shipped and the one that didn't.
+ */
+async function largestParcel(
+  line: PlanLine,
+  quote: (parcel: Array<{ vid: string; quantity: number }>) => Promise<ParcelOption[]>,
+  known: { ok: number; fail: number },
+): Promise<number> {
+  // Earlier answers for this product on this route can settle it without asking CJ again.
+  if (known.ok >= line.quantity) return line.quantity;
+  let lo = known.ok;
+  let hi = Math.min(known.fail, line.quantity + 1);
+  if (hi > line.quantity) {
+    if ((await quote([{ vid: line.vid, quantity: line.quantity }])).length) return line.quantity;
+    hi = line.quantity;
+  }
+  // Halve down from the size that failed until one ships (sizes at or below a known-good one need no call).
+  for (let size = Math.ceil(hi / 2); size > lo; size = size === 1 ? 0 : Math.ceil(size / 2)) {
+    if ((await quote([{ vid: line.vid, quantity: size }])).length) {
+      lo = size;
+      break;
+    }
+    hi = size;
+  }
+  for (let i = 0; lo && i < REFINE_STEPS && hi - lo > 1; i++) {
+    const mid = Math.floor((lo + hi) / 2);
+    if ((await quote([{ vid: line.vid, quantity: mid }])).length) lo = mid;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** Cheapest method per parcel, or the fastest when `fast` (falls back to cheapest). */

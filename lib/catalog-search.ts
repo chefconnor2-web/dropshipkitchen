@@ -22,7 +22,8 @@ export interface CatalogHit {
 
 const resultCache = processSingleton("catalog-results", () => new Map<string, { at: number; hits: CatalogHit[]; total: number | null }>());
 const imageByPid = processSingleton("catalog-images", () => new Map<string, string>());
-const TTL_MS = 10 * 60_000;
+// Search results change slowly; prices are re-checked live when a product is opened and at checkout.
+const TTL_MS = 60 * 60_000;
 const MAX_IMAGES = 5000;
 
 export const PAGE_SIZE = 24;

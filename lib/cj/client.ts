@@ -50,8 +50,8 @@ export class CjApiError extends Error {
 
 const TOKEN_KEY = "cj.token";
 
-// ---- throttle: CJ rate-limits per account, so serialise calls in-process (urgent calls first) ----
-const throttled = processSingleton("cj-throttle", () => makeThrottle(() => config.cj.minIntervalMs));
+// ---- throttle: CJ rate-limits per account, so pace call starts in-process (urgent calls first) ----
+const throttled = processSingleton("cj-throttle", () => makeThrottle(() => config.cj.minIntervalMs, () => config.cj.maxConcurrent));
 
 async function rawCall<T>(
   method: "GET" | "POST" | "PATCH",
@@ -109,7 +109,8 @@ function callOnce<T>(
       failure = e instanceof Error ? e.message : String(e);
     }
 
-    await prisma.cjApiCall
+    // Logged after the slot is free: the database write shouldn't hold up the next CJ call.
+    void prisma.cjApiCall
       .create({
         data: {
           method,
@@ -160,11 +161,18 @@ function notExpired(date?: string, marginMs = 60 * 60 * 1000): boolean {
   return Number.isNaN(t) ? true : t - marginMs > Date.now();
 }
 
+// CJ limits token requests: calls that need a new token at the same moment share one request.
+const tokenInflight = processSingleton("cj-token-inflight", () => ({ current: null as Promise<string> | null }));
+
 export async function getAccessToken(forceNew = false): Promise<string> {
   if (!config.cj.apiKey) throw new CjApiError("CJ_API_KEY is not configured.");
   const stored = forceNew ? null : await loadToken();
   if (stored?.accessToken && notExpired(stored.accessTokenExpiryDate)) return stored.accessToken;
+  tokenInflight.current ??= fetchToken(stored).finally(() => (tokenInflight.current = null));
+  return tokenInflight.current;
+}
 
+async function fetchToken(stored: StoredToken | null): Promise<string> {
   if (stored?.refreshToken && notExpired(stored.refreshTokenExpiryDate)) {
     try {
       const env = await rawCall<CjTokenData>("POST", "/authentication/refreshAccessToken", {

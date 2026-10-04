@@ -146,7 +146,9 @@ Base `https://developers.cjdropshipping.com/api2.0/v1`, header `CJ-Access-Token`
 | Current variant price | `GET /product/variant/queryByVid?vid=` |
 | Inventory by exact VID | `GET /product/stock/queryByVid?vid=` |
 
-CJ calls are serialised with a minimum gap (`CJ_MIN_INTERVAL_MS`) to respect QPS limits. The full raw CJ
+CJ calls start at least `CJ_MIN_INTERVAL_MS` apart to respect QPS limits, with up to `CJ_MAX_CONCURRENT` (default 3;
+set 1 for strictly one at a time) in flight, so a slow reply doesn't delay the next call. Freight answers are
+remembered for 30 minutes, so changing a quantity re-asks CJ only about what changed. The full raw CJ
 response is stored with each supplier product and variant, and the admin search and view pages show the
 unmodified JSON, so field mappings can be checked against what CJ actually returned.
 

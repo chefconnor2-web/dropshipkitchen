@@ -1,4 +1,4 @@
-// CJ allows a few calls per second per account, so every call waits in one in-process line. A shopper
+// CJ allows a few calls per second per account, so every call waits in one in-process line for its start. A shopper
 // waiting on a button jumps ahead of background work (catalog warm-up, imports nobody is waiting for).
 // A call's priority comes from the async context it is made in: see withCjPriority.
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -24,20 +24,32 @@ export function currentCjLane(): CjLane {
   return lanes.getStore() ?? { priority: CJ_PRIORITY.normal };
 }
 
-/** Runs queued calls one at a time, at least minIntervalMs apart, highest priority first, then oldest. */
-export function makeThrottle(minIntervalMs: () => number) {
+/**
+ * Starts queued calls at least minIntervalMs apart (CJ's limit is on request rate), highest priority first,
+ * then oldest, with up to maxConcurrent in flight: a slow CJ reply doesn't hold up the next call's start.
+ */
+export function makeThrottle(minIntervalMs: () => number, maxConcurrent: () => number = () => 1) {
   const waiting: Array<{ lane: CjLane; seq: number; run: () => Promise<void> }> = [];
   let seq = 0;
   let pumping = false;
-  let lastCallAt = 0;
+  let lastStartAt = 0;
+  let running = 0;
+  let wake: (() => void) | null = null;
 
   async function pump() {
     if (pumping) return;
     pumping = true;
     try {
       while (waiting.length) {
-        const wait = lastCallAt + minIntervalMs() - Date.now();
-        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        if (running >= Math.max(1, maxConcurrent())) {
+          await new Promise<void>((r) => (wake = r));
+          continue;
+        }
+        const wait = lastStartAt + minIntervalMs() - Date.now();
+        if (wait > 0) {
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
         // Priorities are read now, so a lane promoted while it waited counts.
         let next = 0;
         for (let i = 1; i < waiting.length; i++) {
@@ -45,11 +57,14 @@ export function makeThrottle(minIntervalMs: () => number) {
           if (a.lane.priority > b.lane.priority || (a.lane.priority === b.lane.priority && a.seq < b.seq)) next = i;
         }
         const [job] = waiting.splice(next, 1);
-        try {
-          await job.run();
-        } finally {
-          lastCallAt = Date.now();
-        }
+        running++;
+        lastStartAt = Date.now();
+        void job.run().finally(() => {
+          running--;
+          const w = wake;
+          wake = null;
+          w?.();
+        });
       }
     } finally {
       pumping = false;
