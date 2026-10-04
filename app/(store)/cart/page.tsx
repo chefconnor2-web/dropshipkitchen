@@ -6,7 +6,8 @@ import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/l
 import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, estimateFromHistory, parcelsLabel, quoteCart, type CartQuote, type ShipEstimate, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
-import { stockLabel, stockStatus } from "@/lib/inventory";
+import { ensureFreshInventory, stockLabel, stockStatus } from "@/lib/inventory";
+import CheckoutButton from "@/components/store/CheckoutButton";
 import { checkout, removeCartBox, requestFreightQuote, updateCartItem, updateShipTo } from "../actions";
 import { suggestFreight } from "@/lib/freight";
 
@@ -38,6 +39,9 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
           .catch(() => ({ tiers: [], blocked: [], error: "We couldn’t get a shipping price right now. Refresh to try again." }))
       : Promise.resolve({ tiers: [], blocked: [], error: null });
   const showFreightBase = items.length > 0;
+  // Checkout re-checks stale stock with CJ before payment; do it now, in the background, so that's instant.
+  const svIds = items.flatMap((i) => (i.variant.offer ? [i.variant.offer.cjSupplierVariantId] : []));
+  if (svIds.length) void withCjPriority("background", () => ensureFreshInventory(svIds)).catch(() => null);
   // A new key per cart state makes React show the "getting prices" state at once after a change,
   // instead of holding the old summary until the new quote arrives.
   const quoteKey = JSON.stringify([items.map((i) => [i.id, i.quantity]), boxes.map((b) => b.id), shipTo]);
@@ -301,9 +305,7 @@ async function ShippingSummary({
         <strong>{formatMoney(subtotal + (shipping ?? 0))}</strong>
       </div>
       <form action={checkout}>
-        <button className="btn primary lg block" disabled={!tier}>
-          Checkout
-        </button>
+        <CheckoutButton disabled={!tier} />
       </form>
       {showFreight && !freightSent && (
         <details className="freight-box" open={!tier}>

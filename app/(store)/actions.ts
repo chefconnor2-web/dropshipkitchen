@@ -9,7 +9,11 @@ import { allocatePrice, drawBox, loadPool, type PoolVariant } from "@/lib/myster
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
 import { createFreightRequest } from "@/lib/freight";
-import { FRESH_MS, blockedMessage, daysLabel, isShipCountry, parcelsLabel, quoteCart, quoteTiers } from "@/lib/shipping";
+import { blockedMessage, daysLabel, isShipCountry, parcelsLabel, quoteCart, quoteTiers } from "@/lib/shipping";
+import { withCjPriority } from "@/lib/cj/lanes";
+
+/** Checkout charges a CJ quote at most this old (the cart page refreshes quotes older than 30 minutes). */
+const CHECKOUT_QUOTE_MAX_AGE_MS = 2 * 60 * 60_000;
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
@@ -40,6 +44,11 @@ export async function updateCartItem(form: FormData) {
 }
 
 export async function checkout() {
+  // The shopper is waiting on this click: CJ checks go ahead of background work.
+  return withCjPriority("urgent", placeCheckout);
+}
+
+async function placeCheckout() {
   const problem = stripeKeyProblem();
   if (problem) redirect(`/cart?error=${encodeURIComponent("Checkout is not configured: " + problem)}`);
 
@@ -47,8 +56,18 @@ export async function checkout() {
   const items = cart?.items.filter((i) => i.variant.enabled && i.variant.product.status === "PUBLISHED" && i.variant.offer) ?? [];
   if (!cart || (items.length === 0 && cart.boxes.length === 0)) redirect("/cart");
 
+  // Shipping and stock are checked with CJ at the same time (each can take a second or more).
+  const shipTo = await getShipTo();
+  if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
+  const quoteFor = async (c: NonNullable<typeof cart>) =>
+    quoteCart(cartShipItems(c, await cartBoxPicks(c)), shipTo.country, shipTo.zip, { maxAgeMs: CHECKOUT_QUOTE_MAX_AGE_MS });
+  let quotePromise = quoteFor(cart);
+  quotePromise.catch(() => null); // awaited below; don't let an early failure go unhandled
+  const stockPromise = ensureFreshInventory(items.map((i) => i.variant.offer!.cjSupplierVariantId));
+
   // Mystery boxes: confirm each drawn item is still sellable and in stock; redraw a box whose draw went stale.
   const boxes: Array<{ cartBoxId: string; name: string; priceCents: number; picks: PoolVariant[] }> = [];
+  let redrawn = false;
   for (const cb of cart.boxes) {
     if (cb.box.status !== "PUBLISHED") redirect(`/cart?error=${encodeURIComponent(`${cb.box.name} isn’t available any more. Remove it to continue.`)}`);
     const pool = await loadPool(cb.boxId);
@@ -61,6 +80,7 @@ export async function checkout() {
       picks = drawBox(fresh.length ? fresh : pool, cb.box);
       if (!picks) redirect(`/cart?error=${encodeURIComponent(`${cb.box.name} is sold out right now. Remove it to continue.`)}`);
       await prisma.cartBox.update({ where: { id: cb.id }, data: { picksJson: JSON.stringify(picks.map((v) => v.variantId)) } });
+      redrawn = true;
     }
     boxes.push({ cartBoxId: cb.id, name: cb.box.name, priceCents: cb.box.priceCents, picks });
   }
@@ -76,8 +96,8 @@ export async function checkout() {
   const undesigned = items.find((i) => !i.personalizationId && parsePersonalizeConfig(i.variant.product.personalizeJson));
   if (undesigned) redirect(`/cart?error=${encodeURIComponent(`${undesigned.variant.product.title} needs your photo or text now. Remove it and add it again from its page to design it.`)}`);
 
-  // Re-validate stale stock for every exact CJ VID before taking payment.
-  const fresh = await ensureFreshInventory(items.map((i) => i.variant.offer!.cjSupplierVariantId));
+  // Re-validate stale stock for every exact CJ VID before taking payment (started above).
+  const fresh = await stockPromise;
   for (const i of items) {
     const f = fresh.get(i.variant.offer!.cjSupplierVariantId);
     const s = stockStatus(f?.total);
@@ -92,13 +112,12 @@ export async function checkout() {
   const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: svCost.get(i.variant.offer!.cjSupplierVariantId), quantity: i.quantity })));
   const unitPrice = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
 
-  // Shipping is CJ's live quote for these exact VIDs to the shopper's country, charged at cost.
-  const shipTo = await getShipTo();
-  if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
+  // Shipping is CJ's quote for these exact VIDs to the shopper's country, charged at cost: a recent one
+  // (the cart page keeps it fresh), re-quoted if a mystery box was redrawn above.
+  if (redrawn) quotePromise = quoteFor((await loadCart(cart.id))!);
   let quote;
   try {
-    // The price charged must be a fresh CJ quote (a cart page may have shown a remembered one).
-    quote = await quoteCart(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip, { maxAgeMs: FRESH_MS });
+    quote = await quotePromise;
   } catch {
     redirect(`/cart?error=${encodeURIComponent("We couldn’t get a shipping price right now. Please try again in a minute.")}`);
   }

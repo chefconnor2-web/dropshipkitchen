@@ -1346,3 +1346,5 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .ship-est-form { margin: 10px 0; }
 .ship-est-pending { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
 .ship-est-note { margin: 6px 0 0; }
+.checkout-btn { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.checkout-btn .ship-pending-dot { background: #fff; }
