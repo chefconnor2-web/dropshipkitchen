@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { ensureFreshInventory, isStale, stockStatus } from "@/lib/inventory";
 import { withCjPriority } from "@/lib/cj/lanes";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
+import { prewarmCartQuote } from "@/lib/cart-quote";
 
 export async function addVariantToCart(
   cartId: string,
@@ -46,5 +47,6 @@ export async function addVariantToCart(
 
   if (existing) await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity: newQty } });
   else await prisma.cartItem.create({ data: { cartId, productId: variant.productId, variantId, quantity, personalizationId: personalizationId ?? null } });
+  await prewarmCartQuote(cartId);
   return { ok: true, message: `Added ${quantity} × ${variant.product.title} (${variant.name}${personalizationId ? ", personalized" : ""}) to your cart.` };
 }

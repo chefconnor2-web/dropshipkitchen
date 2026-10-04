@@ -4,6 +4,7 @@
 import { listProductsV2 } from "@/lib/cj/client";
 import { parseListV2, suggestTitle } from "@/lib/cj/normalize";
 import { retailCents } from "@/lib/money";
+import { processSingleton } from "@/lib/singleton";
 
 /** Listings we won't sell: brand names that are almost always counterfeit on wholesale sites, and restricted goods. */
 const BLOCKED =
@@ -19,8 +20,8 @@ export interface CatalogHit {
   fromCents: number;
 }
 
-const resultCache = new Map<string, { at: number; hits: CatalogHit[]; total: number | null }>();
-const imageByPid = new Map<string, string>();
+const resultCache = processSingleton("catalog-results", () => new Map<string, { at: number; hits: CatalogHit[]; total: number | null }>());
+const imageByPid = processSingleton("catalog-images", () => new Map<string, string>());
 const TTL_MS = 10 * 60_000;
 const MAX_IMAGES = 5000;
 

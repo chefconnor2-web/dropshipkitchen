@@ -2,6 +2,8 @@
 // Method names are mapped to our own tiers (Standard / Express) so CJ's carrier names never reach the browser.
 
 import { freightCalculate } from "@/lib/cj/client";
+import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
+import { processSingleton } from "@/lib/singleton";
 import { chooseFromCountry, originCandidates } from "@/lib/fulfillment";
 import { choosePlan, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
 
@@ -71,7 +73,7 @@ export interface CartQuote {
   blocked: string[];
 }
 
-const cache = new Map<string, { at: number; quote: CartQuote }>();
+const cache = processSingleton("ship-quote-cache", () => new Map<string, { at: number; quote: CartQuote }>());
 const TTL_MS = 30 * 60_000;
 
 async function wholeOrderOptions(items: ShipItem[], from: string, country: string, zip?: string) {
@@ -106,7 +108,28 @@ export async function quoteCart(items: ShipItem[], country: string, zip?: string
   const key = JSON.stringify([items.map((i) => [i.vid, i.quantity]).sort(), country, (zip ?? "").slice(0, 3)]);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.quote;
+  // One quote per cart at a time: the cart page joins a background warm-up (raising its CJ priority)
+  // instead of asking CJ again.
+  const caller = currentCjLane();
+  const running = inflight.get(key);
+  if (running) {
+    running.lane.priority = Math.max(running.lane.priority, caller.priority);
+    return running.promise;
+  }
+  const lane: CjLane = { priority: caller.priority };
+  const promise = withCjPriority(lane, () => computeQuote(items, country, zip))
+    .then((quote) => {
+      cache.set(key, { at: Date.now(), quote });
+      return quote;
+    })
+    .finally(() => inflight.delete(key));
+  inflight.set(key, { lane, promise });
+  return promise;
+}
 
+const inflight = processSingleton("ship-quote-inflight", () => new Map<string, { lane: CjLane; promise: Promise<CartQuote> }>());
+
+async function computeQuote(items: ShipItem[], country: string, zip?: string): Promise<CartQuote> {
   const tiers: ShipTier[] = [];
   let blocked: string[] = [];
   for (const fromCountry of originCandidates(items, country)) {
@@ -140,7 +163,5 @@ export async function quoteCart(items: ShipItem[], country: string, zip?: string
       }
     }
   }
-  const quote = { tiers, blocked };
-  cache.set(key, { at: Date.now(), quote });
-  return quote;
+  return { tiers, blocked };
 }

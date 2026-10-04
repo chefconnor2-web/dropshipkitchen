@@ -26,6 +26,7 @@
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { makeThrottle } from "./lanes";
+import { processSingleton } from "@/lib/singleton";
 import type {
   CjEnvelope,
   CjListV2Data,
@@ -50,7 +51,7 @@ export class CjApiError extends Error {
 const TOKEN_KEY = "cj.token";
 
 // ---- throttle: CJ rate-limits per account, so serialise calls in-process (urgent calls first) ----
-const throttled = makeThrottle(() => config.cj.minIntervalMs);
+const throttled = processSingleton("cj-throttle", () => makeThrottle(() => config.cj.minIntervalMs));
 
 async function rawCall<T>(
   method: "GET" | "POST" | "PATCH",

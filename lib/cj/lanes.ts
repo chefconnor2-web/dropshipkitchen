@@ -2,6 +2,7 @@
 // waiting on a button jumps ahead of background work (catalog warm-up, imports nobody is waiting for).
 // A call's priority comes from the async context it is made in: see withCjPriority.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { processSingleton } from "@/lib/singleton";
 
 export const CJ_PRIORITY = { background: 0, normal: 1, urgent: 2 } as const;
 export type CjPriority = keyof typeof CJ_PRIORITY;
@@ -11,7 +12,7 @@ export interface CjLane {
   priority: number;
 }
 
-const lanes = new AsyncLocalStorage<CjLane>();
+const lanes = processSingleton("cj-lanes", () => new AsyncLocalStorage<CjLane>());
 
 /** Run fn with every CJ call it makes (directly or not) queued at this priority. */
 export function withCjPriority<T>(priority: CjPriority | CjLane, fn: () => T): T {
