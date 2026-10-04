@@ -1,20 +1,27 @@
-// Sourcing assistant: a shopper describes a project ("battery setup for a custom e-bike") and a small,
-// cheap Claude model plans the parts list, searches CJ's live catalog, and adds what they approve to
-// their cart. Manual tool loop, server-side only; the model never sees supplier ids beyond the CJ PID.
+// Sourcing assistant. A shopper describes a project ("battery setup for a custom e-bike"); a planner model
+// (Claude Sonnet 5.5) breaks it into parts and sends cheap scout agents (Claude Haiku 4.5), one per part and
+// in parallel, to search CJ's live catalog and shortlist the best matches. The planner checks compatibility
+// and adds what the shopper approves to their cart. Everything runs server-side; finds stream to the shopper
+// as they arrive.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
-import { searchCatalog } from "@/lib/catalog-search";
+import { searchCatalog, type CatalogHit } from "@/lib/catalog-search";
 import { openCjProduct } from "@/lib/open-product";
 import { addVariantToCart } from "@/lib/cart-add";
 import { loadCart } from "@/lib/cart";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 
-// Claude Haiku 4.5: the cheapest current Claude model ($1 / $5 per million tokens). Override with ASSISTANT_MODEL.
-const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-haiku-4-5";
+// Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
+const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
+const SCOUT_MODEL = process.env.ASSISTANT_SCOUT_MODEL?.trim() || "claude-haiku-4-5";
+const EFFORT = (process.env.ASSISTANT_EFFORT?.trim() || "medium") as "low" | "medium" | "high";
 const MAX_TOOL_ROUNDS = 8;
+const MAX_SCOUT_ROUNDS = 4;
+const MAX_PARTS = 10;
+const SCOUT_CONCURRENCY = 5;
 const MAX_USER_TURNS = 40;
 const MAX_MESSAGE_CHARS = 1000;
 
@@ -26,52 +33,67 @@ export interface ProductCard {
   pid: string;
   title: string;
   fromCents: number;
+  group?: string;
 }
 export type UiEntry =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; cards: ProductCard[]; added: string[] };
 
+/** Live events for the chat panel while a turn runs. */
+export type AssistantEvent = { type: "progress"; note: string } | { type: "found"; group: string; cards: ProductCard[]; done: boolean };
+
 function systemPrompt(): string {
-  return `You are the sourcing assistant for ${config.storeName}, a Canadian B2B store where businesses and makers order almost anything from Chinese factories. Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products in the catalog, and add the ones they approve to their cart.
+  return `You are the sourcing assistant for ${config.storeName}, a Canadian B2B store where businesses and makers order almost anything from Chinese factories. Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
 
 How to work:
-- First think about everything the project needs: the main components, the parts that connect them (wiring, connectors, mounts, fuses), and the tools to do it yourself. Briefly share that list.
-- Find each item with search_catalog. The catalog search matches keywords, so use short queries of 1-3 plain words ("hub motor kit", "48v battery", "crimping tool"), not sentences. Search several items in parallel when you can.
-- Only recommend products that came back from search_catalog, with the price it returned. Never invent products, prices, specs or delivery times. If nothing suitable comes back, try one or two other keyword phrasings (for example "xt90 plug", "xt90 connector male female"), then say it's not available and offer an alternative from this catalog. Never send shoppers to other stores or websites.
-- While planning, only use search_catalog; don't open products yet. Call get_product only for the items you're about to add (and to check a spec you need).
-- When the shopper says to add something, add it in the same turn: call get_product, then add_to_cart with the exact variant_id. Don't ask for confirmation again. If they asked you to build the whole cart, add your clear picks and list what you added. Otherwise add only what they asked for or agreed to.
-- Prices are in USD per unit and already include our margin. Shipping is quoted for their postal code in the cart. For bulk or wholesale quantities, add the quantity they need; stock is re-checked live.
-- Match parts to each other: voltage, connectors, sizes and wattage must be compatible. Point out anything the shopper must confirm (for example battery voltage matching the motor controller).
-- Batteries and chargers must match exactly in chemistry and charge voltage. A "48V" Li-ion (NMC, 13S) pack charges at 54.6V; a "48V" LiFePO4 (16S) pack charges at 58.4V. Never pair a LiFePO4 charger with a Li-ion pack or the reverse: it can overcharge and start a fire. Read get_product's description to confirm both. If you can't confirm a match, say so and don't add the charger.
+- Think through everything the project needs: the main components, the parts that connect them (wiring, connectors, mounts, fuses), and the tools to do it yourself.
+- Find parts with find_products, all of them in one call: it sends a scout to search the live catalog for each part in parallel and returns a shortlist per part. Give each part a clear need (specs that matter, like voltage, size, connector type) and 1-3 short keyword queries (1-3 plain words each, e.g. "48v battery", "xt90 connector"). If a part comes back empty, try once more with different keywords before giving up.
+- Only recommend products that find_products returned, at the price it returned. Never invent products, prices, specs or delivery times. If something isn't available, say so and suggest an alternative from this catalog. Never send shoppers to other stores or websites.
+- Don't open products while planning. Call get_product only for items you're about to add, or to check a spec you need.
+- When the shopper says to add something, add it in the same turn: get_product, then add_to_cart with the exact variant_id. Don't ask for confirmation again. If they asked you to build the whole cart, add your clear picks and list what you added. Otherwise add only what they asked for or agreed to.
+- Match parts to each other: voltage, connectors, sizes and wattage must be compatible. Point out anything the shopper must confirm.
+- Batteries and chargers must match exactly in chemistry and charge voltage. A "48V" Li-ion (NMC, 13S) pack charges at 54.6V; a "48V" LiFePO4 (16S) pack charges at 58.4V. Never pair a LiFePO4 charger with a Li-ion pack or the reverse: it can overcharge and start a fire. Confirm both from get_product's description; if you can't, say so and don't add the charger.
 - Before adding an accessory, check the main product's description for what's included (charger, BMS, connectors, mounts) and don't add duplicates; tell the shopper what's already in the box.
-- For lithium batteries, high voltage or mains wiring, add one short safety note (correct charger, a BMS, a fuse, insulated tools). Don't help with anything illegal or dangerous.
-- Be concise: short paragraphs or bullet lists, no filler. Product cards with photos are shown to the shopper automatically for every search result, so refer to products by name rather than pasting long lists of links.`;
+- For lithium batteries, high voltage or mains wiring, add one short safety note. Don't help with anything illegal or dangerous.
+- Prices are USD per unit and already include our margin. Shipping is quoted for the shopper's postal code in the cart. For bulk quantities, add the quantity they need; stock is re-checked live.
+- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
 }
 
-const TOOLS: Anthropic.Tool[] = [
+const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
-    name: "search_catalog",
+    name: "find_products",
     description:
-      "Keyword search over the supplier's live catalog of millions of products shipped from China. Returns products with an id (pid), title and starting price in USD. Use 1-3 word queries.",
+      "Send scouts to search the live catalog (millions of products shipped from China) for several parts at once, in parallel. Returns up to 3 shortlisted products per part, each with pid, title, starting price in USD and a note on fit.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Short keyword query, e.g. 'brushless hub motor'" },
-        limit: { type: "integer", description: "How many results to return, 1-10" },
+        parts: {
+          type: "array",
+          description: `The parts to find, up to ${MAX_PARTS}.`,
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Short label shown to the shopper, e.g. 'Battery'" },
+              need: { type: "string", description: "What a good match must have, e.g. '48V Li-ion, 20Ah, for e-bike, XT90 output'" },
+              queries: { type: "array", items: { type: "string" }, description: "1-3 short keyword queries" },
+            },
+            required: ["name", "need", "queries"],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ["query", "limit"],
+      required: ["parts"],
       additionalProperties: false,
     },
   },
   {
     name: "get_product",
-    description:
-      "Load one product's purchasable options (variants) with each option's variant_id, price and stock. Call before add_to_cart.",
+    description: "Load one product's purchasable options (variants) with each option's variant_id, price, stock and the description. Call before add_to_cart.",
     strict: true,
     input_schema: {
       type: "object",
-      properties: { pid: { type: "string", description: "The pid from search_catalog" } },
+      properties: { pid: { type: "string", description: "The pid from find_products" } },
       required: ["pid"],
       additionalProperties: false,
     },
@@ -98,26 +120,173 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
+// ---------- scouts ----------
+
+const SCOUT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "search_catalog",
+    description: "Keyword search over the live catalog. Returns up to 15 products with pid, title and starting price in USD. Use 1-3 word queries.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string", description: "Short keyword query" } },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "submit_picks",
+    description: "Report your shortlist and finish. Call exactly once, after searching.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        picks: {
+          type: "array",
+          description: "Best 1-3 matches, best first. Empty if nothing fits.",
+          items: {
+            type: "object",
+            properties: { pid: { type: "string" }, note: { type: "string", description: "One short line on why it fits or what to check" } },
+            required: ["pid", "note"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["picks"],
+      additionalProperties: false,
+    },
+  },
+];
+
+interface Part {
+  name: string;
+  need: string;
+  queries: string[];
+}
+interface ScoutResult {
+  part: string;
+  picks: Array<{ pid: string; title: string; from_price_usd: string; note: string }>;
+}
+
+async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) => void, usage: { in: number; out: number }): Promise<ScoutResult> {
+  const seen = new Map<string, CatalogHit>();
+  const search = async (q: string) => {
+    const query = q.trim().slice(0, 80);
+    if (!query) return [];
+    emit({ type: "progress", note: `${part.name}: searching “${query}”…` });
+    const { hits } = await searchCatalog(query, 1);
+    const top = hits.slice(0, 15);
+    for (const h of top) seen.set(h.pid, h);
+    emit({ type: "found", group: part.name, cards: top.slice(0, 6).map((h) => ({ ...h, group: part.name })), done: false });
+    return top;
+  };
+
+  // Run the planner's first query straight away, so the scout starts with results in hand.
+  const first = await search(part.queries[0] ?? part.name).catch(() => []);
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content: `Find the best products for this part.\nPart: ${part.name}\nMust have: ${part.need}\nOther queries you can try: ${part.queries.slice(1).join(", ") || "(your own)"}\n\nResults for "${part.queries[0] ?? part.name}":\n${JSON.stringify(first.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2) })))}\n\nIf these don't fit, search again with other short keywords (at most 2 more searches). Then call submit_picks with the best 1-3 that genuinely fit the need. Skip accessories, parts or mismatched specs.`,
+    },
+  ];
+
+  let picks: Array<{ pid: string; note: string }> | null = null;
+  for (let round = 0; round < MAX_SCOUT_ROUNDS && !picks; round++) {
+    const r = await client.messages.create({
+      model: SCOUT_MODEL,
+      max_tokens: 1024,
+      system: "You are a fast, careful product scout for a sourcing store. You only pick products from search results you were given, judged against the stated need.",
+      tools: SCOUT_TOOLS,
+      messages,
+    });
+    usage.in += r.usage.input_tokens;
+    usage.out += r.usage.output_tokens;
+    messages.push({ role: "assistant", content: r.content });
+    const calls = r.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    if (!calls.length) break;
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const c of calls) {
+      const input = c.input as Record<string, unknown>;
+      if (c.name === "submit_picks") {
+        picks = (Array.isArray(input.picks) ? input.picks : []) as Array<{ pid: string; note: string }>;
+        results.push({ type: "tool_result", tool_use_id: c.id, content: "Received." });
+      } else {
+        const hits = await search(String(input.query ?? "")).catch(() => []);
+        results.push({
+          type: "tool_result",
+          tool_use_id: c.id,
+          content: hits.length ? JSON.stringify(hits.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2) }))) : "No results.",
+        });
+      }
+    }
+    if (!picks) messages.push({ role: "user", content: results });
+  }
+
+  // Fall back to the top results if the scout didn't submit; never return a pid it wasn't shown.
+  const chosen = (picks ?? [...seen.keys()].slice(0, 3).map((pid) => ({ pid, note: "Top search result" })))
+    .filter((p) => seen.has(p.pid))
+    .slice(0, 3);
+  const out = chosen.map((p) => {
+    const h = seen.get(p.pid)!;
+    return { pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2), note: String(p.note ?? "").slice(0, 200) };
+  });
+  emit({ type: "found", group: part.name, cards: chosen.map((p) => ({ ...seen.get(p.pid)!, group: part.name })), done: true });
+  return { part: part.name, picks: out };
+}
+
+/** Run up to SCOUT_CONCURRENCY scouts at a time. */
+async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number }) {
+  const results: ScoutResult[] = new Array(parts.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(SCOUT_CONCURRENCY, parts.length) }, async () => {
+      while (next < parts.length) {
+        const i = next++;
+        try {
+          results[i] = await scout(client, parts[i], emit, usage);
+        } catch {
+          results[i] = { part: parts[i].name, picks: [] };
+          emit({ type: "found", group: parts[i].name, cards: [], done: true });
+        }
+      }
+    }),
+  );
+  return results;
+}
+
+// ---------- planner tools ----------
+
 interface Ctx {
   cartId: string;
   cards: ProductCard[];
   added: string[];
+  emit: (e: AssistantEvent) => void;
+  client: Anthropic;
+  usage: { in: number; out: number };
 }
 
 async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<{ content: string; isError?: boolean }> {
-  if (name === "search_catalog") {
-    const query = String(input.query ?? "").trim().slice(0, 80);
-    const limit = Math.max(1, Math.min(10, Number(input.limit) || 6));
-    if (!query) return { content: "Empty query.", isError: true };
-    const { hits } = await searchCatalog(query, 1);
-    const top = hits.slice(0, limit);
-    for (const h of top) if (!ctx.cards.some((c) => c.pid === h.pid)) ctx.cards.push(h);
-    if (!top.length) return { content: `No products found for "${query}". Try other keywords.` };
-    return { content: JSON.stringify(top.map((h) => ({ pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2) }))) };
+  if (name === "find_products") {
+    const parts = (Array.isArray(input.parts) ? input.parts : [])
+      .slice(0, MAX_PARTS)
+      .map((p) => {
+        const o = p as Record<string, unknown>;
+        const queries = (Array.isArray(o.queries) ? o.queries : []).map((q) => String(q)).filter(Boolean).slice(0, 3);
+        return { name: String(o.name ?? "Item").slice(0, 40), need: String(o.need ?? "").slice(0, 300), queries: queries.length ? queries : [String(o.name ?? "")] };
+      });
+    if (!parts.length) return { content: "No parts given.", isError: true };
+    ctx.emit({ type: "progress", note: `Sending ${parts.length} scout${parts.length === 1 ? "" : "s"} to search…` });
+    const results = await runScouts(ctx.client, parts, ctx.emit, ctx.usage);
+    for (const r of results)
+      for (const p of r.picks)
+        if (!ctx.cards.some((c) => c.pid === p.pid))
+          ctx.cards.push({ pid: p.pid, title: p.title, fromCents: Math.round(Number(p.from_price_usd) * 100), group: r.part });
+    return { content: JSON.stringify(results) };
   }
   if (name === "get_product") {
+    ctx.emit({ type: "progress", note: "Checking options and stock…" });
     const product = await openCjProduct(String(input.pid ?? ""));
-    if (!product) return { content: "That product isn't available. Pick another search result.", isError: true };
+    if (!product) return { content: "That product isn't available. Pick another one.", isError: true };
     const variants = await prisma.productVariant.findMany({
       where: { productId: product.id, enabled: true },
       orderBy: { position: "asc" },
@@ -135,11 +304,12 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
             price_usd: (v.priceCents / 100).toFixed(2),
             stock: stockLabel(stockStatus(v.offer?.cjSupplierVariant.inventoryTotal)),
           })),
-        description: product.description.slice(0, 1200),
+        description: product.description.slice(0, 1500),
       }),
     };
   }
   if (name === "add_to_cart") {
+    ctx.emit({ type: "progress", note: "Adding to your cart…" });
     const quantity = Math.max(1, Math.min(999, Number(input.quantity) || 1));
     const r = await addVariantToCart(ctx.cartId, String(input.variant_id ?? ""), quantity);
     if (r.ok) ctx.added.push(r.message.replace(/^Added /, "").replace(/ to your cart\.$/, ""));
@@ -152,7 +322,7 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
     const subtotal = items.reduce((n, i) => n + i.variant.priceCents * i.quantity, 0);
     return {
       content: JSON.stringify({
-        items: items.map((i) => ({ title: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total_usd: (i.variant.priceCents * i.quantity / 100).toFixed(2) })),
+        items: items.map((i) => ({ title: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total_usd: ((i.variant.priceCents * i.quantity) / 100).toFixed(2) })),
         subtotal: formatMoney(subtotal),
       }),
     };
@@ -162,47 +332,43 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
 
 export class AssistantLimitError extends Error {}
 
-function progressNote(c: Anthropic.ToolUseBlock): string {
-  const i = c.input as Record<string, unknown>;
-  if (c.name === "search_catalog") return `Searching “${String(i.query ?? "").slice(0, 60)}”…`;
-  if (c.name === "get_product") return "Checking options and stock…";
-  if (c.name === "add_to_cart") return "Adding to your cart…";
-  return "Checking your cart…";
-}
-
-/** One shopper turn: runs the tool loop to completion and returns what the chat panel should show. */
+/** One shopper turn: runs the planner's tool loop to completion and returns what the chat panel should show. */
 export async function chatTurn(
   chatId: string,
   cartId: string,
   userText: string,
-  onProgress: (note: string) => void = () => {},
+  emit: (e: AssistantEvent) => void = () => {},
 ): Promise<UiEntry & { role: "assistant" }> {
   const text = userText.trim().slice(0, MAX_MESSAGE_CHARS);
   const chat = await prisma.assistantChat.findUniqueOrThrow({ where: { id: chatId } });
   if (chat.userTurns >= MAX_USER_TURNS) throw new AssistantLimitError("This chat is full. Start a new one to keep going.");
 
-  const messages = JSON.parse(chat.messagesJson) as Anthropic.MessageParam[];
+  // History is append-only: thinking and fallback blocks must go back to the API exactly as received.
+  const messages = JSON.parse(chat.messagesJson) as Anthropic.Beta.BetaMessageParam[];
   messages.push({ role: "user", content: text });
-  const ctx: Ctx = { cartId, cards: [], added: [] };
   const client = new Anthropic();
-  let inTok = 0;
-  let outTok = 0;
+  const usage = { in: 0, out: 0 };
+  const ctx: Ctx = { cartId, cards: [], added: [], emit, client, usage };
+  const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
 
+  emit({ type: "progress", note: "Planning your parts list…" });
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await client.messages.create({
+    const response = await client.beta.messages.create({
       model: MODEL,
-      max_tokens: 2048,
+      max_tokens: 8000,
       system: systemPrompt(),
-      tools: TOOLS,
+      tools: PLANNER_TOOLS,
       cache_control: { type: "ephemeral" },
       messages,
+      // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.
+      ...(haikuPlanner ? {} : { output_config: { effort: EFFORT }, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
     });
-    inTok += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
-    outTok += response.usage.output_tokens;
+    usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
+    usage.out += response.usage.output_tokens;
     messages.push({ role: "assistant", content: response.content });
     reply = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
       .map((b) => b.text)
       .join("\n")
       .trim();
@@ -211,9 +377,8 @@ export async function chatTurn(
       if (response.stop_reason === "refusal") reply = "Sorry, I can't help with that one.";
       break;
     }
-    const calls = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    for (const c of calls) onProgress(progressNote(c));
-    const results: Anthropic.ToolResultBlockParam[] = await Promise.all(
+    const calls = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
+    const results: Anthropic.Beta.BetaToolResultBlockParam[] = await Promise.all(
       calls.map(async (c) => {
         try {
           const r = await runTool(c.name, c.input as Record<string, unknown>, ctx);
@@ -228,7 +393,7 @@ export async function chatTurn(
     if (round === MAX_TOOL_ROUNDS - 1) reply ||= "I found a lot to go through. Tell me which part to look at next.";
   }
 
-  const entry: UiEntry & { role: "assistant" } = { role: "assistant", text: reply || "Done.", cards: ctx.cards.slice(0, 24), added: ctx.added };
+  const entry: UiEntry & { role: "assistant" } = { role: "assistant", text: reply || "Done.", cards: ctx.cards.slice(0, 30), added: ctx.added };
   const ui = JSON.parse(chat.uiJson) as UiEntry[];
   ui.push({ role: "user", text }, entry);
   await prisma.assistantChat.update({
@@ -237,8 +402,8 @@ export async function chatTurn(
       messagesJson: JSON.stringify(messages),
       uiJson: JSON.stringify(ui),
       userTurns: { increment: 1 },
-      inputTokens: { increment: inTok },
-      outputTokens: { increment: outTok },
+      inputTokens: { increment: usage.in },
+      outputTokens: { increment: usage.out },
     },
   });
   return entry;

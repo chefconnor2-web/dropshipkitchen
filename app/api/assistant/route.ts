@@ -69,7 +69,7 @@ export async function POST(req: Request) {
       };
       const ping = setInterval(() => send({ type: "ping" }), 5000);
       try {
-        const entry = await chatTurn(chat.id, cartId, message, (note) => send({ type: "progress", note }));
+        const entry = await chatTurn(chat.id, cartId, message, (ev) => send(ev));
         send({ type: "done", entry, cartCount: await cartCount() });
       } catch (e) {
         let error = "Something went wrong. Please try again.";
