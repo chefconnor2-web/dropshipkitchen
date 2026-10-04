@@ -7,6 +7,12 @@ interface Card {
   pid: string;
   title: string;
   fromCents: number;
+  group?: string;
+}
+interface LiveGroup {
+  group: string;
+  cards: Card[];
+  done: boolean;
 }
 type Entry = { role: "user"; text: string } | { role: "assistant"; text: string; cards: Card[]; added: string[] };
 
@@ -16,6 +22,13 @@ const EXAMPLES = [
   "Solar setup to run a fridge and lights in a cabin",
   "Everything to start screen-printing t-shirts at home",
 ];
+
+/** Cards grouped by the part they were found for, in first-seen order. */
+function groupCards(cards: Card[]): Array<[string, Card[]]> {
+  const m = new Map<string, Card[]>();
+  for (const c of cards) m.set(c.group ?? "", [...(m.get(c.group ?? "") ?? []), c]);
+  return [...m];
+}
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -64,6 +77,7 @@ export default function AssistantChat() {
   const [cartCount, setCartCount] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveGroup[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,7 +92,7 @@ export default function AssistantChat() {
   }, []);
   useEffect(() => {
     if (entries.length) endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [entries, busy]);
+  }, [entries, busy, live]);
 
   async function send(text: string) {
     const msg = text.trim();
@@ -109,6 +123,17 @@ export default function AssistantChat() {
           if (!line) continue;
           const ev = JSON.parse(line);
           if (ev.type === "progress") setProgress(ev.note);
+          else if (ev.type === "found")
+            setLive((g) => {
+              const rest = g.filter((x) => x.group !== ev.group);
+              const prev = g.find((x) => x.group === ev.group);
+              // While searching, accumulate finds; when the scout is done, show its shortlist.
+              const cards: Card[] = ev.done
+                ? ev.cards.length ? ev.cards : prev?.cards.slice(0, 3) ?? []
+                : [...(prev?.cards ?? []), ...ev.cards.filter((c: Card) => !prev?.cards.some((p) => p.pid === c.pid))].slice(0, 8);
+              const next = { group: ev.group, cards, done: ev.done };
+              return prev ? g.map((x) => (x.group === ev.group ? next : x)) : [...rest, next];
+            });
           else if (ev.type === "error") throw new Error(ev.error);
           else if (ev.type === "done") {
             setEntries((e) => [...e, ev.entry]);
@@ -117,7 +142,20 @@ export default function AssistantChat() {
           }
         }
       }
-      if (!done) throw new Error("The connection dropped. Please try again.");
+      if (!done) {
+        // The server finishes the turn even if the connection drops; pick up the saved answer.
+        for (let i = 0; i < 20 && !done; i++) {
+          await new Promise((res) => setTimeout(res, 3000));
+          const d = await fetch("/api/assistant").then((x) => x.json()).catch(() => null);
+          const last = d?.entries?.[d.entries.length - 1];
+          if (d && d.entries.length > 0 && last?.role === "assistant" && d.entries[d.entries.length - 2]?.text === msg) {
+            setEntries(d.entries);
+            setCartCount(d.cartCount ?? 0);
+            done = true;
+          }
+        }
+        if (!done) throw new Error("The connection dropped. Please try again.");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setEntries((e) => e.slice(0, -1));
@@ -125,6 +163,7 @@ export default function AssistantChat() {
     } finally {
       setBusy(false);
       setProgress(null);
+      setLive([]);
     }
   }
 
@@ -177,9 +216,11 @@ export default function AssistantChat() {
                   <Link href="/cart">Review cart →</Link>
                 </div>
               )}
-              {e.cards.length > 0 && (
+              {groupCards(e.cards).map(([group, cards]) => (
+                <div key={group || "all"} className="ai-group">
+                  {group && <div className="ai-group-label">{group}</div>}
                 <div className="ai-cards">
-                  {e.cards.map((c) => (
+                  {cards.map((c) => (
                     <div key={c.pid} className="ai-card">
                       <a href={`/search/item/${encodeURIComponent(c.pid)}`} target="_blank" rel="noreferrer nofollow" className="ai-card-img">
                         <img src={`/media/s/${encodeURIComponent(c.pid)}`} alt="" loading="lazy" />
@@ -194,15 +235,37 @@ export default function AssistantChat() {
                     </div>
                   ))}
                 </div>
-              )}
+                </div>
+              ))}
             </div>
           ),
         )}
         {busy && (
-          <div className="ai-msg ai-bot ai-thinking">
-            <span className="dot" />
-            <span className="dot" />
-            <span className="dot" /> {progress ?? "Thinking…"}
+          <div className="ai-msg ai-bot ai-working">
+            <div className="ai-thinking">
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" /> {progress ?? "Thinking…"}
+            </div>
+            {live.map((g) => (
+              <div key={g.group} className="ai-live">
+                <div className="ai-live-head">
+                  <span className={g.done ? "ai-live-done" : "ai-live-spin"} aria-hidden>
+                    {g.done ? "✓" : ""}
+                  </span>
+                  <strong>{g.group}</strong>
+                  <span className="muted">{g.done ? `${g.cards.length} shortlisted` : `${g.cards.length} found…`}</span>
+                </div>
+                <div className="ai-live-row">
+                  {g.cards.map((c) => (
+                    <div key={c.pid} className="ai-live-card" title={c.title}>
+                      <img src={`/media/s/${encodeURIComponent(c.pid)}`} alt="" loading="lazy" />
+                      <span>{money(c.fromCents)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
         <div ref={endRef} />
