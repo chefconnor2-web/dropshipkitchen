@@ -40,7 +40,7 @@ export interface ProductCard {
   group?: string;
 }
 export type UiEntry =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; images?: string[] }
   | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit };
 
 /** Live events for the chat panel while a turn runs. */
@@ -68,7 +68,61 @@ How to work:
 - Prices are USD per unit and already include our margin. ${bulkPricingLabel()}; the cart applies it to the whole order. Prices you quote are list prices, so say the cart total will be lower for bulk orders, and use view_cart for the real total. Shipping is quoted for the shopper's postal code in the cart; orders too heavy for one parcel are split into several parcels automatically, so large quantities are fine. For bulk quantities, add the quantity they need; stock is re-checked live.
 - After you present picks for a project, call propose_kit once with your recommended pick for each part you found (sensible quantities; an option in words when it matters, e.g. "20Ah"). The shopper sees it as a kit card with an "Add entire kit" button.
 - When the shopper asks to add the whole kit, everything, or all of it, call add_kit in the same turn with the kit's items (adjusted for anything they changed). Don't ask again; afterwards, list what was added and anything that failed.
+- Shoppers can send photos: a broken or worn part, a product they want more of, a label, spec plate or packaging, a sketch, or a space to fit out. Say briefly what you see and read any model numbers, voltages, sizes or connectors in it, then search for that exact item or compatible parts. If a key spec isn't visible, ask for it or for another photo.
 - Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
+}
+
+const VOICE_NOTE = `\n\nThe shopper is talking to you by voice and your reply is read aloud. Answer in two to four short spoken sentences with no lists, headings, markdown or prices with cents. Still use the tools as usual; the product and kit cards show the details on screen.`;
+
+/** Image blocks are stored as "img:<id>" placeholders and filled in from the database before each API call. */
+const IMG_PREFIX = "img:";
+
+async function hydrateImages(messages: Anthropic.Beta.BetaMessageParam[]): Promise<Anthropic.Beta.BetaMessageParam[]> {
+  const ids = new Set<string>();
+  for (const m of messages)
+    if (m.role === "user" && Array.isArray(m.content))
+      for (const b of m.content) if (b.type === "image" && b.source.type === "base64" && b.source.data.startsWith(IMG_PREFIX)) ids.add(b.source.data.slice(IMG_PREFIX.length));
+  if (!ids.size) return messages;
+  const rows = await prisma.assistantImage.findMany({ where: { id: { in: [...ids] } } });
+  const data = new Map(rows.map((r) => [r.id, { mime: r.mime, b64: Buffer.from(r.data).toString("base64") }]));
+  return messages.map((m) => {
+    if (m.role !== "user" || !Array.isArray(m.content)) return m;
+    return {
+      ...m,
+      content: m.content.map((b): Anthropic.Beta.BetaContentBlockParam => {
+        if (b.type !== "image" || b.source.type !== "base64" || !b.source.data.startsWith(IMG_PREFIX)) return b;
+        const img = data.get(b.source.data.slice(IMG_PREFIX.length));
+        return img ? { type: "image", source: { type: "base64", media_type: img.mime as "image/jpeg", data: img.b64 } } : { type: "text", text: "[A photo that is no longer available.]" };
+      }),
+    };
+  });
+}
+
+/** Index in the API history where the shopper's n-th message starts (tool results don't count as messages). */
+function userMessageStart(messages: Anthropic.Beta.BetaMessageParam[], n: number): number {
+  let seen = 0;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const real = m.role === "user" && (typeof m.content === "string" || m.content.some((b) => b.type !== "tool_result"));
+    if (real && seen++ === n) return i;
+  }
+  return messages.length;
+}
+
+/** A short title for the chat sidebar, from the shopper's first message. */
+export async function generateTitle(text: string, hasImage: boolean): Promise<string> {
+  const fallback = text.trim().replace(/\s+/g, " ").slice(0, 48) || "Photo search";
+  try {
+    const r = await new Anthropic().messages.create({
+      model: SCOUT_MODEL,
+      max_tokens: 24,
+      messages: [{ role: "user", content: `Write a 2-5 word title for a shopping chat that starts with this request${hasImage ? " (with a photo)" : ""}. Reply with the title only, no quotes or punctuation at the end.\n\n${text.slice(0, 500) || "(only a photo)"}` }],
+    });
+    const t = r.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("").trim().replace(/^["'“]|["'”.]$/g, "");
+    return t && t.length <= 60 ? t : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
@@ -431,23 +485,50 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
 export class AssistantLimitError extends Error {}
 
 /** One shopper turn: runs the planner's tool loop to completion and returns what the chat panel should show. */
+export interface TurnInput {
+  text: string;
+  /** AssistantImage ids, already checked to belong to this visitor. */
+  images?: Array<{ id: string; mime: string }>;
+  /** The shopper is in voice mode: answer briefly, for reading aloud. */
+  voice?: boolean;
+  /** Replace the conversation from this transcript entry (a user message) on: edit or regenerate. */
+  editIndex?: number;
+}
+
 export async function chatTurn(
   chatId: string,
   cartId: string,
-  userText: string,
+  input: TurnInput,
   emit: (e: AssistantEvent) => void = () => {},
 ): Promise<UiEntry & { role: "assistant" }> {
-  const text = userText.trim().slice(0, MAX_MESSAGE_CHARS);
+  const text = input.text.trim().slice(0, MAX_MESSAGE_CHARS);
+  const images = (input.images ?? []).slice(0, 4);
   const chat = await prisma.assistantChat.findUniqueOrThrow({ where: { id: chatId } });
-  if (chat.userTurns >= MAX_USER_TURNS) throw new AssistantLimitError("This chat is full. Start a new one to keep going.");
 
-  // History is append-only: thinking and fallback blocks must go back to the API exactly as received.
-  const messages = JSON.parse(chat.messagesJson) as Anthropic.Beta.BetaMessageParam[];
-  messages.push({ role: "user", content: text });
+  // History is otherwise append-only: thinking and fallback blocks must go back to the API exactly as received.
+  let messages = JSON.parse(chat.messagesJson) as Anthropic.Beta.BetaMessageParam[];
+  let ui = JSON.parse(chat.uiJson) as UiEntry[];
+  let turns = chat.userTurns;
+  if (input.editIndex != null && input.editIndex >= 0 && input.editIndex < ui.length && ui[input.editIndex].role === "user") {
+    const n = ui.slice(0, input.editIndex).filter((e) => e.role === "user").length;
+    messages = messages.slice(0, userMessageStart(messages, n));
+    ui = ui.slice(0, input.editIndex);
+    turns = n;
+  }
+  if (turns >= MAX_USER_TURNS) throw new AssistantLimitError("This chat is full. Start a new one to keep going.");
+  messages.push({
+    role: "user",
+    content: images.length
+      ? [
+          ...images.map((im): Anthropic.Beta.BetaImageBlockParam => ({ type: "image", source: { type: "base64", media_type: im.mime as "image/jpeg", data: IMG_PREFIX + im.id } })),
+          { type: "text", text: text || "Here's a photo. What is this, and can you find it or compatible parts?" },
+        ]
+      : text,
+  });
   const client = new Anthropic();
   const usage = { in: 0, out: 0 };
   const known = new Map<string, ProductCard>();
-  for (const e of JSON.parse(chat.uiJson) as UiEntry[]) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
+  for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
   const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage };
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
@@ -459,10 +540,10 @@ export async function chatTurn(
     const stream = client.beta.messages.stream({
       model: MODEL,
       max_tokens: 8000,
-      system: systemPrompt(),
+      system: systemPrompt() + (input.voice ? VOICE_NOTE : ""),
       tools: PLANNER_TOOLS,
       cache_control: { type: "ephemeral" },
-      messages,
+      messages: await hydrateImages(messages),
       // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.
       ...(haikuPlanner ? {} : { output_config: { effort: EFFORT }, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
     });
@@ -502,14 +583,13 @@ export async function chatTurn(
   }
 
   const entry: UiEntry & { role: "assistant" } = { role: "assistant", text: reply || "Done.", cards: ctx.cards.slice(0, 30), added: ctx.added, ...(ctx.kit ? { kit: ctx.kit } : {}) };
-  const ui = JSON.parse(chat.uiJson) as UiEntry[];
-  ui.push({ role: "user", text }, entry);
+  ui.push({ role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}) }, entry);
   await prisma.assistantChat.update({
     where: { id: chat.id },
     data: {
       messagesJson: JSON.stringify(messages),
       uiJson: JSON.stringify(ui),
-      userTurns: { increment: 1 },
+      userTurns: turns + 1,
       inputTokens: { increment: usage.in },
       outputTokens: { increment: usage.out },
     },

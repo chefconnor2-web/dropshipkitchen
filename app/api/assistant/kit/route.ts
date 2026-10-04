@@ -1,18 +1,16 @@
 // "Add entire kit" from a kit card in the chat. Only kits this shopper's chat produced can be added.
 // Streams NDJSON: {type:"item", done, total, result} per line item, then {type:"done", results, cartCount}.
-import { cookies } from "next/headers";
-import { prisma } from "@/lib/db";
 import { cartCount, getOrCreateCartId } from "@/lib/cart";
 import { addKitToCart } from "@/lib/kit";
 import type { UiEntry } from "@/lib/assistant";
+import { findOwnChat, getVisitorId } from "@/lib/chat-session";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  const { kitId } = (await req.json().catch(() => ({}))) as { kitId?: string };
-  const chatId = (await cookies()).get("cs_chat")?.value;
-  const chat = chatId ? await prisma.assistantChat.findUnique({ where: { id: chatId } }) : null;
+  const { kitId, chatId } = (await req.json().catch(() => ({}))) as { kitId?: string; chatId?: string };
+  const chat = await findOwnChat(chatId, await getVisitorId());
   const kit = chat
     ? (JSON.parse(chat.uiJson) as UiEntry[]).flatMap((e) => (e.role === "assistant" && e.kit ? [e.kit] : [])).find((k) => k.id === kitId)
     : undefined;
