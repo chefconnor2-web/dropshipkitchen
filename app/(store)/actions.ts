@@ -9,7 +9,7 @@ import { allocatePrice, drawBox, loadPool, type PoolVariant } from "@/lib/myster
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
 import { createFreightRequest } from "@/lib/freight";
-import { daysLabel, isShipCountry, parcelsLabel, quoteTiers } from "@/lib/shipping";
+import { blockedMessage, daysLabel, isShipCountry, parcelsLabel, quoteCart, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
@@ -93,14 +93,18 @@ export async function checkout() {
   // Shipping is CJ's live quote for these exact VIDs to the shopper's country, charged at cost.
   const shipTo = await getShipTo();
   if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
-  let tiers;
+  let quote;
   try {
-    tiers = await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
+    quote = await quoteCart(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
   } catch {
     redirect(`/cart?error=${encodeURIComponent("We couldn’t get a shipping price right now. Please try again in a minute.")}`);
   }
+  const tiers = quote.tiers;
   const tier = tiers.find((t) => t.key === shipTo.tier) ?? tiers[0];
-  if (!tier) redirect(`/cart?error=${encodeURIComponent("Sorry, we can’t ship these items to that country.")}`);
+  if (!tier) {
+    const why = blockedMessage(quote.blocked, (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title, shipTo.country);
+    redirect(`/cart?error=${encodeURIComponent(why ?? "Sorry, we can’t ship these items to that country.")}`);
+  }
 
   const svs = await prisma.cjSupplierVariant.findMany({
     where: { id: { in: items.map((i) => i.variant.offer!.cjSupplierVariantId) } },
@@ -116,6 +120,8 @@ export async function checkout() {
       shippingCents: tier.cents,
       customerShipMethod: tier.method,
       customerShipCountry: shipTo.country,
+      // The warehouse this shipping price was quoted from; CJ orders ship from there.
+      cjFromCountry: tier.fromCountry,
       parcelPlanJson: tier.parcels ? JSON.stringify(tier.parcels) : null,
       items: {
         create: [
