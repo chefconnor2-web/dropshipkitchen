@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { config, stripeKeyProblem } from "@/lib/config";
 import { cartShipItems, getOrCreateCartId, getCartId, getShipTo, loadCart, setShipTo } from "@/lib/cart";
 import { addVariantToCart } from "@/lib/cart-add";
+import { priceOrder } from "@/lib/volume";
 import { daysLabel, isShipCountry, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
@@ -49,6 +50,13 @@ export async function checkout() {
       redirect(`/cart?error=${encodeURIComponent(`${i.variant.product.title} (${i.variant.name}) is no longer available in that quantity.`)}`);
     }
   }
+  // Bulk pricing for the whole transaction, from the cached supplier cost (the same numbers the cart showed).
+  const svCost = new Map(
+    (await prisma.cjSupplierVariant.findMany({ where: { id: { in: items.map((i) => i.variant.offer!.cjSupplierVariantId) } }, select: { id: true, supplierPriceCents: true } })).map((v) => [v.id, v.supplierPriceCents]),
+  );
+  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: svCost.get(i.variant.offer!.cjSupplierVariantId), quantity: i.quantity })));
+  const unitPrice = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
+
   // Shipping is CJ's live quote for these exact VIDs to the shopper's country, charged at cost.
   const shipTo = await getShipTo();
   if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
@@ -71,7 +79,7 @@ export async function checkout() {
     data: {
       number: newOrderNumber(),
       status: ORDER_STATUS.PENDING_PAYMENT,
-      subtotalCents: items.reduce((s, i) => s + i.variant.priceCents * i.quantity, 0),
+      subtotalCents: items.reduce((s, i) => s + unitPrice(i) * i.quantity, 0),
       shippingCents: tier.cents,
       customerShipMethod: tier.method,
       customerShipCountry: shipTo.country,
@@ -86,7 +94,7 @@ export async function checkout() {
             variantName: i.variant.name,
             internalSku: i.variant.internalSku,
             quantity: i.quantity,
-            customerPriceCents: i.variant.priceCents,
+            customerPriceCents: unitPrice(i),
             supplier: offer.supplier,
             supplierProductId: offer.supplierProductId,
             supplierProductSku: offer.supplierProductSku,
@@ -108,7 +116,7 @@ export async function checkout() {
       quantity: i.quantity,
       price_data: {
         currency: "usd",
-        unit_amount: i.variant.priceCents,
+        unit_amount: unitPrice(i),
         product_data: { name: `${i.variant.product.title} — ${i.variant.name}` },
       },
     })),

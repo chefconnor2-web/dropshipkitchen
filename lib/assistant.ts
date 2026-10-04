@@ -9,11 +9,12 @@ import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { searchCatalog, type CatalogHit } from "@/lib/catalog-search";
-import { openCjProduct } from "@/lib/open-product";
+import { openCjProduct, prewarmProducts } from "@/lib/open-product";
 import { addVariantToCart } from "@/lib/cart-add";
 import { loadCart } from "@/lib/cart";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { addKitToCart, type Kit, type KitItem } from "@/lib/kit";
+import { bulkPricingLabel, priceOrder } from "@/lib/volume";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -58,7 +59,7 @@ How to work:
 - Batteries and chargers must match exactly in chemistry and charge voltage. A "48V" Li-ion (NMC, 13S) pack charges at 54.6V; a "48V" LiFePO4 (16S) pack charges at 58.4V. Never pair a LiFePO4 charger with a Li-ion pack or the reverse: it can overcharge and start a fire. Confirm both from get_product's description; if you can't, say so and don't add the charger.
 - Before adding an accessory, check the main product's description for what's included (charger, BMS, connectors, mounts) and don't add duplicates; tell the shopper what's already in the box.
 - For lithium batteries, high voltage or mains wiring, add one short safety note. Don't help with anything illegal or dangerous.
-- Prices are USD per unit and already include our margin. Shipping is quoted for the shopper's postal code in the cart. For bulk quantities, add the quantity they need; stock is re-checked live.
+- Prices are USD per unit and already include our margin. ${bulkPricingLabel()}; the cart applies it to the whole order. Prices you quote are list prices, so say the cart total will be lower for bulk orders, and use view_cart for the real total. Shipping is quoted for the shopper's postal code in the cart. For bulk quantities, add the quantity they need; stock is re-checked live.
 - After you present picks for a project, call propose_kit once with your recommended pick for each part you found (sensible quantities; an option in words when it matters, e.g. "20Ah"). The shopper sees it as a kit card with an "Add entire kit" button.
 - When the shopper asks to add the whole kit, everything, or all of it, call add_kit in the same turn with the kit's items (adjusted for anything they changed). Don't ask again; afterwards, list what was added and anything that failed.
 - Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
@@ -407,11 +408,14 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
     const cart = await loadCart(ctx.cartId);
     const items = cart?.items ?? [];
     if (!items.length) return { content: "The cart is empty." };
-    const subtotal = items.reduce((n, i) => n + i.variant.priceCents * i.quantity, 0);
+    const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
+    const unit = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
+    const subtotal = priced.totalCents;
     return {
       content: JSON.stringify({
-        items: items.map((i) => ({ title: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total_usd: ((i.variant.priceCents * i.quantity) / 100).toFixed(2) })),
+        items: items.map((i) => ({ title: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total_usd: ((unit(i) * i.quantity) / 100).toFixed(2) })),
         subtotal: formatMoney(subtotal),
+        bulk_savings: priced.savingsCents ? formatMoney(priced.savingsCents) : null,
       }),
     };
   }
@@ -496,5 +500,12 @@ export async function chatTurn(
       outputTokens: { increment: usage.out },
     },
   });
+  // Fetch the likely buys in the background so "Add" and "Add entire kit" are near-instant.
+  prewarmProducts([...(ctx.kit?.items.map((i) => i.pid) ?? []), ...firstPickPerPart(ctx.cards)]);
   return entry;
+}
+
+function firstPickPerPart(cards: ProductCard[]): string[] {
+  const seen = new Set<string>();
+  return cards.filter((c) => (seen.has(c.group ?? "") ? false : (seen.add(c.group ?? ""), true))).map((c) => c.pid);
 }

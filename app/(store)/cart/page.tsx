@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
 import { SHIP_COUNTRIES, daysLabel, quoteTiers, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
+import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
 import { checkout, updateCartItem, updateShipTo } from "../actions";
 
@@ -11,7 +12,11 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const { error } = await searchParams;
   const cart = await loadCart(await getCartId());
   const items = cart?.items ?? [];
-  const subtotal = items.reduce((s, i) => s + i.variant.priceCents * i.quantity, 0);
+  // The whole cart is priced as one transaction: bigger orders pay a lower margin.
+  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
+  const unit = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
+  const subtotal = priced.totalCents;
+  const savings = priced.savingsCents;
   const units = items.reduce((s, i) => s + i.quantity, 0);
   const shipTo = await getShipTo();
   let tiers: ShipTier[] = [];
@@ -19,7 +24,11 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   if (items.length) {
     try {
       tiers = await quoteTiers(cartShipItems(cart), shipTo.country, shipTo.zip);
-      if (!tiers.length) shipError = "These items can’t ship to that country.";
+      if (!tiers.length)
+        shipError =
+          items.reduce((n, i) => n + i.quantity, 0) >= 20
+            ? "This order is too large for parcel shipping in one go. Lower the quantity, or split it into a few smaller orders."
+            : "These items can’t ship to that country.";
     } catch {
       shipError = "We couldn’t get a shipping price right now. Refresh to try again.";
     }
@@ -76,8 +85,13 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                     </div>
                   </div>
                   <div className="cart-item-price">
-                    <strong>{formatMoney(i.variant.priceCents * i.quantity)}</strong>
-                    {i.quantity > 1 && <div className="muted small">{formatMoney(i.variant.priceCents)} each</div>}
+                    <strong>{formatMoney(unit(i) * i.quantity)}</strong>
+                    {i.quantity > 1 && <div className="muted small">{formatMoney(unit(i))} each</div>}
+                    {unit(i) < i.variant.priceCents && (
+                      <div className="vol-save small">
+                        Bulk price · was {formatMoney(i.variant.priceCents)}
+                      </div>
+                    )}
                   </div>
                 </li>
               );
@@ -127,9 +141,18 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                 Subtotal ({units} item{units === 1 ? "" : "s"})
               </dt>
               <dd>{formatMoney(subtotal)}</dd>
+              {savings > 0 && (
+                <>
+                  <dt className="vol-save">Bulk savings</dt>
+                  <dd className="vol-save">−{formatMoney(savings)}</dd>
+                </>
+              )}
               <dt>Shipping{tier ? ` · ${tier.label}` : ""}</dt>
               <dd>{shipping == null ? "—" : formatMoney(shipping)}</dd>
             </dl>
+            {savings === 0 && (
+              <p className="vol-hint small">Order {BULK_MIN_UNITS}+ units or $100+ and bulk pricing kicks in automatically.</p>
+            )}
             <div className="summary-total">
               <span>Total</span>
               <strong>{formatMoney(subtotal + (shipping ?? 0))}</strong>
