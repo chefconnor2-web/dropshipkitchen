@@ -10,8 +10,10 @@ export const config = {
   cj: {
     apiKey: process.env.CJ_API_KEY?.trim() || "",
     baseUrl: (process.env.CJ_API_BASE_URL || "https://developers.cjdropshipping.com/api2.0/v1").replace(/\/+$/, ""),
-    // CJ enforces per-account QPS limits; serialise calls with at least this gap.
+    // CJ enforces per-account QPS limits; calls start at least this far apart.
     minIntervalMs: num("CJ_MIN_INTERVAL_MS", 1100),
+    // Calls in flight at once (each still starts minIntervalMs after the last). 1 = strictly one at a time.
+    maxConcurrent: num("CJ_MAX_CONCURRENT", 3),
     timeoutMs: num("CJ_TIMEOUT_MS", 20000),
     // Retries for HTTP 429 (CJ also rate-limits per source IP, which shared egress IPs can hit).
     rateLimitRetries: num("CJ_RATE_LIMIT_RETRIES", 2),

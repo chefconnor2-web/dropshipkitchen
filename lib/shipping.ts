@@ -1,12 +1,11 @@
 // Customer shipping quotes: CJ's live freight price for the exact VIDs, passed through at cost.
 // Method names are mapped to our own tiers (Standard / Express) so CJ's carrier names never reach the browser.
 
-import { freightCalculate } from "@/lib/cj/client";
 import { prisma } from "@/lib/db";
 import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
 import { processSingleton } from "@/lib/singleton";
 import { chooseFromCountry, originCandidates } from "@/lib/fulfillment";
-import { choosePlan, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
+import { choosePlan, parcelOptions, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
 
 export const SHIP_COUNTRIES: Array<{ code: string; name: string }> = [
   { code: "CA", name: "Canada" },
@@ -53,12 +52,6 @@ export interface ShipTier {
   parcels?: ParcelPlanEntry[];
 }
 
-function days(aging: string | undefined): [number | null, number | null] {
-  const n = String(aging ?? "").match(/\d+/g)?.map(Number) ?? [];
-  if (!n.length) return [null, null];
-  return [Math.min(...n), Math.max(...n)];
-}
-
 export function parcelsLabel(t: Pick<ShipTier, "parcels">): string {
   return t.parcels && t.parcels.length > 1 ? `${t.parcels.length} parcels` : "";
 }
@@ -99,20 +92,9 @@ async function remembered(key: string, maxAgeMs: number): Promise<{ at: number; 
   return hit;
 }
 
-async function wholeOrderOptions(items: ShipItem[], from: string, country: string, zip?: string) {
-  const env = await freightCalculate({
-    startCountryCode: from,
-    endCountryCode: country,
-    zip: zip || undefined,
-    products: items.map((i) => ({ vid: i.vid, quantity: i.quantity })),
-  });
-  return (env.data ?? [])
-    .filter((o) => o.logisticName && Number.isFinite(Number(o.logisticPrice)))
-    .map((o) => {
-      const [minDays, maxDays] = days(o.logisticAging);
-      return { method: o.logisticName, cents: Math.ceil(Number(o.logisticPrice) * 100), minDays, maxDays };
-    })
-    .sort((a, b) => a.cents - b.cents);
+/** CJ's methods for the whole order from one warehouse (remembered for a while: see parcelOptions). */
+function wholeOrderOptions(items: ShipItem[], from: string, country: string, zip?: string) {
+  return parcelOptions(from, country, zip, items.map((i) => ({ vid: i.vid, quantity: i.quantity })));
 }
 
 /** Standard and Express tiers for these items to this address; see quoteCart. */
