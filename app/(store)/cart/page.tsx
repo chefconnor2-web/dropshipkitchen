@@ -1,7 +1,9 @@
+import { Suspense } from "react";
 import Link from "next/link";
+import { withCjPriority } from "@/lib/cj/lanes";
 import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
-import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, parcelsLabel, quoteCart, type ShipTier } from "@/lib/shipping";
+import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, parcelsLabel, quoteCart, type CartQuote, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
@@ -23,28 +25,18 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const savings = priced.savingsCents;
   const units = items.reduce((s, i) => s + i.quantity, 0) + boxes.length;
   const shipTo = await getShipTo();
-  let tiers: ShipTier[] = [];
-  let shipError: string | null = null;
-  let blocked = new Set<string>();
-  if (items.length || boxes.length) {
-    try {
-      const q = await quoteCart(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
-      tiers = q.tiers;
-      blocked = new Set(q.blocked);
-      if (!tiers.length)
-        shipError =
-          blockedMessage(q.blocked, (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title, shipTo.country) ??
-          (items.reduce((n, i) => n + i.quantity, 0) >= 20
-            ? "This order is too large to ship, even split into parcels. Lower the quantity or contact us for a freight quote."
-            : "These items can’t ship to that country.");
-    } catch {
-      shipError = "We couldn’t get a shipping price right now. Refresh to try again.";
-    }
-  }
-  const tier = tiers.find((t) => t.key === shipTo.tier) ?? tiers[0];
-  const shipping = tier?.cents ?? null;
-  const showFreight = items.length > 0 && suggestFreight(subtotal, shipping, units);
-
+  // Shipping is CJ's live quote and can take seconds, so the cart renders now and the quote streams into
+  // the summary (usually it's already cached: adding to the cart starts it in the background).
+  const quote: Promise<ShipState> =
+    items.length || boxes.length
+      ? cartBoxPicks(cart)
+          .then((picks) => shipState(withCjPriority("urgent", () => quoteCart(cartShipItems(cart, picks), shipTo.country, shipTo.zip)), items, shipTo.country))
+          .catch(() => ({ tiers: [], blocked: [], error: "We couldn’t get a shipping price right now. Refresh to try again." }))
+      : Promise.resolve({ tiers: [], blocked: [], error: null });
+  const showFreightBase = items.length > 0;
+  // A new key per cart state makes React show the "getting prices" state at once after a change,
+  // instead of holding the old summary until the new quote arrives.
+  const quoteKey = JSON.stringify([items.map((i) => [i.id, i.quantity]), boxes.map((b) => b.id), shipTo]);
   return (
     <div className="wrap page">
       <h1 className="page-title">Your cart</h1>
@@ -109,8 +101,10 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                     </Link>
                     {i.variant.name && !/^default$/i.test(i.variant.name) && <div className="muted small">{i.variant.name}</div>}
                     {design && <div className="cart-design small">{design}</div>}
-                    {i.variant.offer && blocked.has(i.variant.offer.cjSupplierVariant.cjVariantId) && (
-                      <div className="err-text small">Can’t ship to {countryLabel(shipTo.country)}</div>
+                    {i.variant.offer && (
+                      <Suspense key={quoteKey} fallback={null}>
+                        <BlockedMark quote={quote} vid={i.variant.offer.cjSupplierVariant.cjVariantId} country={shipTo.country} />
+                      </Suspense>
                     )}
                     <div className={`stock stock-${s} small`}>
                       <span className="dot" aria-hidden /> {stockLabel(s)}
@@ -166,67 +160,9 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
               </div>
               <button className="btn small">Update shipping</button>
             </form>
-            {tier?.parcels && tier.parcels.length > 1 && (
-              <p className="vol-hint small">Big order: it ships as {tier.parcels.length} parcels, quoted and tracked automatically.</p>
-            )}
-            {shipError ? (
-              <p className="notice err small">{shipError}</p>
-            ) : (
-              <fieldset className="ship-tiers">
-                <legend className="sr-only">Shipping speed</legend>
-                {tiers.map((t) => (
-                  <form key={t.key} action={updateShipTo}>
-                    <input type="hidden" name="tier" value={t.key} />
-                    <button className={`ship-tier ${t.key === tier?.key ? "on" : ""}`} aria-pressed={t.key === tier?.key}>
-                      <span className="ship-tier-name">{t.label}</span>
-                      <span className="ship-tier-days">{[parcelsLabel(t), daysLabel(t)].filter(Boolean).join(" · ")}</span>
-                      <span className="ship-tier-price">{formatMoney(t.cents)}</span>
-                    </button>
-                  </form>
-                ))}
-              </fieldset>
-            )}
-            <dl className="summary-rows">
-              <dt>
-                Subtotal ({units} item{units === 1 ? "" : "s"})
-              </dt>
-              <dd>{formatMoney(subtotal)}</dd>
-              {savings > 0 && (
-                <>
-                  <dt className="vol-save">Bulk savings</dt>
-                  <dd className="vol-save">−{formatMoney(savings)}</dd>
-                </>
-              )}
-              <dt>Shipping{tier ? ` · ${tier.label}` : ""}</dt>
-              <dd>{shipping == null ? "—" : formatMoney(shipping)}</dd>
-            </dl>
-            {savings === 0 && (
-              <p className="vol-hint small">Order {BULK_MIN_UNITS}+ units or $100+ and bulk pricing kicks in automatically.</p>
-            )}
-            <div className="summary-total">
-              <span>Total</span>
-              <strong>{formatMoney(subtotal + (shipping ?? 0))}</strong>
-            </div>
-            <form action={checkout}>
-              <button className="btn primary lg block" disabled={!tier}>
-                Checkout
-              </button>
-            </form>
-            {showFreight && freight !== "sent" && (
-              <details className="freight-box" open={!tier}>
-                <summary>
-                  <strong>Large order? Get a freight quote</strong>
-                  <span className="muted small"> · often cheaper than parcels for pallets and heavy goods</span>
-                </summary>
-                <form action={requestFreightQuote} className="freight-form">
-                  <input name="email" type="email" required placeholder="Your email" autoComplete="email" />
-                  <input name="company" placeholder="Company (optional)" autoComplete="organization" />
-                  <textarea name="notes" rows={2} placeholder="Delivery details, deadline, loading dock… (optional)" />
-                  <button className="btn">Request freight quote</button>
-                  <p className="muted small">We arrange sea or air freight with our supplier and email you a price. Your cart stays as it is.</p>
-                </form>
-              </details>
-            )}
+            <Suspense key={quoteKey} fallback={<ShippingPending subtotal={subtotal} units={units} savings={savings} />}>
+              <ShippingSummary quote={quote} shipToTier={shipTo.tier} subtotal={subtotal} units={units} savings={savings} offerFreight={showFreightBase} freightSent={freight === "sent"} />
+            </Suspense>
             <p className="muted small summary-note">
               Availability and shipping are re-confirmed with our supplier before payment. You’ll enter your full address at checkout.
             </p>
@@ -237,5 +173,143 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
         </div>
       )}
     </div>
+  );
+}
+
+type CartItems = NonNullable<Awaited<ReturnType<typeof loadCart>>>["items"];
+interface ShipState {
+  tiers: ShipTier[];
+  blocked: string[];
+  error: string | null;
+}
+
+async function shipState(q: Promise<CartQuote>, items: CartItems, country: string): Promise<ShipState> {
+  try {
+    const { tiers, blocked } = await q;
+    if (tiers.length) return { tiers, blocked, error: null };
+    const error =
+      blockedMessage(blocked, (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title, country) ??
+      (items.reduce((n, i) => n + i.quantity, 0) >= 20
+        ? "This order is too large to ship, even split into parcels. Lower the quantity or contact us for a freight quote."
+        : "These items can’t ship to that country.");
+    return { tiers, blocked, error };
+  } catch {
+    return { tiers: [], blocked: [], error: "We couldn’t get a shipping price right now. Refresh to try again." };
+  }
+}
+
+async function BlockedMark({ quote, vid, country }: { quote: Promise<ShipState>; vid: string; country: string }) {
+  const { blocked } = await quote;
+  return blocked.includes(vid) ? <div className="err-text small">Can’t ship to {countryLabel(country)}</div> : null;
+}
+
+function SummaryRows({ subtotal, units, savings, shipping, tierLabel }: { subtotal: number; units: number; savings: number; shipping: React.ReactNode; tierLabel?: string }) {
+  return (
+    <dl className="summary-rows">
+      <dt>
+        Subtotal ({units} item{units === 1 ? "" : "s"})
+      </dt>
+      <dd>{formatMoney(subtotal)}</dd>
+      {savings > 0 && (
+        <>
+          <dt className="vol-save">Bulk savings</dt>
+          <dd className="vol-save">−{formatMoney(savings)}</dd>
+        </>
+      )}
+      <dt>Shipping{tierLabel ? ` · ${tierLabel}` : ""}</dt>
+      <dd>{shipping}</dd>
+    </dl>
+  );
+}
+
+/** Shown while CJ's quote is on its way: everything but the shipping price. */
+function ShippingPending({ subtotal, units, savings }: { subtotal: number; units: number; savings: number }) {
+  return (
+    <>
+      <div className="ship-tiers ship-pending" aria-busy="true">
+        <span className="ship-pending-dot" aria-hidden /> Getting live shipping prices…
+      </div>
+      <SummaryRows subtotal={subtotal} units={units} savings={savings} shipping={<span className="muted">…</span>} />
+      <div className="summary-total">
+        <span>Total</span>
+        <strong>{formatMoney(subtotal)} + shipping</strong>
+      </div>
+      <button className="btn primary lg block" disabled>
+        Checkout
+      </button>
+    </>
+  );
+}
+
+async function ShippingSummary({
+  quote,
+  shipToTier,
+  subtotal,
+  units,
+  savings,
+  offerFreight,
+  freightSent,
+}: {
+  quote: Promise<ShipState>;
+  shipToTier: string;
+  subtotal: number;
+  units: number;
+  savings: number;
+  offerFreight: boolean;
+  freightSent: boolean;
+}) {
+  const { tiers, error: shipError } = await quote;
+  const tier = tiers.find((t) => t.key === shipToTier) ?? tiers[0];
+  const shipping = tier?.cents ?? null;
+  const showFreight = offerFreight && suggestFreight(subtotal, shipping, units);
+  return (
+    <>
+      {tier?.parcels && tier.parcels.length > 1 && (
+        <p className="vol-hint small">Big order: it ships as {tier.parcels.length} parcels, quoted and tracked automatically.</p>
+      )}
+      {shipError ? (
+        <p className="notice err small">{shipError}</p>
+      ) : (
+        <fieldset className="ship-tiers">
+          <legend className="sr-only">Shipping speed</legend>
+          {tiers.map((t) => (
+            <form key={t.key} action={updateShipTo}>
+              <input type="hidden" name="tier" value={t.key} />
+              <button className={`ship-tier ${t.key === tier?.key ? "on" : ""}`} aria-pressed={t.key === tier?.key}>
+                <span className="ship-tier-name">{t.label}</span>
+                <span className="ship-tier-days">{[parcelsLabel(t), daysLabel(t)].filter(Boolean).join(" · ")}</span>
+                <span className="ship-tier-price">{formatMoney(t.cents)}</span>
+              </button>
+            </form>
+          ))}
+        </fieldset>
+      )}
+      <SummaryRows subtotal={subtotal} units={units} savings={savings} shipping={shipping == null ? "—" : formatMoney(shipping)} tierLabel={tier?.label} />
+      {savings === 0 && <p className="vol-hint small">Order {BULK_MIN_UNITS}+ units or $100+ and bulk pricing kicks in automatically.</p>}
+      <div className="summary-total">
+        <span>Total</span>
+        <strong>{formatMoney(subtotal + (shipping ?? 0))}</strong>
+      </div>
+      <form action={checkout}>
+        <button className="btn primary lg block" disabled={!tier}>
+          Checkout
+        </button>
+      </form>
+      {showFreight && !freightSent && (
+        <details className="freight-box" open={!tier}>
+          <summary>
+            <strong>Large order? Get a freight quote</strong>
+            <span className="muted small"> · often cheaper than parcels for pallets and heavy goods</span>
+          </summary>
+          <form action={requestFreightQuote} className="freight-form">
+            <input name="email" type="email" required placeholder="Your email" autoComplete="email" />
+            <input name="company" placeholder="Company (optional)" autoComplete="organization" />
+            <textarea name="notes" rows={2} placeholder="Delivery details, deadline, loading dock… (optional)" />
+            <button className="btn">Request freight quote</button>
+            <p className="muted small">We arrange sea or air freight with our supplier and email you a price. Your cart stays as it is.</p>
+          </form>
+        </details>
+      )}
+    </>
   );
 }

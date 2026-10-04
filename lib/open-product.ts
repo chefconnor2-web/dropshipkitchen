@@ -8,13 +8,14 @@ import { importCjProduct } from "@/lib/cj/import";
 import { applyPricingRule } from "@/lib/pricing";
 import { blockedListing } from "@/lib/catalog-search";
 import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
+import { processSingleton } from "@/lib/singleton";
 
 export const PID_RE = /^[A-Za-z0-9-]{6,64}$/;
 
 // One import per PID at a time: a background warm-up and a shopper's tap on Add share the same work.
 // A more urgent caller joining a running import raises its CJ priority, so a tap on a product the
 // warm-up is still importing doesn't wait behind the rest of the warm-up.
-const inflight = new Map<string, { lane: CjLane; promise: Promise<Awaited<ReturnType<typeof open>>> }>();
+const inflight = processSingleton("open-product-inflight", () => new Map<string, { lane: CjLane; promise: Promise<Awaited<ReturnType<typeof open>>> }>());
 
 /** Returns the published product, or null when it can't be sold (blocked, hidden, no variants, CJ error). */
 export function openCjProduct(pid: string) {

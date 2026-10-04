@@ -14,6 +14,7 @@ import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
 import { designLabel } from "@/lib/personalize";
+import { prewarmCartQuote } from "@/lib/cart-quote";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { linkProductById, platformById, platformName } from "@/lib/lineup";
 
@@ -34,6 +35,7 @@ export async function updateCartItem(form: FormData) {
   if (!cartId) return;
   if (!quantity || quantity < 1) await prisma.cartItem.deleteMany({ where: { id: itemId, cartId } });
   else await prisma.cartItem.updateMany({ where: { id: itemId, cartId }, data: { quantity: Math.min(99, quantity) } });
+  await prewarmCartQuote(cartId);
   revalidatePath("/", "layout");
 }
 
@@ -335,6 +337,7 @@ export async function addBoxToCart(form: FormData) {
   if (!picks) redirect(`/boxes/${box.slug}?error=${encodeURIComponent("This box is sold out right now. Check back soon.")}`);
   const cartId = await getOrCreateCartId();
   await prisma.cartBox.create({ data: { cartId, boxId: box.id, picksJson: JSON.stringify(picks.map((p) => p.variantId)) } });
+  await prewarmCartQuote(cartId);
   revalidatePath("/", "layout");
   redirect("/cart");
 }
