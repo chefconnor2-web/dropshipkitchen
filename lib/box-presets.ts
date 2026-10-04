@@ -26,7 +26,10 @@ export function startPresetBuild(): boolean {
   void (async () => {
     try {
       for (const p of BOX_PRESETS) {
-        if (await prisma.mysteryBox.findFirst({ where: { brief: p.brief } })) {
+        const existing = await prisma.mysteryBox.findFirst({ where: { brief: p.brief } });
+        // A box without a build log was cut off mid-build (e.g. by a redeploy): start it again.
+        if (existing && !existing.buildLog) await prisma.mysteryBox.delete({ where: { id: existing.id } });
+        else if (existing) {
           presetJob.done.push(p.key);
           continue;
         }
