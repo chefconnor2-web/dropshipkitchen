@@ -62,6 +62,14 @@ address from anywhere, the cart and checkout name it and the shopper can remove 
 before recommending or adding a product. The warehouse quoted at checkout is stored on the order (`cjFromCountry`,
 and per parcel in `parcelPlanJson`) and the CJ order ships from there.
 
+**Showing shipping instantly.** Every CJ quote is remembered in the `ShippingQuote` table. Pages show a
+remembered price at once and refresh it in the background when it's over 30 minutes old (checkout always
+charges a fresh one). For a cart nobody has quoted yet, the cart and product page show a labelled estimate
+from earlier quotes to that country by weight, then CJ's live price. Adding to the cart starts the cart's quote
+in the background. On a shopper's first visit the middleware guesses their country and postcode from their IP
+address (default service: ipwho.is; set `GEOIP_URL` to another URL with `{ip}`, or to an empty value to switch
+this off). Shoppers can change the destination on any product page or in the cart.
+
 On an order awaiting approval: **Get CJ shipping quote** (live freight options for the exact VIDs and address),
 pick a method, then **Place sandbox test order**, or tick the confirmation and **Place real order & pay from CJ
 balance**. The flow is CJ's own: `createOrderV3` (create only) → `confirmOrder` → `payBalance` (sandbox:

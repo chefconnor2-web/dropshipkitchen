@@ -9,7 +9,7 @@ import { allocatePrice, drawBox, loadPool, type PoolVariant } from "@/lib/myster
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
 import { createFreightRequest } from "@/lib/freight";
-import { blockedMessage, daysLabel, isShipCountry, parcelsLabel, quoteCart, quoteTiers } from "@/lib/shipping";
+import { FRESH_MS, blockedMessage, daysLabel, isShipCountry, parcelsLabel, quoteCart, quoteTiers } from "@/lib/shipping";
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
 import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
@@ -97,7 +97,8 @@ export async function checkout() {
   if (!isShipCountry(shipTo.country)) redirect(`/cart?error=${encodeURIComponent("Choose where we’re shipping to.")}`);
   let quote;
   try {
-    quote = await quoteCart(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
+    // The price charged must be a fresh CJ quote (a cart page may have shown a remembered one).
+    quote = await quoteCart(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip, { maxAgeMs: FRESH_MS });
   } catch {
     redirect(`/cart?error=${encodeURIComponent("We couldn’t get a shipping price right now. Please try again in a minute.")}`);
   }
@@ -248,39 +249,14 @@ export async function joinWaitlist(_prev: WaitlistState, form: FormData): Promis
   return { ok: true, message: `You’re on the list. We’ll email you once the ${name} passes testing.` };
 }
 
-export interface PublicShipTier {
-  key: "standard" | "express";
-  label: string;
-  cents: number;
-  days: string;
-}
-export type ShipEstimateState = { ok: true; country: string; tiers: PublicShipTier[] } | { ok: false; message: string } | null;
-
-/** Product page: live shipping for one variant to a country (and ZIP). Remembers the destination for the cart. */
-export async function estimateShipping(_prev: ShipEstimateState, form: FormData): Promise<ShipEstimateState> {
-  const variantId = String(form.get("variantId") || "");
-  const country = String(form.get("country") || "");
-  const zip = String(form.get("zip") || "").trim().slice(0, 12);
-  const quantity = Math.max(1, Math.min(99, Number(form.get("quantity")) || 1));
+/** Product page: change where shipping is quoted to (remembered for the cart too). */
+export async function saveDestination(country: string, zip: string): Promise<{ ok: boolean; message?: string }> {
   if (!isShipCountry(country)) return { ok: false, message: "Choose a country we ship to." };
-  const variant = await prisma.productVariant.findUnique({
-    where: { id: variantId },
-    include: { product: true, offer: { include: { cjSupplierVariant: true } } },
-  });
-  if (!variant?.offer || !variant.enabled || variant.product.status !== "PUBLISHED") return { ok: false, message: "Choose an option first." };
-  try {
-    const tiers = await quoteTiers(
-      [{ vid: variant.offer.cjSupplierVariant.cjVariantId, quantity, inventoryJson: variant.offer.cjSupplierVariant.inventoryJson, weightGrams: variant.offer.cjSupplierVariant.weightGrams }],
-      country,
-      zip,
-    );
-    if (!tiers.length) return { ok: false, message: "Sorry, this item can’t ship to that country." };
-    const prev = await getShipTo();
-    await setShipTo({ ...prev, country, zip });
-    return { ok: true, country, tiers: tiers.map((t) => ({ key: t.key, label: t.label, cents: t.cents, days: daysLabel(t) })) };
-  } catch {
-    return { ok: false, message: "We couldn’t get a shipping price right now. Please try again." };
-  }
+  const prev = await getShipTo();
+  await setShipTo({ ...prev, country, zip: zip.trim().slice(0, 12) });
+  const cartId = await getCartId();
+  if (cartId) await prewarmCartQuote(cartId);
+  return { ok: true };
 }
 
 /** Cart: where to ship and which tier. */

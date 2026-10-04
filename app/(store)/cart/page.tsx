@@ -3,7 +3,7 @@ import Link from "next/link";
 import { withCjPriority } from "@/lib/cj/lanes";
 import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
-import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, parcelsLabel, quoteCart, type CartQuote, type ShipTier } from "@/lib/shipping";
+import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, estimateFromHistory, parcelsLabel, quoteCart, type CartQuote, type ShipEstimate, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
@@ -27,9 +27,13 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const shipTo = await getShipTo();
   // Shipping is CJ's live quote and can take seconds, so the cart renders now and the quote streams into
   // the summary (usually it's already cached: adding to the cart starts it in the background).
+  const picks = items.length || boxes.length ? await cartBoxPicks(cart).catch(() => []) : [];
+  const shipItems = cartShipItems(cart, picks);
+  // Shown while a never-quoted cart waits on CJ: an estimate from earlier quotes (database only, fast).
+  const estimate = shipItems.length ? await estimateFromHistory(shipItems, shipTo.country) : null;
   const quote: Promise<ShipState> =
     items.length || boxes.length
-      ? cartBoxPicks(cart)
+      ? Promise.resolve(picks)
           .then((picks) => shipState(withCjPriority("urgent", () => quoteCart(cartShipItems(cart, picks), shipTo.country, shipTo.zip)), items, shipTo.country))
           .catch(() => ({ tiers: [], blocked: [], error: "We couldn’t get a shipping price right now. Refresh to try again." }))
       : Promise.resolve({ tiers: [], blocked: [], error: null });
@@ -160,7 +164,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
               </div>
               <button className="btn small">Update shipping</button>
             </form>
-            <Suspense key={quoteKey} fallback={<ShippingPending subtotal={subtotal} units={units} savings={savings} />}>
+            <Suspense key={quoteKey} fallback={<ShippingPending subtotal={subtotal} units={units} savings={savings} estimate={estimate} />}>
               <ShippingSummary quote={quote} shipToTier={shipTo.tier} subtotal={subtotal} units={units} savings={savings} offerFreight={showFreightBase} freightSent={freight === "sent"} />
             </Suspense>
             <p className="muted small summary-note">
@@ -222,17 +226,23 @@ function SummaryRows({ subtotal, units, savings, shipping, tierLabel }: { subtot
   );
 }
 
-/** Shown while CJ's quote is on its way: everything but the shipping price. */
-function ShippingPending({ subtotal, units, savings }: { subtotal: number; units: number; savings: number }) {
+/** Shown while CJ's quote is on its way: an estimate when we have one, else everything but shipping. */
+function ShippingPending({ subtotal, units, savings, estimate }: { subtotal: number; units: number; savings: number; estimate: ShipEstimate | null }) {
   return (
     <>
       <div className="ship-tiers ship-pending" aria-busy="true">
-        <span className="ship-pending-dot" aria-hidden /> Getting live shipping prices…
+        <span className="ship-pending-dot" aria-hidden /> {estimate ? `Standard ≈ ${formatMoney(estimate.cents)} · confirming the exact price…` : "Getting live shipping prices…"}
       </div>
-      <SummaryRows subtotal={subtotal} units={units} savings={savings} shipping={<span className="muted">…</span>} />
+      <SummaryRows
+        subtotal={subtotal}
+        units={units}
+        savings={savings}
+        shipping={estimate ? `≈ ${formatMoney(estimate.cents)}` : <span className="muted">…</span>}
+        tierLabel={estimate ? "estimate" : undefined}
+      />
       <div className="summary-total">
         <span>Total</span>
-        <strong>{formatMoney(subtotal)} + shipping</strong>
+        <strong>{estimate ? `≈ ${formatMoney(subtotal + estimate.cents)}` : `${formatMoney(subtotal)} + shipping`}</strong>
       </div>
       <button className="btn primary lg block" disabled>
         Checkout
