@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
-import { SHIP_COUNTRIES, daysLabel, parcelsLabel, quoteTiers, type ShipTier } from "@/lib/shipping";
+import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, parcelsLabel, quoteCart, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
@@ -25,14 +25,18 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const shipTo = await getShipTo();
   let tiers: ShipTier[] = [];
   let shipError: string | null = null;
+  let blocked = new Set<string>();
   if (items.length || boxes.length) {
     try {
-      tiers = await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
+      const q = await quoteCart(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip);
+      tiers = q.tiers;
+      blocked = new Set(q.blocked);
       if (!tiers.length)
         shipError =
-          items.reduce((n, i) => n + i.quantity, 0) >= 20
+          blockedMessage(q.blocked, (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title, shipTo.country) ??
+          (items.reduce((n, i) => n + i.quantity, 0) >= 20
             ? "This order is too large to ship, even split into parcels. Lower the quantity or contact us for a freight quote."
-            : "These items can’t ship to that country.";
+            : "These items can’t ship to that country.");
     } catch {
       shipError = "We couldn’t get a shipping price right now. Refresh to try again.";
     }
@@ -105,6 +109,9 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                     </Link>
                     {i.variant.name && !/^default$/i.test(i.variant.name) && <div className="muted small">{i.variant.name}</div>}
                     {design && <div className="cart-design small">{design}</div>}
+                    {i.variant.offer && blocked.has(i.variant.offer.cjSupplierVariant.cjVariantId) && (
+                      <div className="err-text small">Can’t ship to {countryLabel(shipTo.country)}</div>
+                    )}
                     <div className={`stock stock-${s} small`}>
                       <span className="dot" aria-hidden /> {stockLabel(s)}
                     </div>

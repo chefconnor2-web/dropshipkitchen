@@ -36,19 +36,36 @@ export interface ShippingAddress {
   } | null;
 }
 
+/** Units per warehouse country from CJ's stock/queryByVid rows. */
+export function stockByCountry(inventoryJson: string | null): Map<string, number> {
+  const out = new Map<string, number>();
+  try {
+    for (const r of JSON.parse(inventoryJson || "[]") as Array<{ countryCode?: string; totalInventoryNum?: number; storageNum?: number }>)
+      if (r.countryCode) out.set(r.countryCode, (out.get(r.countryCode) ?? 0) + (r.totalInventoryNum ?? r.storageNum ?? 0));
+  } catch {
+    /* no usable stock rows */
+  }
+  return out;
+}
+
 /** Where to ship from: the US warehouse when it can cover every item for a US address, else China (CJ's default). */
 export function chooseFromCountry(items: Array<{ quantity: number; inventoryJson: string | null }>, destCountry?: string | null): string {
   if (destCountry && destCountry !== "US") return "CN";
-  const usCovers = items.every((i) => {
-    try {
-      const rows = JSON.parse(i.inventoryJson || "[]") as Array<{ countryCode?: string; totalInventoryNum?: number; storageNum?: number }>;
-      const us = rows.filter((r) => r.countryCode === "US").reduce((n, r) => n + (r.totalInventoryNum ?? r.storageNum ?? 0), 0);
-      return us >= i.quantity;
-    } catch {
-      return false;
-    }
-  });
+  const usCovers = items.every((i) => (stockByCountry(i.inventoryJson).get("US") ?? 0) >= i.quantity);
   return items.length > 0 && usCovers ? "US" : "CN";
+}
+
+/**
+ * Warehouses to try, best first: the usual pick, then every other CJ warehouse country that stocks all
+ * of these units (e.g. a battery CJ can't fly from China may ship by ground from its US warehouse).
+ */
+export function originCandidates(items: Array<{ quantity: number; inventoryJson: string | null }>, destCountry?: string | null): string[] {
+  const stock = items.map((i) => stockByCountry(i.inventoryJson));
+  const countries = new Set(stock.flatMap((m) => [...m.keys()]));
+  const covering = [...countries].filter((c) => items.every((i, n) => (stock[n].get(c) ?? 0) >= i.quantity));
+  // Same-country warehouses first (no border), then the US, then the rest.
+  covering.sort((a, b) => Number(b === destCountry) - Number(a === destCountry) || Number(b === "US") - Number(a === "US") || a.localeCompare(b));
+  return [...new Set([chooseFromCountry(items, destCountry), ...covering, "CN"])];
 }
 
 function countryName(code: string): string {
@@ -104,37 +121,59 @@ async function loadOrder(orderId: string) {
   });
   const inv = new Map(svs.map((s) => [s.cjVariantId, s.inventoryJson]));
   const ship = order.shippingAddressJson ? (JSON.parse(order.shippingAddressJson) as ShippingAddress) : null;
-  const fromCountry = chooseFromCountry(
-    order.items.map((i) => ({ quantity: i.quantity, inventoryJson: inv.get(i.supplierVariantId) ?? null })),
-    ship?.address?.country,
-  );
-  return { order, fromCountry, ship };
+  // The warehouse the customer was quoted from at checkout comes first, then the usual candidates.
+  const origins = [
+    ...new Set([
+      ...(order.cjFromCountry ? [order.cjFromCountry] : []),
+      ...originCandidates(
+        order.items.map((i) => ({ quantity: i.quantity, inventoryJson: inv.get(i.supplierVariantId) ?? null })),
+        ship?.address?.country,
+      ),
+    ]),
+  ];
+  const itemOrigins = (vid: string) => originCandidates([{ quantity: 1, inventoryJson: inv.get(vid) ?? null }], ship?.address?.country);
+  return { order, fromCountry: origins[0], origins, itemOrigins, ship };
 }
 
 /** Live CJ shipping options for this order's exact VIDs and address, cheapest first. Stored on the order. */
 export async function quoteShipping(orderId: string): Promise<CjFreightOption[]> {
   if (supplierMode() === "mock") throw new Error("Set SUPPLIER_MODE to sandbox or live to quote CJ shipping.");
-  const { order, fromCountry, ship } = await loadOrder(orderId);
+  const { order, origins, itemOrigins, ship } = await loadOrder(orderId);
+  let fromCountry = origins[0];
   const country = ship?.address?.country;
   if (!country) throw new Error("This order has no shipping country yet.");
-  const env = await freightCalculate({
-    startCountryCode: fromCountry,
-    endCountryCode: country,
-    zip: ship?.address?.postal_code ?? undefined,
-    products: order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity })),
-  });
-  const options = (env.data ?? [])
-    .filter((o) => o.logisticName)
-    .map((o) => ({ logisticName: o.logisticName, logisticPrice: Number(o.logisticPrice), logisticAging: o.logisticAging }))
-    .sort((a, b) => a.logisticPrice - b.logisticPrice);
+  let options: CjFreightOption[] = [];
+  for (const origin of origins) {
+    const env = await freightCalculate({
+      startCountryCode: origin,
+      endCountryCode: country,
+      zip: ship?.address?.postal_code ?? undefined,
+      products: order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity })),
+    });
+    options = (env.data ?? [])
+      .filter((o) => o.logisticName)
+      .map((o) => ({ logisticName: o.logisticName, logisticPrice: Number(o.logisticPrice), logisticAging: o.logisticAging }))
+      .sort((a, b) => a.logisticPrice - b.logisticPrice);
+    fromCountry = origin;
+    if (options.length) break;
+  }
   if (!options.length) {
+    fromCountry = origins[0];
     // Too heavy for one parcel: plan a split shipment, keeping the customer's methods where CJ still offers them.
     const weights = new Map(
       (await prisma.cjSupplierVariant.findMany({ where: { cjVariantId: { in: order.items.map((i) => i.supplierVariantId) } }, select: { cjVariantId: true, weightGrams: true } })).map((v) => [v.cjVariantId, v.weightGrams]),
     );
-    const items = order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity, weightGrams: weights.get(i.supplierVariantId) }));
-    const planned = await planParcels(items, fromCountry, country, ship?.address?.postal_code ?? undefined);
-    if (!planned) throw new Error(`CJ has no shipping method from ${fromCountry} to ${country} for these items, even split into parcels.`);
+    const items = order.items.map((i) => ({ vid: i.supplierVariantId, quantity: i.quantity, weightGrams: weights.get(i.supplierVariantId), origins: itemOrigins(i.supplierVariantId) }));
+    const result = await planParcels(items, fromCountry, country, ship?.address?.postal_code ?? undefined);
+    const planned = result.parcels;
+    if (!planned) {
+      const names = order.items.filter((i) => result.blocked.includes(i.supplierVariantId)).map((i) => i.productTitle);
+      throw new Error(
+        names.length
+          ? `CJ has no shipping method to ${country} for ${names.join(", ")} from any warehouse that stocks it. Decline and refund, or arrange shipping with CJ by hand.`
+          : `CJ has no shipping method to ${country} for these items, even split into parcels.`,
+      );
+    }
     const paid = JSON.parse(order.parcelPlanJson || "[]") as ParcelPlanEntry[];
     const plan = choosePlan(planned).map((e, i) => {
       const want = paid[i]?.method;
@@ -319,7 +358,9 @@ async function placeSplitCjOrder(orderId: string, sandbox: boolean) {
     }
     // The planned method may have gone; fall back to the cheapest CJ offers for this parcel now.
     let method = parcel.method;
-    const now = await parcelOptions(order.cjFromCountry || fromCountry, ship?.address?.country ?? "", ship?.address?.postal_code ?? undefined, parcel.items).catch(() => []);
+    // Each parcel ships from its own warehouse (older plans have none: use the order's).
+    const from = parcel.from || order.cjFromCountry || fromCountry;
+    const now = await parcelOptions(from, ship?.address?.country ?? "", ship?.address?.postal_code ?? undefined, parcel.items).catch(() => []);
     if (now.length && !now.some((o) => o.method === method)) method = now[0].method;
     const body = buildCjOrderBody({
       orderNumber: `${order.number}-P${i + 1}${tag}`,
@@ -328,7 +369,7 @@ async function placeSplitCjOrder(orderId: string, sandbox: boolean) {
       phone: order.customerPhone,
       ship,
       logisticName: method,
-      fromCountryCode: order.cjFromCountry || fromCountry,
+      fromCountryCode: from,
       sandbox,
       items: parcel.items.map((x) => ({ vid: x.vid, quantity: x.quantity, lineItemId: `${lineFor.get(x.vid) ?? x.vid}-P${i + 1}` })),
     });

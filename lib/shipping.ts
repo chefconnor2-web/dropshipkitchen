@@ -2,7 +2,7 @@
 // Method names are mapped to our own tiers (Standard / Express) so CJ's carrier names never reach the browser.
 
 import { freightCalculate } from "@/lib/cj/client";
-import { chooseFromCountry } from "@/lib/fulfillment";
+import { chooseFromCountry, originCandidates } from "@/lib/fulfillment";
 import { choosePlan, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
 
 export const SHIP_COUNTRIES: Array<{ code: string; name: string }> = [
@@ -13,6 +13,18 @@ export const SHIP_COUNTRIES: Array<{ code: string; name: string }> = [
   { code: "NZ", name: "New Zealand" },
   { code: "IE", name: "Ireland" },
 ];
+
+export function countryLabel(code: string): string {
+  return SHIP_COUNTRIES.find((c) => c.code === code)?.name ?? code;
+}
+
+/** "X can’t ship to Canada…" naming the products that block a cart (VIDs → names via `nameOf`). */
+export function blockedMessage(blocked: string[], nameOf: (vid: string) => string | undefined, country: string): string | null {
+  if (!blocked.length) return null;
+  const names = [...new Set(blocked.map((v) => nameOf(v) ?? "An item in a mystery box"))];
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${list} can’t ship to ${countryLabel(country)} from any of our warehouses. Remove ${names.length === 1 ? "it" : "them"} to check out the rest, or choose another country.`;
+}
 
 export function isShipCountry(code: string | null | undefined): code is string {
   return !!code && SHIP_COUNTRIES.some((c) => c.code === code);
@@ -53,56 +65,82 @@ export function daysLabel(t: Pick<ShipTier, "minDays" | "maxDays">): string {
   return t.minDays === t.maxDays ? `${t.minDays} business days` : `${t.minDays}–${t.maxDays} business days`;
 }
 
-const cache = new Map<string, { at: number; tiers: ShipTier[] }>();
+export interface CartQuote {
+  tiers: ShipTier[];
+  /** VIDs CJ won't ship even one unit of to this address, from any warehouse that stocks them. */
+  blocked: string[];
+}
+
+const cache = new Map<string, { at: number; quote: CartQuote }>();
 const TTL_MS = 30 * 60_000;
 
-/**
- * Standard (cheapest) and, when CJ has a faster method, Express, for these items to this address.
- * Ships from CJ's US warehouse when it stocks everything for a US address, else from China.
- */
-export async function quoteTiers(items: ShipItem[], country: string, zip?: string): Promise<ShipTier[]> {
-  if (!items.length) return [];
-  const key = JSON.stringify([items.map((i) => [i.vid, i.quantity]).sort(), country, (zip ?? "").slice(0, 3)]);
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.tiers;
-
-  const fromCountry = chooseFromCountry(items, country);
+async function wholeOrderOptions(items: ShipItem[], from: string, country: string, zip?: string) {
   const env = await freightCalculate({
-    startCountryCode: fromCountry,
+    startCountryCode: from,
     endCountryCode: country,
     zip: zip || undefined,
     products: items.map((i) => ({ vid: i.vid, quantity: i.quantity })),
   });
-  const options = (env.data ?? [])
+  return (env.data ?? [])
     .filter((o) => o.logisticName && Number.isFinite(Number(o.logisticPrice)))
     .map((o) => {
       const [minDays, maxDays] = days(o.logisticAging);
       return { method: o.logisticName, cents: Math.ceil(Number(o.logisticPrice) * 100), minDays, maxDays };
     })
     .sort((a, b) => a.cents - b.cents);
+}
+
+/** Standard and Express tiers for these items to this address; see quoteCart. */
+export async function quoteTiers(items: ShipItem[], country: string, zip?: string): Promise<ShipTier[]> {
+  return (await quoteCart(items, country, zip)).tiers;
+}
+
+/**
+ * Standard (cheapest) and, when CJ has a faster method, Express, for these items to this address.
+ * Tries the usual warehouse first (the US one for a US address it fully stocks, else China), then every
+ * other warehouse that stocks it all, then splits the order into parcels that may ship from different
+ * warehouses. When nothing works, `blocked` names the products that can't ship at all.
+ */
+export async function quoteCart(items: ShipItem[], country: string, zip?: string): Promise<CartQuote> {
+  if (!items.length) return { tiers: [], blocked: [] };
+  const key = JSON.stringify([items.map((i) => [i.vid, i.quantity]).sort(), country, (zip ?? "").slice(0, 3)]);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.quote;
 
   const tiers: ShipTier[] = [];
-  // Too heavy or big for one parcel: split it into several CJ parcels and quote each one.
-  const units = items.reduce((n, i) => n + i.quantity, 0);
-  if (!options.length && units > 1) {
-    const planned = await planParcels(items.map((i) => ({ vid: i.vid, quantity: i.quantity, weightGrams: i.weightGrams })), fromCountry, country, zip);
-    if (planned) {
-      for (const [key, fast] of [["standard", false], ["express", true]] as const) {
-        const plan = choosePlan(planned, fast);
-        const cents = plan.reduce((n, e) => n + e.cents, 0);
-        const w = planWindow(planned, plan);
-        if (key === "express" && (w.maxDays ?? 999) >= (tiers[0]?.maxDays ?? 999)) continue;
-        tiers.push({ key, label: key === "standard" ? "Standard" : "Express", cents, ...w, method: "SPLIT", fromCountry, parcels: plan });
-      }
-    }
-  }
-  const cheapest = options[0];
-  if (cheapest) {
+  let blocked: string[] = [];
+  for (const fromCountry of originCandidates(items, country)) {
+    const options = await wholeOrderOptions(items, fromCountry, country, zip);
+    const cheapest = options[0];
+    if (!cheapest) continue;
     tiers.push({ key: "standard", label: "Standard", fromCountry, ...cheapest });
     const fastest = [...options].sort((a, b) => (a.maxDays ?? 999) - (b.maxDays ?? 999) || a.cents - b.cents)[0];
     if (fastest && fastest.method !== cheapest.method && (fastest.maxDays ?? 999) < (cheapest.maxDays ?? 999))
       tiers.push({ key: "express", label: "Express", fromCountry, ...fastest });
+    break;
   }
-  cache.set(key, { at: Date.now(), tiers });
-  return tiers;
+
+  // Too heavy or big for one parcel, or no single warehouse can send it all: plan several CJ parcels.
+  if (!tiers.length) {
+    const fromCountry = chooseFromCountry(items, country);
+    const planned = await planParcels(
+      items.map((i) => ({ vid: i.vid, quantity: i.quantity, weightGrams: i.weightGrams, origins: originCandidates([{ quantity: 1, inventoryJson: i.inventoryJson }], country) })),
+      fromCountry,
+      country,
+      zip,
+    );
+    blocked = planned.blocked;
+    if (planned.parcels) {
+      for (const [key, fast] of [["standard", false], ["express", true]] as const) {
+        const plan = choosePlan(planned.parcels, fast);
+        const cents = plan.reduce((n, e) => n + e.cents, 0);
+        const w = planWindow(planned.parcels, plan);
+        if (key === "express" && (w.maxDays ?? 999) >= (tiers[0]?.maxDays ?? 999)) continue;
+        tiers.push({ key, label: key === "standard" ? "Standard" : "Express", cents, ...w, method: "SPLIT", fromCountry: plan[0]?.from ?? fromCountry, parcels: plan });
+      }
+    }
+  }
+  const quote = { tiers, blocked };
+  cache.set(key, { at: Date.now(), quote });
+  return quote;
 }

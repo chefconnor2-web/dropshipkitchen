@@ -54,6 +54,14 @@ Keep one machine: SQLite lives on a single volume, so don't scale this app past 
 | `sandbox` | Also place CJ **sandbox** orders: simulated payment, nothing charged or shipped. |
 | `live` | Also place **real** CJ orders, shipped to the customer and paid from your CJ balance. |
 
+**Which warehouse ships it.** Shipping quotes try the usual warehouse first (CJ's US warehouse for a US
+address it fully stocks, else China), then every other CJ warehouse that stocks the whole cart. When no single
+warehouse works, the order is split into parcels that may ship from different warehouses (a battery CJ won't fly
+from China can go by ground from the US while the rest ships from China). If a product can't ship to the
+address from anywhere, the cart and checkout name it and the shopper can remove it. The assistant checks this
+before recommending or adding a product. The warehouse quoted at checkout is stored on the order (`cjFromCountry`,
+and per parcel in `parcelPlanJson`) and the CJ order ships from there.
+
 On an order awaiting approval: **Get CJ shipping quote** (live freight options for the exact VIDs and address),
 pick a method, then **Place sandbox test order**, or tick the confirmation and **Place real order & pay from CJ
 balance**. The flow is CJ's own: `createOrderV3` (create only) → `confirmOrder` → `payBalance` (sandbox:
