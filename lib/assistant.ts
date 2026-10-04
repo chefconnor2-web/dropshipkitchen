@@ -19,8 +19,10 @@ const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
 const SCOUT_MODEL = process.env.ASSISTANT_SCOUT_MODEL?.trim() || "claude-haiku-4-5";
 const EFFORT = (process.env.ASSISTANT_EFFORT?.trim() || "medium") as "low" | "medium" | "high";
 const MAX_TOOL_ROUNDS = 8;
-const MAX_SCOUT_ROUNDS = 4;
-const MAX_PARTS = 10;
+const MAX_SCOUT_ROUNDS = 3;
+// CJ answers one search at a time (~1 req/s), so every extra search is felt by the shopper.
+const MAX_SCOUT_SEARCHES = 2;
+const MAX_PARTS = 8;
 const SCOUT_CONCURRENCY = 5;
 const MAX_USER_TURNS = 40;
 const MAX_MESSAGE_CHARS = 1000;
@@ -70,7 +72,7 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
       properties: {
         parts: {
           type: "array",
-          description: `The parts to find, up to ${MAX_PARTS}.`,
+          description: `The parts to find, up to ${MAX_PARTS}. Group small consumables (heat shrink, cable ties) into one part.`,
           items: {
             type: "object",
             properties: {
@@ -182,11 +184,12 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
   };
 
   // Run the planner's first query straight away, so the scout starts with results in hand.
+  let searches = 1;
   const first = await search(part.queries[0] ?? part.name).catch(() => []);
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Find the best products for this part.\nPart: ${part.name}\nMust have: ${part.need}\nOther queries you can try: ${part.queries.slice(1).join(", ") || "(your own)"}\n\nResults for "${part.queries[0] ?? part.name}":\n${JSON.stringify(first.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2) })))}\n\nIf these don't fit, search again with other short keywords (at most 2 more searches). Then call submit_picks with the best 1-3 that genuinely fit the need. Skip accessories, parts or mismatched specs.`,
+      content: `Find the best products for this part.\nPart: ${part.name}\nMust have: ${part.need}\nOther queries you can try: ${part.queries.slice(1).join(", ") || "(your own)"}\n\nResults for "${part.queries[0] ?? part.name}":\n${JSON.stringify(first.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2) })))}\n\nIf at least one result fits, call submit_picks now. Only if none fit, search once more with different short keywords, then call submit_picks with the best 1-3 that genuinely fit the need. Skip accessories, parts or mismatched specs.`,
     },
   ];
 
@@ -210,7 +213,10 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
       if (c.name === "submit_picks") {
         picks = (Array.isArray(input.picks) ? input.picks : []) as Array<{ pid: string; note: string }>;
         results.push({ type: "tool_result", tool_use_id: c.id, content: "Received." });
+      } else if (searches >= MAX_SCOUT_SEARCHES) {
+        results.push({ type: "tool_result", tool_use_id: c.id, content: "Search limit reached. Call submit_picks with the best of what you have.", is_error: true });
       } else {
+        searches++;
         const hits = await search(String(input.query ?? "")).catch(() => []);
         results.push({
           type: "tool_result",
