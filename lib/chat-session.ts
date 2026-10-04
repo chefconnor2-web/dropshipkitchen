@@ -1,8 +1,12 @@
-// Who owns which assistant chats. Shoppers don't log in: a long-lived random cookie (cs_vid) identifies
-// the browser, and every chat and photo is tied to it. Only route handlers may create the cookie.
+// Who owns which assistant chats. A signed-in shopper owns chats by customer id (on any device); a
+// signed-out browser owns its chats by a long-lived random cookie (cs_vid). A chat with an owner never
+// opens by visitor id alone, so signing out (which also replaces cs_vid) leaves nothing behind.
+// Only route handlers may create the cookie.
 import { cookies } from "next/headers";
 import { randomBytes } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { getMemberId } from "@/lib/session";
 
 const VISITOR = "cs_vid";
 const LEGACY_CHAT = "cs_chat";
@@ -29,9 +33,23 @@ export async function ensureVisitorId(): Promise<string> {
   return id;
 }
 
-export async function findOwnChat(chatId: string | null | undefined, visitorId: string | null) {
-  if (!chatId || !visitorId) return null;
-  return prisma.assistantChat.findFirst({ where: { id: chatId, visitorId } });
+/** Prisma filter for the chats (or chat photos) this shopper may see: theirs by account, else this browser's unowned ones. */
+export function ownedBy(customerId: string | null, visitorId: string | null): Prisma.AssistantChatWhereInput & Prisma.AssistantImageWhereInput {
+  if (customerId) return { customerId };
+  if (visitorId) return { customerId: null, visitorId };
+  return { id: "\u0000never" };
+}
+
+/** The current shopper's ownership filter. */
+export async function currentOwner() {
+  const [customerId, visitorId] = await Promise.all([getMemberId(), getVisitorId()]);
+  return { customerId, visitorId, where: ownedBy(customerId, visitorId) };
+}
+
+export async function findOwnChat(chatId: string | null | undefined) {
+  if (!chatId) return null;
+  const { where } = await currentOwner();
+  return prisma.assistantChat.findFirst({ where: { id: chatId, ...where } });
 }
 
 export interface ChatSummary {
@@ -40,10 +58,11 @@ export interface ChatSummary {
   updatedAt: string;
 }
 
-export async function listChats(visitorId: string | null): Promise<ChatSummary[]> {
-  if (!visitorId) return [];
+export async function listChats(): Promise<ChatSummary[]> {
+  const { customerId, visitorId, where } = await currentOwner();
+  if (!customerId && !visitorId) return [];
   const rows = await prisma.assistantChat.findMany({
-    where: { visitorId, userTurns: { gt: 0 } },
+    where: { ...where, userTurns: { gt: 0 } },
     orderBy: { updatedAt: "desc" },
     take: 200,
     select: { id: true, title: true, updatedAt: true },

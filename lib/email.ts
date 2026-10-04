@@ -27,7 +27,8 @@ export async function sendEmail(m: OutgoingEmail) {
     return prisma.emailLog.create({ data: { ...base, status: "not_configured", error: "RESEND_API_KEY is not set." } });
   }
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    // RESEND_API_URL is for tests only (a local stand-in for Resend).
+    const res = await fetch(process.env.RESEND_API_URL || "https://api.resend.com/emails", {
       method: "POST",
       headers: { authorization: `Bearer ${config.email.resendApiKey}`, "content-type": "application/json" },
       body: JSON.stringify({

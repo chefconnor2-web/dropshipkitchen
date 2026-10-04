@@ -1,18 +1,31 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
+import { getMemberId } from "@/lib/session";
 
 const COOKIE = "cs_cart";
 
+/**
+ * This browser's cart, if it may use it: an unowned cart, or one owned by the signed-in customer. A cart
+ * that belongs to an account never opens for anyone else, even with its cookie.
+ */
 export async function getCartId(): Promise<string | null> {
-  return (await cookies()).get(COOKIE)?.value ?? null;
+  const id = (await cookies()).get(COOKIE)?.value;
+  if (!id) return null;
+  const cart = await prisma.cart.findUnique({ where: { id }, select: { customerId: true } });
+  if (!cart) return null;
+  return !cart.customerId || cart.customerId === (await getMemberId()) ? id : null;
 }
 
-/** Only callable from server actions / route handlers (sets a cookie). */
+/** Only callable from server actions / route handlers (sets a cookie). A signed-in shopper's cart joins their account. */
 export async function getOrCreateCartId(): Promise<string> {
   const jar = await cookies();
-  const existing = jar.get(COOKIE)?.value;
-  if (existing && (await prisma.cart.findUnique({ where: { id: existing } }))) return existing;
-  const cart = await prisma.cart.create({ data: {} });
+  const memberId = await getMemberId();
+  const existing = await getCartId();
+  if (existing) {
+    if (memberId) await prisma.cart.updateMany({ where: { id: existing, customerId: null }, data: { customerId: memberId } });
+    return existing;
+  }
+  const cart = await prisma.cart.create({ data: { customerId: memberId } });
   jar.set(COOKIE, cart.id, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
   return cart.id;
 }

@@ -1,11 +1,11 @@
-// Rename (PATCH {title}) or delete one of the visitor's chats.
+// Rename (PATCH {title}) or delete one of the shopper's own chats.
 import { prisma } from "@/lib/db";
-import { findOwnChat, getVisitorId } from "@/lib/chat-session";
+import { findOwnChat } from "@/lib/chat-session";
 
 export const dynamic = "force-dynamic";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const chat = await findOwnChat((await params).id, await getVisitorId());
+  const chat = await findOwnChat((await params).id);
   if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
   const { title } = (await req.json().catch(() => ({}))) as { title?: unknown };
   const t = typeof title === "string" ? title.trim().replace(/\s+/g, " ").slice(0, 80) : "";
@@ -16,7 +16,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const chat = await findOwnChat((await params).id, await getVisitorId());
+  const chat = await findOwnChat((await params).id);
   if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
   await prisma.assistantImage.deleteMany({ where: { chatId: chat.id } });
   await prisma.assistantChat.delete({ where: { id: chat.id } });

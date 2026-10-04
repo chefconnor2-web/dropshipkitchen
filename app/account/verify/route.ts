@@ -1,13 +1,8 @@
-// One-tap email sign-in.
+// Old one-tap sign-in links (before sign-in codes). They no longer sign anyone in.
 import { redirect } from "next/navigation";
-import { redeemLoginToken, signIn } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
-  const token = new URL(req.url).searchParams.get("token") ?? "";
-  const customer = token ? await redeemLoginToken(token) : null;
-  if (!customer) redirect(`/account?error=${encodeURIComponent("That sign-in link has expired or was already used. Ask for a new one.")}`);
-  await signIn(customer.id);
-  redirect("/account");
+export function GET() {
+  redirect(`/account?error=${encodeURIComponent("Sign-in links have been replaced by codes. Enter your email to get a 6-digit code.")}`);
 }

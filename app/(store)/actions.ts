@@ -19,7 +19,7 @@ import { stripe } from "@/lib/stripe";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
 import { designLabel } from "@/lib/personalize";
 import { prewarmCartQuote } from "@/lib/cart-quote";
-import { createLoginToken, getMember, signOut } from "@/lib/session";
+import { endAllSessions, endSession, getMember, normalizeEmail, requestLoginCode, safeNext, startSession, verifyLoginCode } from "@/lib/session";
 import { billingPortalUrl, startBoxSubscription } from "@/lib/subscriptions";
 import { sendEmail } from "@/lib/email";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
@@ -355,8 +355,11 @@ export async function subscribeToBox(form: FormData) {
   if (!box) redirect("/boxes");
   const problem = stripeKeyProblem();
   if (problem) redirect(`/boxes/${box.slug}?error=${encodeURIComponent("Subscriptions aren’t switched on yet: " + problem)}`);
-  const shipTo = await getShipTo();
+  // Subscribing needs a verified email first: the subscription (and the account it unlocks) is tied to the
+  // account by id, and Stripe Checkout gets that email locked, so nobody can subscribe into someone else's account.
   const member = await getMember();
+  if (!member) redirect(`/account?next=${encodeURIComponent(`/boxes/${box.slug}`)}&why=subscribe`);
+  const shipTo = await getShipTo();
   let url: string;
   try {
     url = await startBoxSubscription({ boxId, country: shipTo.country, zip: shipTo.zip, customer: member });
@@ -366,31 +369,40 @@ export async function subscribeToBox(form: FormData) {
   redirect(url);
 }
 
-export type SignInState = { ok: boolean; message: string } | null;
+export type SignInState = { step: "email" | "code"; email?: string; ok?: boolean; message?: string; next?: string } | null;
 
-/** Account page: email a one-tap sign-in link. */
-export async function requestSignIn(_prev: SignInState, form: FormData): Promise<SignInState> {
-  const email = String(form.get("email") || "").trim().toLowerCase();
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, message: "Enter a valid email." };
-  // One link a minute per address, so the form can't be used to flood someone's inbox.
-  const recent = await prisma.loginToken.findFirst({ where: { email, createdAt: { gte: new Date(Date.now() - 60_000) } } });
-  if (recent) return { ok: true, message: `Check ${email} for a sign-in link.` };
-  const token = await createLoginToken(email);
-  const link = `${config.siteUrl}/account/verify?token=${encodeURIComponent(token)}`;
-  const log = await sendEmail({
-    to: email,
-    kind: "sign_in",
-    subject: `Sign in to ${config.storeName}`,
-    text: `Tap to sign in to ${config.storeName}: ${link}\n\nThe link works once and expires in 30 minutes. If you didn't ask for it, ignore this email.`,
-    html: `<p style="font-size:15px">Tap to sign in to ${config.storeName}:</p><p><a href="${link}" style="display:inline-block;padding:12px 20px;background:#E8551C;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">Sign in</a></p><p style="font-size:13px;color:#666">The link works once and expires in 30 minutes. If you didn't ask for it, ignore this email.</p>`,
-  });
-  if (log.status !== "sent") return { ok: false, message: "We couldn’t send the email right now. Please try again later." };
-  return { ok: true, message: `Check ${email} for a sign-in link.` };
+/** Account page, step 1: email a 6-digit sign-in code. */
+export async function sendSignInCode(_prev: SignInState, form: FormData): Promise<SignInState> {
+  const next = safeNext(form.get("next"));
+  const email = normalizeEmail(form.get("email"));
+  if (!email) return { step: "email", ok: false, message: "Enter a valid email.", next };
+  const r = await requestLoginCode(email);
+  if (!r.ok) return { step: "email", email, ok: false, message: r.message, next };
+  return { step: "code", email, ok: true, message: `We sent a 6-digit code to ${email}. It expires in 10 minutes.`, next };
+}
+
+/** Account page, step 2: check the code and sign in. */
+export async function verifySignInCode(_prev: SignInState, form: FormData): Promise<SignInState> {
+  const next = safeNext(form.get("next"));
+  const email = normalizeEmail(form.get("email"));
+  if (!email) return { step: "email", ok: false, message: "Enter your email again.", next };
+  const r = await verifyLoginCode(email, String(form.get("code") || ""));
+  if (!r.ok) return { step: "code", email, ok: false, message: r.message, next };
+  await startSession(r.customerId);
+  revalidatePath("/", "layout");
+  redirect(next);
 }
 
 export async function signOutAction() {
-  await signOut();
+  await endSession();
+  revalidatePath("/", "layout");
   redirect("/account");
+}
+
+export async function signOutEverywhereAction() {
+  await endAllSessions();
+  revalidatePath("/", "layout");
+  redirect("/account?signedout=all");
 }
 
 /** Account page: open Stripe's billing portal (card, address, cancel). */
