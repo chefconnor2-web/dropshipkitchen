@@ -100,6 +100,24 @@ with personalized items can't ship as split parcels yet, and personalized produc
 Test with a CJ **sandbox** order first: CJ documents `podProperties` on `createOrderV2`, and this store
 places orders with `createOrderV3`.
 
+## Mystery box subscriptions and AI limits
+
+Mystery boxes are sold as **monthly subscriptions** (Stripe Checkout in subscription mode): the box price plus a
+monthly shipping line quoted for the subscriber's country when they subscribe. **Every paid month becomes a box
+order** (items drawn from the box's pool) that waits for your approval like any other order. Subscribers manage
+their card, address or cancellation in Stripe's billing portal from `/account`.
+
+- **Renewals.** Add a Stripe webhook for `checkout.session.completed`, `invoice.paid`,
+  `customer.subscription.updated` and `customer.subscription.deleted`, and set `STRIPE_WEBHOOK_SECRET`. Without it,
+  renewals are picked up when `/admin/members` syncs (every 15 minutes while it's open, or **Sync with Stripe**).
+- **Accounts.** Shoppers sign in with a one-tap email link (`/account`, sent through Resend) or by subscribing.
+  The session cookie is signed with a key the app generates and keeps in the database.
+- **AI assistant limits** (`/admin/members`). People without a subscription get a few free messages (default 5).
+  Subscribers get messages per 30 days by lifetime spend, in tiers you set (default $0 → 100, $250 → 300,
+  $1,000 → 1,000), so bigger spenders move up automatically. You can set anyone's limit by hand.
+- **Billing portal.** Turn on Stripe's customer portal (Settings → Billing → Customer portal) so "Manage billing"
+  works.
+
 ## Where things are
 
 | Path | What it is |
@@ -137,6 +155,9 @@ unmodified JSON, so field mappings can be checked against what CJ actually retur
 - **Our storefront data:** `Product` (title, description, internal SKU, categories, SEO, status,
   delivery estimate), `ProductImage`, and `ProductVariant` (name, options, internal SKU, our price).
 - **Bridge:** `SupplierOffer` links one `ProductVariant` to one CJ variant: supplier, PID, product SKU, VID, variant SKU.
+- **Members:** `Customer` (also the shopper's account: `stripeCustomerId`, `aiLimitOverride`), `Subscription`
+  (one Stripe subscription to a box), `AiUsage` (one row per AI message), `LoginToken` (email sign-in links);
+  box orders carry `Order.stripeInvoiceId` / `subscriptionId`.
 - **Personalization:** `Product.personalizeJson` (the POD set-up) and `Personalization` (one shopper design:
   print file, mock-up, text), linked from `CartItem` and `OrderItem.personalizationId`.
 - **Orders:** each `OrderItem` copies supplier, PID, VID, SKU, supplier price, and inventory at order time,

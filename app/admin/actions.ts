@@ -8,6 +8,8 @@ import { testConnection } from "@/lib/cj/client";
 import { importCjProduct } from "@/lib/cj/import";
 import { slugify } from "@/lib/cj/normalize";
 import { normalizeConfig } from "@/lib/personalize-shared";
+import { saveLimits, type SpendTier } from "@/lib/membership";
+import { syncSubscriptions } from "@/lib/subscriptions";
 import { refreshLive } from "@/lib/inventory";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
 import { sendOrderEmail, sendTestEmail, type OrderEmailKind } from "@/lib/order-emails";
@@ -315,4 +317,38 @@ export async function savePersonalize(form: FormData) {
   await prisma.product.update({ where: { id }, data: { personalizeJson: cfg ? JSON.stringify(cfg) : null } });
   revalidatePath("/", "layout");
   redirect(`/admin/products/${id}?notice=${encodeURIComponent(cfg ? "Personalization saved" : "Personalization switched off")}`);
+}
+
+/** Members: save the free-trial size and the spend tiers for subscribers' AI messages. */
+export async function saveAiLimits(form: FormData) {
+  const tiers: SpendTier[] = [];
+  for (let i = 0; i < 6; i++) {
+    const spend = String(form.get(`tierSpend_${i}`) ?? "").trim();
+    const limit = String(form.get(`tierLimit_${i}`) ?? "").trim();
+    if (spend === "" || limit === "") continue;
+    tiers.push({ minSpendCents: Math.round(Number(spend) * 100), limit: Number(limit) });
+  }
+  await saveLimits({ freeMessages: Number(form.get("freeMessages")), tiers });
+  redirect(`/admin/members?notice=${encodeURIComponent("AI limits saved")}`);
+}
+
+/** Members: set (or clear) one person's AI message limit. */
+export async function setMemberLimit(form: FormData) {
+  const id = String(form.get("customerId"));
+  const raw = String(form.get("limit") ?? "").trim();
+  const value = raw === "" ? null : Math.max(0, Math.round(Number(raw)));
+  await prisma.customer.update({ where: { id }, data: { aiLimitOverride: value != null && Number.isFinite(value) ? value : null } });
+  redirect(`/admin/members?notice=${encodeURIComponent(value == null ? "Limit set back to their spend tier" : `Limit set to ${value} messages`)}`);
+}
+
+/** Members: pull subscription changes and paid months from Stripe (for setups without the webhook). */
+export async function syncSubscriptionsAction() {
+  let note: string;
+  try {
+    const r = await syncSubscriptions();
+    note = `Checked ${r.checked} subscription${r.checked === 1 ? "" : "s"}; ${r.created} new box order${r.created === 1 ? "" : "s"}.${r.errors.length ? ` Problems: ${r.errors.join("; ")}` : ""}`;
+  } catch (e) {
+    note = `Sync failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  redirect(`/admin/members?notice=${encodeURIComponent(note)}`);
 }

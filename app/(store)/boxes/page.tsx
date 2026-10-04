@@ -14,7 +14,7 @@ export default async function BoxesPage() {
         <div className="wrap">
           <p className="eyebrow">Mystery boxes</p>
           <h1 className="section-title">Surprise picks from Chinese factories. Always worth more than you pay.</h1>
-          <p className="section-lede">Every box has a set number of different items and a guaranteed minimum value. What’s inside is revealed the moment you pay.</p>
+          <p className="section-lede">Subscribe and get a box every month: a set number of different items, always worth more than you pay. Every subscription includes our AI sourcing assistant.</p>
         </div>
       </section>
       <section className="band">
@@ -33,7 +33,7 @@ export default async function BoxesPage() {
                     <h2>{b.name}</h2>
                     <p>{b.tagline}</p>
                     <div className="box-card-foot">
-                      <strong>{formatMoney(b.priceCents)}</strong>
+                      <strong>{formatMoney(b.priceCents)}/mo</strong>
                       <span>
                         {b.itemCount} items · worth {formatMoney(b.guaranteedValueCents)}+
                       </span>

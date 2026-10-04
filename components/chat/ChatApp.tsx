@@ -188,6 +188,13 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             <GiftIcon />
             <span>Mystery boxes</span>
           </Link>
+          <Link href="/account" className="sb-row">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M5 20a7 7 0 0 1 14 0" />
+            </svg>
+            <span>Account</span>
+          </Link>
         </nav>
 
         <div className="sb-list">

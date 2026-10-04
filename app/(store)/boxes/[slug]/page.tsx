@@ -4,7 +4,9 @@ import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { loadPool, simulate } from "@/lib/mystery";
-import { addBoxToCart } from "../../actions";
+import { subscribeToBox } from "../../actions";
+import { getShipTo } from "@/lib/cart";
+import { countryLabel } from "@/lib/shipping";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,7 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
   });
   if (!box) notFound();
   const available = simulate(await loadPool(box.id), box, 40).successRate > 0;
+  const shipTo = await getShipTo();
   const teasers = [...new Map(box.pool.map((p) => [p.variant.productId, p.variant.product.images[0]?.id])).values()].filter(Boolean).slice(0, 6);
 
   return (
@@ -48,6 +51,7 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
           <p className="box-tagline">{box.tagline}</p>
           <div className="price">
             {formatMoney(box.priceCents)}
+            <span className="per-month">/month</span>
             <span className="box-value">
               worth {formatMoney(box.guaranteedValueCents)}+ · save {Math.round((1 - box.priceCents / box.guaranteedValueCents) * 100)}%+
             </span>
@@ -59,14 +63,19 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
             <li>
               <strong>Worth at least {formatMoney(box.guaranteedValueCents)}</strong> at our regular prices
             </li>
-            <li>Revealed on your order page and by email the moment you pay</li>
-            <li>Shipping quoted to your postal code in the cart</li>
+            <li>
+              <strong>A new box every month</strong>: cancel any time from your account
+            </li>
+            <li>
+              <strong>Includes the AI sourcing assistant</strong>, with a bigger allowance the more you order
+            </li>
+            <li>Shipping to {countryLabel(shipTo.country)} is added monthly and shown before you pay</li>
           </ul>
           {error && <p className="notice err">{error}</p>}
           {available ? (
-            <form action={addBoxToCart}>
+            <form action={subscribeToBox}>
               <input type="hidden" name="boxId" value={box.id} />
-              <button className="btn primary lg">Add box to cart</button>
+              <button className="btn primary lg">Subscribe · {formatMoney(box.priceCents)}/month</button>
             </form>
           ) : (
             <p className="notice">Sold out right now. Check back soon.</p>

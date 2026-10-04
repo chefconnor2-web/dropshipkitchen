@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { getMemberId } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { trackingUrl } from "@/lib/order-emails";
@@ -33,12 +34,16 @@ export default async function CustomerOrderPage({
       shippingCents: true,
       cjTrackingNumber: true,
       stripeSessionId: true,
+      customerId: true,
       createdAt: true,
       items: { select: { id: true, productTitle: true, variantName: true, quantity: true, customerPriceCents: true, mysteryBoxName: true, mysteryBoxGroup: true, productId: true } },
     },
   });
-  // Possession of the Stripe session id acts as the view token for this proof.
-  if (!order || !s || order.stripeSessionId !== s) notFound();
+  // The Stripe session id acts as the view token; a signed-in customer can also open their own orders
+  // (subscription boxes have no checkout session).
+  const memberId = await getMemberId();
+  const allowed = !!order && ((!!s && order.stripeSessionId === s) || (!!memberId && order.customerId === memberId));
+  if (!order || !allowed) notFound();
   return (
     <div className="wrap page narrow">
       <h1>Order {order.number}</h1>

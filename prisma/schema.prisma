@@ -183,7 +183,56 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  orders Order[]
+  orders           Order[]
+  /// Their Stripe customer (set when they subscribe), for billing and the billing portal.
+  stripeCustomerId String?
+  /// The merchant's own AI message limit for this person (per 30 days); null = by spend tier.
+  aiLimitOverride  Int?
+  subscriptions    Subscription[]
+
+  @@index([stripeCustomerId])
+}
+
+/// A mystery box subscription: Stripe bills it monthly and every paid invoice becomes a box order.
+model Subscription {
+  id                   String    @id @default(cuid())
+  customerId           String
+  customer             Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  boxId                String
+  boxName              String
+  stripeSubscriptionId String    @unique
+  status               String // Stripe status: active, trialing, past_due, canceled, incomplete, unpaid…
+  priceCents           Int // the box, per month
+  shippingCents        Int // shipping, per month (quoted when they subscribed)
+  shipCountry          String
+  shippingAddressJson  String? // where every box goes
+  cancelAtPeriodEnd    Boolean   @default(false)
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+/// One AI assistant message. Limits count these over the last 30 days.
+model AiUsage {
+  id         String   @id @default(cuid())
+  customerId String?
+  visitorId  String?
+  chatId     String?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([visitorId, createdAt])
+}
+
+/// One-tap email sign-in links (only the hash is stored).
+model LoginToken {
+  tokenHash String    @id
+  email     String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 }
 
 model Order {
@@ -230,6 +279,11 @@ model Order {
   /// Set when the order ships as several CJ parcels (too heavy for one): [{items:[{vid,quantity}], method, cents}]
   parcelPlanJson      String?
   parcels             OrderParcel[]
+  /// Subscription box orders: the Stripe invoice that paid for this box (one order per invoice).
+  stripeInvoiceId     String?
+  subscriptionId      String?
+
+  @@index([stripeInvoiceId])
 }
 
 // Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.

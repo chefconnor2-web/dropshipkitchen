@@ -6,6 +6,8 @@ import { prisma } from "@/lib/db";
 import { getOrCreateCartId, cartCount } from "@/lib/cart";
 import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type UiEntry } from "@/lib/assistant";
 import { ensureVisitorId, findOwnChat, getVisitorId } from "@/lib/chat-session";
+import { getMemberId } from "@/lib/session";
+import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -25,8 +27,10 @@ function allow(ip: string): boolean {
 export async function GET(req: Request) {
   const chatId = new URL(req.url).searchParams.get("chat");
   const chat = await findOwnChat(chatId, await getVisitorId());
+  const allowance = await aiAllowance({ customerId: await getMemberId(), visitorId: await getVisitorId() });
   return Response.json({
     configured: assistantConfigured(),
+    allowance: { remaining: allowance.remaining, limit: allowance.limit, subscriber: allowance.subscriber },
     chat: chat ? { id: chat.id, title: chat.title } : null,
     entries: chat ? (JSON.parse(chat.uiJson) as UiEntry[]) : [],
     cartCount: await cartCount(),
@@ -44,6 +48,11 @@ export async function POST(req: Request) {
   if (!allow(ip)) return Response.json({ error: "You've sent a lot of messages. Please wait a bit and try again." }, { status: 429 });
 
   const visitorId = await ensureVisitorId();
+  // Subscribers get a monthly allowance (by spend tier, or the merchant's own number); everyone else a free trial.
+  const memberId = await getMemberId();
+  const allowance = await aiAllowance({ customerId: memberId, visitorId });
+  if (allowance.remaining <= 0)
+    return Response.json({ error: limitMessage(allowance), limit: { subscriber: allowance.subscriber, signedIn: !!memberId } }, { status: 402 });
   let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId, visitorId) : null;
   if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });
   const isNew = !chat;
@@ -82,8 +91,9 @@ export async function POST(req: Request) {
           : null;
       try {
         const entry = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
+        await recordAiUse({ customerId: memberId, visitorId, chatId: chatRow.id });
         await Promise.race([titling, new Promise((r) => setTimeout(r, 4000))]);
-        send({ type: "done", entry, cartCount: await cartCount() });
+        send({ type: "done", entry, cartCount: await cartCount(), allowance: { remaining: allowance.remaining - 1, limit: allowance.limit, subscriber: allowance.subscriber } });
       } catch (e) {
         let error = "Something went wrong. Please try again.";
         if (e instanceof AssistantLimitError) error = e.message;
