@@ -142,10 +142,10 @@ export async function recordAiUse(who: { customerId: string | null; visitorId: s
 /** What to tell someone who has run out. `prices`: the full and Lite monthly prices, e.g. "$30.00" / "$5.00". */
 export function limitMessage(a: Allowance, prices: { full?: string; lite?: string | null } = {}): string {
   if (a.plan === "lite")
-    return `You've used this month's AI allowance on the Lite plan. It refills as older messages pass 30 days, or upgrade to the full plan${prices.full ? ` (${prices.full}/month)` : ""} for many more messages and a free mystery box.`;
+    return `You've used this month's Lite allowance. It refills over the month, or upgrade to Full${prices.full ? ` (${prices.full}/month)` : ""} for our biggest allowance and a free mystery box.`;
   if (a.subscriber)
-    return `You've used all ${a.limit} AI messages for this month. Your allowance refills as older messages pass 30 days, and it grows as you spend more with us.`;
-  const options = [prices.lite ? `Lite for ${prices.lite}/month` : null, `the full plan${prices.full ? ` for ${prices.full}/month` : ""} with a free mystery box`].filter(Boolean).join(", or ");
-  const pitch = `Subscribe to keep using the assistant: ${options}.`;
-  return a.basis === "custom" ? `You've used your AI messages. ${pitch}` : `You've used your ${a.limit} free AI messages. ${pitch} Already subscribed? Sign in.`;
+    return `You've used this month's AI allowance. It refills over the month, and it grows as you shop with us.`;
+  const options = [`Full${prices.full ? ` (${prices.full}/month)` : ""} with a free mystery box`, prices.lite ? `Lite (${prices.lite}/month)` : null].filter(Boolean).join(", or ");
+  const pitch = `Keep going with ${options}.`;
+  return a.basis === "custom" ? `That's the end of your AI preview. ${pitch}` : `That's the end of your free preview. ${pitch} Already subscribed? Sign in.`;
 }

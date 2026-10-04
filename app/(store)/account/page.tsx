@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { activeSessionCount, getMember, safeNext } from "@/lib/session";
 import { getVisitorId } from "@/lib/chat-session";
-import { aiAllowance, getLimits, tierFor } from "@/lib/membership";
+import { aiAllowance, getLimits } from "@/lib/membership";
 import { countryLabel } from "@/lib/shipping";
 import { openBillingPortal, signOutAction, signOutEverywhereAction } from "../actions";
 import SignInForm from "./SignInForm";
@@ -21,6 +21,13 @@ const STATUS: Record<string, string> = {
   incomplete_expired: "Not started",
   paused: "Paused",
 };
+
+/** A word for how much AI allowance is left (never the number). */
+function allowanceWord(remaining: number, limit: number): string {
+  if (remaining <= 0) return "Used up for now; it refills over the month";
+  const share = limit > 0 ? remaining / limit : 0;
+  return share > 0.5 ? "Plenty left" : share > 0.15 ? "Some left" : "Almost used up";
+}
 
 const fmtDate = (d: Date) => d.toLocaleDateString("en-CA", { month: "long", day: "numeric" });
 
@@ -94,27 +101,27 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
 
       <section className="account-card">
         <h2 className="section-title">AI assistant</h2>
-        <div className="ai-meter" role="meter" aria-valuemin={0} aria-valuemax={allowance.limit} aria-valuenow={allowance.used} aria-label="AI messages used">
-          <span style={{ width: `${pct}%` }} />
+        {/* How much is left, as a bar and a word: customers never see message counts. */}
+        <div className="ai-meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100 - pct} aria-label="AI allowance left">
+          <span style={{ width: `${100 - pct}%` }} />
         </div>
         <p>
-          <strong>{allowance.remaining}</strong> of {allowance.limit} messages left
-          {allowance.subscriber ? " (last 30 days)" : " (free trial)"}.
+          <strong>{allowanceWord(allowance.remaining, allowance.limit)}</strong>
+          {allowance.subscriber ? (allowance.basis === "lite" ? " · Lite plan" : "") : " · free preview"}
         </p>
         {allowance.subscriber && allowance.basis === "tier" && (
           <p className="muted small">
-            Your allowance grows with your orders: you’ve spent {formatMoney(allowance.spendCents)}, {tierFor(allowance.spendCents, limits.tiers).limit} messages a month.
-            {nextTier && ` Spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more for ${nextTier.limit} a month.`}
+            Your allowance grows as you shop{nextTier ? `: spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more to unlock a bigger one.` : ", and you’re at the top level."}
           </p>
         )}
         {allowance.basis === "lite" && (
           <p className="muted small">
-            Lite gives you a monthly AI allowance; short questions use less of it than big sourcing searches. <Link href="/plans">Upgrade to the full plan</Link> for many more messages and a free mystery box.
+            Short questions use less of your allowance than big sourcing searches. <Link href="/plans">Upgrade to Full</Link> for our biggest allowance and a free mystery box.
           </p>
         )}
         {!allowance.subscriber && (
           <p className="muted small">
-            <Link href="/plans">Subscribe</Link> to keep using the assistant every month.
+            <Link href="/plans">Pick a plan</Link> to keep your sourcing assistant.
           </p>
         )}
         <Link href="/" className="btn">
