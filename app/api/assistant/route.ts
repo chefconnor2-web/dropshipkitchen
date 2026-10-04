@@ -1,14 +1,15 @@
-// Chat endpoint for the sourcing assistant. GET: the current transcript. POST {message}: one turn. DELETE: new chat.
-import { cookies, headers } from "next/headers";
+// Chat endpoint for the sourcing assistant. GET ?chat=<id>: a transcript. POST {message, chatId?, images?, voice?, editIndex?}:
+// one turn, streamed as NDJSON; without chatId it starts a new chat and names it.
+import { headers } from "next/headers";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { getOrCreateCartId, cartCount } from "@/lib/cart";
-import { AssistantLimitError, assistantConfigured, chatTurn, type UiEntry } from "@/lib/assistant";
+import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type UiEntry } from "@/lib/assistant";
+import { ensureVisitorId, findOwnChat, getVisitorId } from "@/lib/chat-session";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const COOKIE = "cs_chat";
 // Cheap per-IP brake on spend: 30 turns an hour.
 const hits = new Map<string, number[]>();
 function allow(ip: string): boolean {
@@ -21,37 +22,39 @@ function allow(ip: string): boolean {
   return true;
 }
 
-async function currentChat(create: boolean) {
-  const jar = await cookies();
-  const id = jar.get(COOKIE)?.value;
-  const found = id ? await prisma.assistantChat.findUnique({ where: { id } }) : null;
-  if (found || !create) return found;
-  const chat = await prisma.assistantChat.create({ data: {} });
-  jar.set(COOKIE, chat.id, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
-  return chat;
-}
-
-export async function GET() {
-  const chat = await currentChat(false);
-  return Response.json({ configured: assistantConfigured(), entries: chat ? (JSON.parse(chat.uiJson) as UiEntry[]) : [], cartCount: await cartCount() });
-}
-
-export async function DELETE() {
-  (await cookies()).delete(COOKIE);
-  return Response.json({ ok: true });
+export async function GET(req: Request) {
+  const chatId = new URL(req.url).searchParams.get("chat");
+  const chat = await findOwnChat(chatId, await getVisitorId());
+  return Response.json({
+    configured: assistantConfigured(),
+    chat: chat ? { id: chat.id, title: chat.title } : null,
+    entries: chat ? (JSON.parse(chat.uiJson) as UiEntry[]) : [],
+    cartCount: await cartCount(),
+  });
 }
 
 export async function POST(req: Request) {
   if (!assistantConfigured()) return Response.json({ error: "The assistant isn't switched on yet." }, { status: 503 });
-  const body = (await req.json().catch(() => ({}))) as { message?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { message?: unknown; chatId?: unknown; images?: unknown; voice?: unknown; editIndex?: unknown };
   const message = typeof body.message === "string" ? body.message.trim() : "";
-  if (!message) return Response.json({ error: "Type a message first." }, { status: 400 });
+  const imageIds = (Array.isArray(body.images) ? body.images : []).filter((x): x is string => typeof x === "string").slice(0, 4);
+  if (!message && !imageIds.length) return Response.json({ error: "Type a message first." }, { status: 400 });
   const h = await headers();
   const ip = (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || "local";
   if (!allow(ip)) return Response.json({ error: "You've sent a lot of messages. Please wait a bit and try again." }, { status: 429 });
 
-  const chat = (await currentChat(true))!;
+  const visitorId = await ensureVisitorId();
+  let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId, visitorId) : null;
+  if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });
+  const isNew = !chat;
+  chat ??= await prisma.assistantChat.create({ data: { visitorId, title: message.replace(/\s+/g, " ").slice(0, 48) || "Photo search" } });
+  const images = imageIds.length
+    ? await prisma.assistantImage.findMany({ where: { id: { in: imageIds }, visitorId }, select: { id: true, mime: true } })
+    : [];
+  if (images.length) await prisma.assistantImage.updateMany({ where: { id: { in: images.map((i) => i.id) } }, data: { chatId: chat.id } });
+  const editIndex = typeof body.editIndex === "number" && Number.isInteger(body.editIndex) ? body.editIndex : undefined;
   const cartId = await getOrCreateCartId();
+  const chatRow = chat;
 
   // NDJSON stream: progress notes while tools run (keeps the connection alive on slow turns), then the result.
   const enc = new TextEncoder();
@@ -68,8 +71,18 @@ export async function POST(req: Request) {
         }
       };
       const ping = setInterval(() => send({ type: "ping" }), 5000);
+      send({ type: "chat", id: chatRow.id, title: chatRow.title, isNew });
+      // Name new chats (and chats whose first message was edited) while the answer is being written.
+      const titling =
+        isNew || editIndex === 0
+          ? generateTitle(message, images.length > 0).then(async (title) => {
+              await prisma.assistantChat.update({ where: { id: chatRow.id }, data: { title } });
+              send({ type: "title", id: chatRow.id, title });
+            })
+          : null;
       try {
-        const entry = await chatTurn(chat.id, cartId, message, (ev) => send(ev));
+        const entry = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
+        await Promise.race([titling, new Promise((r) => setTimeout(r, 4000))]);
         send({ type: "done", entry, cartCount: await cartCount() });
       } catch (e) {
         let error = "Something went wrong. Please try again.";
