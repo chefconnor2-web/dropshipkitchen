@@ -74,3 +74,31 @@ test("blockedMessage names the products and the country", () => {
   assert.match(blockedMessage(["B", "S"], (v) => names[v], "CA")!, /^48V 20Ah battery and Scooter can’t ship to Canada .*Remove them/);
   assert.match(blockedMessage(["X"], () => undefined, "US")!, /^An item in a mystery box can’t ship to United States/);
 });
+
+import { fitEstimate } from "../lib/shipping";
+
+test("fitEstimate draws a line through earlier quotes by weight", () => {
+  const pts = [
+    { g: 500, c: 1000, min: 7, max: 12 },
+    { g: 1500, c: 2000, min: 8, max: 14 },
+    { g: 2500, c: 3000, min: 9, max: 15 },
+  ];
+  assert.deepEqual(fitEstimate(pts, 2000), { cents: 2500, minDays: 8, maxDays: 14 });
+  // never below the cheapest quote seen
+  assert.equal(fitEstimate(pts, 10)!.cents, 1000);
+  // no data, no estimate
+  assert.equal(fitEstimate([], 1000), null);
+});
+
+test("fitEstimate scales gently from a single earlier quote", () => {
+  assert.equal(fitEstimate([{ g: 1000, c: 1000, min: null, max: null }], 4000)!.cents, 2000);
+  assert.equal(fitEstimate([{ g: 1000, c: 1000, min: null, max: null }], 4000)!.minDays, null);
+});
+
+test("fitEstimate ignores a falling trend (heavier never estimates cheaper)", () => {
+  const pts = [
+    { g: 500, c: 3000, min: 7, max: 12 },
+    { g: 3000, c: 1000, min: 7, max: 12 },
+  ];
+  assert.equal(fitEstimate(pts, 3000)!.cents, 2000); // flat at the average, not below it
+});

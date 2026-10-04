@@ -1339,3 +1339,12 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 /* cart: shown while the live shipping quote streams in */
 .ship-pending { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 14px; }
 .ship-pending-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--signal, #E8551C); animation: aiPulse 1.2s ease-in-out infinite; flex: none; }
+
+/* product page shipping box: destination line with a Change link (the edit form uses .ship-est form) */
+.ship-est-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.ship-est-head .ship-est-title { margin: 0; }
+.ship-est-form { margin: 10px 0; }
+.ship-est-pending { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
+.ship-est-note { margin: 6px 0 0; }
+.checkout-btn { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.checkout-btn .ship-pending-dot { background: #fff; }

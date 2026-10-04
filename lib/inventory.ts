@@ -65,21 +65,17 @@ export async function refreshLive(cjSupplierVariantId: string) {
 export async function ensureFreshInventory(cjSupplierVariantIds: string[]) {
   const rows = await prisma.cjSupplierVariant.findMany({ where: { id: { in: cjSupplierVariantIds } } });
   const out = new Map<string, { total: number | null; checkedAt: Date | null; error?: string }>();
-  for (const r of rows) {
-    if (!isStale(r.inventoryCheckedAt)) {
-      out.set(r.id, { total: r.inventoryTotal, checkedAt: r.inventoryCheckedAt });
-      continue;
-    }
-    try {
-      const u = await refreshInventory(r.id);
-      out.set(r.id, { total: u.inventoryTotal, checkedAt: u.inventoryCheckedAt });
-    } catch (e) {
-      out.set(r.id, {
-        total: r.inventoryTotal,
-        checkedAt: r.inventoryCheckedAt,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
+  // Stale ones are queued with CJ together (the client paces them) instead of one round trip at a time.
+  await Promise.all(
+    rows.map(async (r) => {
+      if (!isStale(r.inventoryCheckedAt)) return void out.set(r.id, { total: r.inventoryTotal, checkedAt: r.inventoryCheckedAt });
+      try {
+        const u = await refreshInventory(r.id);
+        out.set(r.id, { total: u.inventoryTotal, checkedAt: u.inventoryCheckedAt });
+      } catch (e) {
+        out.set(r.id, { total: r.inventoryTotal, checkedAt: r.inventoryCheckedAt, error: e instanceof Error ? e.message : String(e) });
+      }
+    }),
+  );
   return out;
 }

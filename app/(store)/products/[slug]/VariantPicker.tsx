@@ -9,6 +9,7 @@ import { bulkPricingLabel } from "@/lib/volume";
 import { useRouter } from "next/navigation";
 import Personalizer from "@/components/store/Personalizer";
 import type { DesignerConfig } from "@/lib/personalize-shared";
+import type { ShipView } from "@/lib/ship-view";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -22,7 +23,9 @@ export default function VariantPicker({
   shipTo,
   personalize,
   mockupSrc,
+  initialShip,
 }: {
+  initialShip?: { variantId: string; view: ShipView } | null;
   personalize?: DesignerConfig | null;
   mockupSrc?: string | null;
   shipTo: { country: string; zip: string };
@@ -137,7 +140,13 @@ export default function VariantPicker({
         onAdded={(r) => r.ok && router.refresh()}
       />
     )}
-    <ShippingEstimate key={match?.id ?? "none"} variantId={match?.id ?? null} country={shipTo.country} zip={shipTo.zip} />
+    <ShippingEstimate
+      key={match?.id ?? "none"}
+      variantId={match?.id ?? null}
+      country={shipTo.country}
+      zip={shipTo.zip}
+      initial={match && initialShip?.variantId === match.id ? initialShip.view : null}
+    />
     </>
   );
 }

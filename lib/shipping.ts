@@ -2,6 +2,7 @@
 // Method names are mapped to our own tiers (Standard / Express) so CJ's carrier names never reach the browser.
 
 import { freightCalculate } from "@/lib/cj/client";
+import { prisma } from "@/lib/db";
 import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
 import { processSingleton } from "@/lib/singleton";
 import { chooseFromCountry, originCandidates } from "@/lib/fulfillment";
@@ -74,7 +75,29 @@ export interface CartQuote {
 }
 
 const cache = processSingleton("ship-quote-cache", () => new Map<string, { at: number; quote: CartQuote }>());
-const TTL_MS = 30 * 60_000;
+/** A quote this recent is used as is; checkout insists on one. */
+export const FRESH_MS = 30 * 60_000;
+/** Older quotes (up to this age) are still shown instantly while a fresh one is fetched in the background. */
+const STALE_MS = 7 * 86_400_000;
+
+function quoteKey(items: ShipItem[], country: string, zip?: string) {
+  return JSON.stringify([items.map((i) => [i.vid, i.quantity]).sort(), country, (zip ?? "").slice(0, 3)]);
+}
+
+function totalGrams(items: ShipItem[]): number | null {
+  return items.every((i) => (i.weightGrams ?? 0) > 0) ? Math.round(items.reduce((n, i) => n + i.weightGrams! * i.quantity, 0)) : null;
+}
+
+/** A remembered quote (memory, then database) no older than `maxAgeMs`, with its age. */
+async function remembered(key: string, maxAgeMs: number): Promise<{ at: number; quote: CartQuote } | null> {
+  const mem = cache.get(key);
+  if (mem && Date.now() - mem.at < maxAgeMs) return mem;
+  const row = await prisma.shippingQuote.findUnique({ where: { key } }).catch(() => null);
+  if (!row || Date.now() - row.quotedAt.getTime() >= maxAgeMs) return null;
+  const hit = { at: row.quotedAt.getTime(), quote: JSON.parse(row.json) as CartQuote };
+  if (!mem || mem.at < hit.at) cache.set(key, hit);
+  return hit;
+}
 
 async function wholeOrderOptions(items: ShipItem[], from: string, country: string, zip?: string) {
   const env = await freightCalculate({
@@ -102,14 +125,30 @@ export async function quoteTiers(items: ShipItem[], country: string, zip?: strin
  * Tries the usual warehouse first (the US one for a US address it fully stocks, else China), then every
  * other warehouse that stocks it all, then splits the order into parcels that may ship from different
  * warehouses. When nothing works, `blocked` names the products that can't ship at all.
+ *
+ * Remembered quotes come back at once: a fresh one as is, an older one (up to a week, or `maxAgeMs`) while a
+ * fresh one is fetched in the background. Pass `maxAgeMs: FRESH_MS` where the price will be charged.
  */
-export async function quoteCart(items: ShipItem[], country: string, zip?: string): Promise<CartQuote> {
+export async function quoteCart(items: ShipItem[], country: string, zip?: string, opts: { maxAgeMs?: number } = {}): Promise<CartQuote> {
   if (!items.length) return { tiers: [], blocked: [] };
-  const key = JSON.stringify([items.map((i) => [i.vid, i.quantity]).sort(), country, (zip ?? "").slice(0, 3)]);
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.quote;
-  // One quote per cart at a time: the cart page joins a background warm-up (raising its CJ priority)
-  // instead of asking CJ again.
+  const key = quoteKey(items, country, zip);
+  const hit = await remembered(key, opts.maxAgeMs ?? STALE_MS);
+  if (hit) {
+    if (Date.now() - hit.at >= FRESH_MS) void withCjPriority("background", () => liveQuote(key, items, country, zip)).catch(() => null);
+    return hit.quote;
+  }
+  return liveQuote(key, items, country, zip);
+}
+
+/** A remembered quote of any age up to a week, without ever calling CJ (for instant first paint). */
+export async function peekQuote(items: ShipItem[], country: string, zip?: string): Promise<{ quote: CartQuote; fresh: boolean } | null> {
+  if (!items.length) return null;
+  const hit = await remembered(quoteKey(items, country, zip), STALE_MS);
+  return hit ? { quote: hit.quote, fresh: Date.now() - hit.at < FRESH_MS } : null;
+}
+
+/** Asks CJ (one request per cart at a time; a more urgent caller joins and raises its priority). */
+function liveQuote(key: string, items: ShipItem[], country: string, zip?: string): Promise<CartQuote> {
   const caller = currentCjLane();
   const running = inflight.get(key);
   if (running) {
@@ -118,13 +157,63 @@ export async function quoteCart(items: ShipItem[], country: string, zip?: string
   }
   const lane: CjLane = { priority: caller.priority };
   const promise = withCjPriority(lane, () => computeQuote(items, country, zip))
-    .then((quote) => {
-      cache.set(key, { at: Date.now(), quote });
+    .then(async (quote) => {
+      const at = Date.now();
+      cache.set(key, { at, quote });
+      const data = { country, grams: totalGrams(items), json: JSON.stringify(quote), quotedAt: new Date(at) };
+      await prisma.shippingQuote.upsert({ where: { key }, create: { key, ...data }, update: data }).catch(() => null);
       return quote;
     })
     .finally(() => inflight.delete(key));
   inflight.set(key, { lane, promise });
   return promise;
+}
+
+export interface ShipEstimate {
+  cents: number;
+  minDays: number | null;
+  maxDays: number | null;
+}
+
+/**
+ * A rough Standard price for a cart nobody has quoted yet, from earlier CJ quotes to the same country:
+ * a straight line through (weight, price), never below the cheapest seen. Null without enough data.
+ */
+export async function estimateFromHistory(items: ShipItem[], country: string): Promise<ShipEstimate | null> {
+  const grams = totalGrams(items);
+  if (!grams) return null;
+  const rows = await prisma.shippingQuote
+    .findMany({ where: { country, grams: { not: null } }, orderBy: { quotedAt: "desc" }, take: 300, select: { grams: true, json: true } })
+    .catch(() => []);
+  const points = rows.flatMap((r) => {
+    const std = (JSON.parse(r.json) as CartQuote).tiers.find((t) => t.key === "standard");
+    return std && r.grams ? [{ g: r.grams, c: std.cents, min: std.minDays, max: std.maxDays }] : [];
+  });
+  return fitEstimate(points, grams);
+}
+
+/** Least-squares line through (grams, cents) points, evaluated at `grams`. Exported for tests. */
+export function fitEstimate(points: Array<{ g: number; c: number; min: number | null; max: number | null }>, grams: number): ShipEstimate | null {
+  if (!points.length) return null;
+  const median = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : null);
+  const floor = Math.min(...points.map((p) => p.c));
+  let cents: number;
+  const n = points.length;
+  const mg = points.reduce((s, p) => s + p.g, 0) / n;
+  const mc = points.reduce((s, p) => s + p.c, 0) / n;
+  const varG = points.reduce((s, p) => s + (p.g - mg) ** 2, 0);
+  if (n >= 2 && varG > 0) {
+    const slope = Math.max(0, points.reduce((s, p) => s + (p.g - mg) * (p.c - mc), 0) / varG);
+    cents = mc + slope * (grams - mg);
+  } else {
+    // One weight seen: scale by weight, gently (shipping grows slower than weight).
+    cents = mc * Math.sqrt(grams / mg);
+  }
+  return {
+    cents: Math.max(floor, Math.round(cents)),
+    minDays: median(points.map((p) => p.min).filter((x): x is number => x != null)),
+    maxDays: median(points.map((p) => p.max).filter((x): x is number => x != null)),
+  };
 }
 
 const inflight = processSingleton("ship-quote-inflight", () => new Map<string, { lane: CjLane; promise: Promise<CartQuote> }>());

@@ -437,3 +437,15 @@ model CartBox {
   picksJson String // [variantId]
   createdAt DateTime   @default(now())
 }
+
+/// Remembered CJ shipping quotes, so prices show instantly (and survive restarts). Old ones are shown at once
+/// and refreshed in the background; checkout always uses a fresh one. Also the data for weight-based estimates.
+model ShippingQuote {
+  key      String   @id // items + country + postcode prefix (see lib/shipping.ts)
+  country  String
+  grams    Int? // total weight of the quoted items, when every item's weight is known
+  json     String // CartQuote
+  quotedAt DateTime
+
+  @@index([country, quotedAt])
+}
