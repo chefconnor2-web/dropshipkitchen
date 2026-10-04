@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
-import { SHIP_COUNTRIES, daysLabel, quoteTiers, type ShipTier } from "@/lib/shipping";
+import { SHIP_COUNTRIES, daysLabel, parcelsLabel, quoteTiers, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
 import { stockLabel, stockStatus } from "@/lib/inventory";
@@ -27,7 +27,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       if (!tiers.length)
         shipError =
           items.reduce((n, i) => n + i.quantity, 0) >= 20
-            ? "This order is too large for parcel shipping in one go. Lower the quantity, or split it into a few smaller orders."
+            ? "This order is too large to ship, even split into parcels. Lower the quantity or contact us for a freight quote."
             : "These items can’t ship to that country.";
     } catch {
       shipError = "We couldn’t get a shipping price right now. Refresh to try again.";
@@ -119,6 +119,9 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
               </div>
               <button className="btn small">Update shipping</button>
             </form>
+            {tier?.parcels && tier.parcels.length > 1 && (
+              <p className="vol-hint small">Big order: it ships as {tier.parcels.length} parcels, quoted and tracked automatically.</p>
+            )}
             {shipError ? (
               <p className="notice err small">{shipError}</p>
             ) : (
@@ -129,7 +132,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                     <input type="hidden" name="tier" value={t.key} />
                     <button className={`ship-tier ${t.key === tier?.key ? "on" : ""}`} aria-pressed={t.key === tier?.key}>
                       <span className="ship-tier-name">{t.label}</span>
-                      <span className="ship-tier-days">{daysLabel(t)}</span>
+                      <span className="ship-tier-days">{[parcelsLabel(t), daysLabel(t)].filter(Boolean).join(" · ")}</span>
                       <span className="ship-tier-price">{formatMoney(t.cents)}</span>
                     </button>
                   </form>

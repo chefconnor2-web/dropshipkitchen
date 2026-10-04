@@ -198,9 +198,12 @@ model Order {
 
   items               OrderItem[]
   /// Shipping the customer paid (CJ's quote, passed through at cost) and the CJ method it was quoted for.
-  shippingCents       Int         @default(0)
+  shippingCents       Int           @default(0)
   customerShipMethod  String?
   customerShipCountry String?
+  /// Set when the order ships as several CJ parcels (too heavy for one): [{items:[{vid,quantity}], method, cents}]
+  parcelPlanJson      String?
+  parcels             OrderParcel[]
 }
 
 // Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.
@@ -305,4 +308,26 @@ model AssistantChat {
   outputTokens Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+/// One CJ order of a split shipment (orders too heavy for a single parcel).
+model OrderParcel {
+  id                String    @id @default(cuid())
+  orderId           String
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  index             Int
+  itemsJson         String // [{vid, quantity, lineItemId}]
+  logisticName      String
+  quotedCents       Int
+  cjOrderNumber     String?
+  cjOrderId         String?
+  cjShipmentOrderId String?
+  cjAmountCents     Int?
+  cjPaidAt          DateTime?
+  cjStatus          String?
+  cjTrackingNumber  String?
+  cjError           String?
+  createdAt         DateTime  @default(now())
+
+  @@unique([orderId, index])
 }

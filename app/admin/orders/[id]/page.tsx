@@ -35,7 +35,7 @@ export default async function AdminOrder({
   const { notice, error } = await searchParams;
   const order = await prisma.order.findUnique({
     where: { id },
-    include: { items: { include: { checks: { orderBy: { checkedAt: "desc" } } } } },
+    include: { items: { include: { checks: { orderBy: { checkedAt: "desc" } } } }, parcels: { orderBy: { index: "asc" } } },
   });
   if (!order) notFound();
 
@@ -80,6 +80,8 @@ export default async function AdminOrder({
   const paidTotal = order.subtotalCents + order.shippingCents;
   const profit = cjTotal != null ? paidTotal - cjTotal : costKnown ? order.subtotalCents - productCost : null;
 
+  const plan = JSON.parse(order.parcelPlanJson || "[]") as Array<{ items: Array<{ vid: string; quantity: number }>; method: string; cents: number }>;
+  const titleByVid = new Map(order.items.map((i) => [i.supplierVariantId, i.productTitle]));
   const cheapest = quote[0]?.logisticName;
   const fastest = quote.length ? [...quote].sort((a, b) => maxDays(a.logisticAging) - maxDays(b.logisticAging) || a.logisticPrice - b.logisticPrice)[0].logisticName : null;
   const shipOption = (q: CjFreightOption, checked: boolean) => {
@@ -89,7 +91,7 @@ export default async function AdminOrder({
         <input type="radio" name="logisticName" value={q.logisticName} defaultChecked={checked} />
         <span className="ship-card-body">
           <span className="ship-card-top">
-            <span className="ship-name">{q.logisticName}</span>
+            <span className="ship-name">{q.logisticName === "SPLIT" ? `Auto-split into ${plan.length} parcels` : q.logisticName}</span>
             <span className="ship-price">{formatMoney(cents)}</span>
           </span>
           <span className="ship-card-sub">
@@ -287,6 +289,25 @@ export default async function AdminOrder({
               )}
             </>
           )}
+          {plan.length > 1 && order.parcels.length === 0 && (
+            <details className="a-details parcels">
+              <summary>Parcel plan: {plan.length} parcels</summary>
+              <ul className="mini-list">
+                {plan.map((p, i) => (
+                  <li key={i}>
+                    <div className="mini-row">
+                      <span className="strong">
+                        Parcel {i + 1} · {formatMoney(p.cents)}
+                      </span>
+                      <span className="muted small">
+                        {p.items.map((x) => `${x.quantity} × ${titleByVid.get(x.vid) ?? x.vid}`).join(", ")} · {p.method}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {autoQuoteError && <p className="notice err">Couldn’t get a shipping quote from CJ: {autoQuoteError}</p>}
           {order.cjError && <p className="notice err">{order.cjError}</p>}
           <div className="other-actions">
@@ -352,6 +373,34 @@ export default async function AdminOrder({
           {order.decisionNote} {order.mockSupplierOrderId && <code>{order.mockSupplierOrderId}</code>}
           {order.stripeRefundId && <code>{order.stripeRefundId}</code>}
         </p>
+      )}
+
+      {order.parcels.length > 0 && (
+        <section className="a-card">
+          <h2 className="a-h2">CJ parcels ({order.parcels.length})</h2>
+          <ul className="mini-list">
+            {order.parcels.map((p) => (
+              <li key={p.id}>
+                <div className="mini-row">
+                  <span className="email-row-top">
+                    <span className="strong">Parcel {p.index + 1}</span>
+                    <span className={`chip-status ${p.cjError ? "tone-bad" : p.cjPaidAt ? "tone-good" : "tone-warn"}`}>
+                      {p.cjError ? "Problem" : p.cjTrackingNumber ? "Shipped" : p.cjPaidAt ? "Paid" : "Unpaid"}
+                    </span>
+                  </span>
+                  <span className="muted small">
+                    {(JSON.parse(p.itemsJson) as Array<{ vid: string; quantity: number }>).map((x) => `${x.quantity} × ${titleByVid.get(x.vid) ?? x.vid}`).join(", ")}
+                  </span>
+                  <span className="muted small">
+                    {p.logisticName} · <code>{p.cjOrderNumber}</code>
+                    {p.cjTrackingNumber ? <> · tracking <code>{p.cjTrackingNumber}</code></> : null}
+                  </span>
+                  {p.cjError && <span className="small err-text">{p.cjError}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <section className="a-card">
