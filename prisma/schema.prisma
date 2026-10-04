@@ -293,3 +293,16 @@ model EmailLog {
   @@index([orderId])
   @@index([createdAt])
 }
+
+/// One shopper's conversation with the sourcing assistant. `messagesJson` is the exact Anthropic message
+/// history (append-only); `uiJson` is what the chat panel shows (text, product cards, cart notices).
+model AssistantChat {
+  id           String   @id @default(cuid())
+  messagesJson String   @default("[]")
+  uiJson       String   @default("[]")
+  userTurns    Int      @default(0)
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
