@@ -4,6 +4,7 @@
 // simulates draws to prove the box can always meet its guarantees. Boxes are saved as drafts to review.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { costMicros } from "@/lib/ai-cost";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
@@ -93,7 +94,7 @@ export async function buildBoxWithAI(b: BoxBrief, emit: (e: BuilderEvent) => voi
   const rules = planRules({ itemCount: b.itemCount }, plan);
   const band = priceBand(rules, maxItemListCents(plan, rules.itemCount));
   const client = new Anthropic();
-  const usage = { in: 0, out: 0 };
+  const usage = { in: 0, out: 0, micros: 0 };
   const known = new Map<string, { title: string; fromCents: number }>();
   let saved = null as { name: string; tagline: string; description: string; pids: string[] } | null;
 
@@ -125,6 +126,7 @@ Rules for the pool:
     });
     usage.in += r.usage.input_tokens;
     usage.out += r.usage.output_tokens;
+    usage.micros += costMicros(r.model, r.usage);
     messages.push({ role: "assistant", content: r.content });
     if (r.stop_reason !== "tool_use") break;
     const calls = r.content.filter((x): x is Anthropic.Beta.BetaToolUseBlock => x.type === "tool_use");
@@ -176,7 +178,7 @@ Rules for the pool:
   }
 
   const stats = simulate(await loadPool(box.id), rules);
-  const summary = `${kept} products in the pool (${stats.inStockProducts} in stock). ${Math.round(stats.successRate * 100)}% of test draws met every rule; average box worth ${formatMoney(stats.avgValueCents)}, average profit ${formatMoney(stats.avgProfitCents)}. AI cost about ${formatMoney(Math.round(usage.in * 0.0002 + usage.out * 0.001))}.`;
+  const summary = `${kept} products in the pool (${stats.inStockProducts} in stock). ${Math.round(stats.successRate * 100)}% of test draws met every rule; average box worth ${formatMoney(stats.avgValueCents)}, average profit ${formatMoney(stats.avgProfitCents)}. AI cost ${formatMoney(Math.ceil(usage.micros / 10_000))}.`;
   await prisma.mysteryBox.update({ where: { id: box.id }, data: { buildLog: summary } });
   emit({ type: "done", boxId: box.id, summary });
   return box.id;

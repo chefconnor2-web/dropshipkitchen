@@ -14,7 +14,7 @@ import { linkOrderToCustomer } from "@/lib/customers";
 import { sendOrderEmail } from "@/lib/order-emails";
 import { countryLabel, estimateFromHistory, isShipCountry, quoteCart } from "@/lib/shipping";
 import { processSingleton } from "@/lib/singleton";
-import { getPlan, planRules } from "@/lib/plan";
+import { getLitePlan, getPlan, planRules } from "@/lib/plan";
 
 /** Monthly shipping for a box to a country: a live quote for a sample draw, else an estimate. */
 export async function boxShippingCents(boxId: string, country: string, zip: string): Promise<number | null> {
@@ -68,6 +68,26 @@ export async function startBoxSubscription(input: { boxId: string; country: stri
   return session.url!;
 }
 
+/** A Stripe Checkout page for the Lite plan: AI only, no box, no shipping. Signed-in customers only. */
+export async function startLiteSubscription(customer: { id: string; email: string; stripeCustomerId: string | null }) {
+  const lite = await getLitePlan();
+  if (!lite.enabled) throw new Error("The Lite plan isn’t available right now.");
+  const meta = { kind: "assistant_subscription", plan: "lite", customerId: customer.id };
+  const session = await stripe().checkout.sessions.create({
+    mode: "subscription",
+    line_items: [
+      { quantity: 1, price_data: { currency: "usd", unit_amount: lite.priceCents, recurring: { interval: "month" }, product_data: { name: `${config.storeName} AI assistant Lite`, description: "Monthly subscription with a smaller AI assistant allowance. No mystery box." } } },
+    ],
+    ...(customer.stripeCustomerId ? { customer: customer.stripeCustomerId } : { customer_email: customer.email }),
+    client_reference_id: customer.id,
+    subscription_data: { description: `${config.storeName} AI assistant Lite`, metadata: meta },
+    metadata: meta,
+    success_url: `${config.siteUrl}/subscribe/complete?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${config.siteUrl}/plans`,
+  });
+  return session.url!;
+}
+
 function periodEnd(sub: Stripe.Subscription): Date | null {
   const end = sub.items?.data?.[0]?.current_period_end;
   return end ? new Date(end * 1000) : null;
@@ -102,7 +122,8 @@ async function saveSubscription(sub: Stripe.Subscription, fallback: { email?: st
     create: { email, name: fallback.name ?? null, phone: fallback.phone ?? null, stripeCustomerId },
     update: { stripeCustomerId, ...(fallback.name ? { name: fallback.name } : {}), ...(fallback.phone ? { phone: fallback.phone } : {}) },
   });
-  const boxId = sub.metadata.boxId;
+  const plan = sub.metadata.plan === "lite" ? "lite" : "full";
+  const boxId = plan === "lite" ? undefined : sub.metadata.boxId;
   const box = boxId ? await prisma.mysteryBox.findUnique({ where: { id: boxId } }) : null;
   const shippingCents = Number(sub.metadata.shippingCents) || 0;
   // Subscription items are the recurring prices only (the welcome box's shipping was a one-time charge).
@@ -110,8 +131,9 @@ async function saveSubscription(sub: Stripe.Subscription, fallback: { email?: st
   return prisma.subscription.create({
     data: {
       customerId: customer.id,
+      plan,
       boxId: boxId ?? "",
-      boxName: box?.name ?? "Mystery box",
+      boxName: plan === "lite" ? "" : (box?.name ?? "Mystery box"),
       stripeSubscriptionId: sub.id,
       status: sub.status,
       priceCents: Math.max(0, priceCents),
@@ -172,8 +194,9 @@ async function createOrderForInvoice(invoiceId: string): Promise<string | null> 
   const paymentIntent = typeof payment?.payment_intent === "string" ? payment.payment_intent : payment?.payment_intent?.id ?? null;
   const paidAt = invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000) : new Date();
 
-  // Only the first month comes with a box; later months are the assistant only (recorded for spend tiers).
-  const first = invoice.billing_reason === "subscription_create" && !(await prisma.order.findFirst({ where: { subscriptionId: sub.id }, select: { id: true } }));
+  // Only the full plan's first month comes with a box; later months, and every Lite month, are the assistant
+  // only (recorded for spend tiers).
+  const first = sub.plan !== "lite" && invoice.billing_reason === "subscription_create" && !(await prisma.order.findFirst({ where: { subscriptionId: sub.id }, select: { id: true } }));
   if (!first) {
     const data = { subscriptionId: sub.id, customerId: sub.customerId, amountCents: invoice.amount_paid ?? 0, paidAt };
     await prisma.subscriptionPayment.upsert({ where: { invoiceId }, create: { invoiceId, ...data }, update: data });

@@ -1,8 +1,10 @@
-// Who may use the AI assistant, and how much. Subscribers get a monthly message allowance that grows with
-// how much they've spent (tiers the merchant sets); the merchant can also set anyone's limit by hand.
-// Everyone else gets a few free messages to try it.
+// Who may use the AI assistant, and how much. Full subscribers get a monthly message allowance that grows
+// with how much they've spent (tiers the merchant sets). Lite subscribers get an AI cost budget per 30 days
+// (what keeps the Lite margin), shown as messages at the measured average cost of a message. The merchant can
+// also set anyone's limit by hand. Everyone else gets a few free messages to try it.
 import { prisma } from "@/lib/db";
 import { COUNTED_ORDER } from "@/lib/customers";
+import { getLitePlan, liteAiBudgetMicros } from "@/lib/plan";
 
 export const WINDOW_MS = 30 * 86_400_000;
 const LIMITS_KEY = "ai.limits";
@@ -76,38 +78,74 @@ export interface Allowance {
   used: number;
   remaining: number;
   /** Why the limit is what it is, for the shopper and the admin. */
-  basis: "free" | "tier" | "custom";
+  basis: "free" | "tier" | "custom" | "lite";
   spendCents: number;
+  /** The subscription plan that sets the allowance, if any. */
+  plan: "full" | "lite" | null;
+}
+
+/** Until enough messages have been measured, assume a message costs this much (deliberately on the high side). */
+export const DEFAULT_MESSAGE_MICROS = 60_000;
+
+/** The average cost of a recent AI message, in micro-dollars (measured; a cautious default until there's data). */
+export async function averageMessageMicros(): Promise<{ micros: number; measured: number }> {
+  const agg = await prisma.aiUsage.aggregate({ where: { costMicros: { not: null } }, orderBy: { createdAt: "desc" }, take: 300, _avg: { costMicros: true }, _count: { costMicros: true } });
+  const measured = agg._count.costMicros ?? 0;
+  return { micros: measured >= 10 ? Math.max(1, Math.ceil(agg._avg.costMicros ?? DEFAULT_MESSAGE_MICROS)) : DEFAULT_MESSAGE_MICROS, measured };
+}
+
+/** Messages a cost budget buys at the average cost (for display; the budget itself is what's enforced). */
+export function messagesFor(budgetMicros: number, avgMicros: number): number {
+  return Math.max(0, Math.floor(budgetMicros / Math.max(1, avgMicros)));
 }
 
 /** How many AI messages this person may still send. */
 export async function aiAllowance(who: { customerId: string | null; visitorId: string | null }): Promise<Allowance> {
   const limits = await getLimits();
   const customer = who.customerId ? await prisma.customer.findUnique({ where: { id: who.customerId } }) : null;
-  const subscriber = customer ? (await activeSubscriptions(customer.id)).length > 0 : false;
+  const subs = customer ? await activeSubscriptions(customer.id) : [];
+  const subscriber = subs.length > 0;
+  // Someone with both plans gets the full one.
+  if (customer && subscriber && subs.every((s) => s.plan === "lite") && customer.aiLimitOverride == null) {
+    const since = new Date(Date.now() - WINDOW_MS);
+    const [lite, avg, rows] = await Promise.all([
+      getLitePlan(),
+      averageMessageMicros(),
+      prisma.aiUsage.aggregate({ where: { customerId: customer.id, createdAt: { gte: since } }, _sum: { costMicros: true }, _count: { _all: true, costMicros: true } }),
+    ]);
+    const budget = liteAiBudgetMicros(lite);
+    // Messages from before costs were measured count at the average.
+    const spent = (rows._sum.costMicros ?? 0) + (rows._count._all - (rows._count.costMicros ?? 0)) * avg.micros;
+    const limit = messagesFor(budget, avg.micros);
+    const remaining = messagesFor(budget - spent, avg.micros);
+    return { subscriber, plan: "lite", limit, used: Math.max(0, limit - remaining), remaining, basis: "lite", spendCents: await lifetimeSpendCents(customer.id) };
+  }
   if (customer && subscriber) {
     const since = new Date(Date.now() - WINDOW_MS);
     const used = await prisma.aiUsage.count({ where: { customerId: customer.id, createdAt: { gte: since } } });
     const spendCents = await lifetimeSpendCents(customer.id);
     const custom = customer.aiLimitOverride;
     const limit = custom ?? tierFor(spendCents, limits.tiers).limit;
-    return { subscriber, limit, used, remaining: Math.max(0, limit - used), basis: custom != null ? "custom" : "tier", spendCents };
+    return { subscriber, plan: subs.some((s) => s.plan !== "lite") ? "full" : "lite", limit, used, remaining: Math.max(0, limit - used), basis: custom != null ? "custom" : "tier", spendCents };
   }
   // Free trial: counted per browser and, once signed in, per account (so a new browser isn't a new trial).
   const or = [...(who.visitorId ? [{ visitorId: who.visitorId }] : []), ...(customer ? [{ customerId: customer.id }] : [])];
   const used = or.length ? await prisma.aiUsage.count({ where: { OR: or } }) : 0;
   const limit = customer?.aiLimitOverride ?? limits.freeMessages;
-  return { subscriber: false, limit, used, remaining: Math.max(0, limit - used), basis: customer?.aiLimitOverride != null ? "custom" : "free", spendCents: 0 };
+  return { subscriber: false, plan: null, limit, used, remaining: Math.max(0, limit - used), basis: customer?.aiLimitOverride != null ? "custom" : "free", spendCents: 0 };
 }
 
-export async function recordAiUse(who: { customerId: string | null; visitorId: string | null; chatId?: string }) {
-  await prisma.aiUsage.create({ data: { customerId: who.customerId, visitorId: who.visitorId, chatId: who.chatId ?? null } });
+export async function recordAiUse(who: { customerId: string | null; visitorId: string | null; chatId?: string; costMicros?: number }) {
+  await prisma.aiUsage.create({ data: { customerId: who.customerId, visitorId: who.visitorId, chatId: who.chatId ?? null, costMicros: who.costMicros ?? null } });
 }
 
-/** What to tell someone who has run out. `price` is the monthly subscription, e.g. "$30.00". */
-export function limitMessage(a: Allowance, price = "a small monthly fee"): string {
+/** What to tell someone who has run out. `prices`: the full and Lite monthly prices, e.g. "$30.00" / "$5.00". */
+export function limitMessage(a: Allowance, prices: { full?: string; lite?: string | null } = {}): string {
+  if (a.plan === "lite")
+    return `You've used this month's AI allowance on the Lite plan. It refills as older messages pass 30 days, or upgrade to the full plan${prices.full ? ` (${prices.full}/month)` : ""} for many more messages and a free mystery box.`;
   if (a.subscriber)
     return `You've used all ${a.limit} AI messages for this month. Your allowance refills as older messages pass 30 days, and it grows as you spend more with us.`;
-  const pitch = `Subscribe for ${price}/month to keep using the assistant, and get a free mystery box (you just pay its shipping).`;
+  const options = [prices.lite ? `Lite for ${prices.lite}/month` : null, `the full plan${prices.full ? ` for ${prices.full}/month` : ""} with a free mystery box`].filter(Boolean).join(", or ");
+  const pitch = `Subscribe to keep using the assistant: ${options}.`;
   return a.basis === "custom" ? `You've used your AI messages. ${pitch}` : `You've used your ${a.limit} free AI messages. ${pitch} Already subscribed? Sign in.`;
 }

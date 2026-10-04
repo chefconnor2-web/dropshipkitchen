@@ -8,7 +8,7 @@ import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type
 import { ensureVisitorId, findOwnChat, getVisitorId, ownedBy } from "@/lib/chat-session";
 import { getMemberId } from "@/lib/session";
 import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
-import { getPlan } from "@/lib/plan";
+import { getLitePlan, getPlan } from "@/lib/plan";
 import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
@@ -50,11 +50,15 @@ export async function POST(req: Request) {
   if (!allow(ip)) return Response.json({ error: "You've sent a lot of messages. Please wait a bit and try again." }, { status: 429 });
 
   const visitorId = await ensureVisitorId();
-  // Subscribers get a monthly allowance (by spend tier, or the merchant's own number); everyone else a free trial.
+  // Subscribers get a monthly allowance (Lite: an AI cost budget; full: by spend tier; or the merchant's own number);
+  // everyone else a free trial.
   const memberId = await getMemberId();
   const allowance = await aiAllowance({ customerId: memberId, visitorId });
-  if (allowance.remaining <= 0)
-    return Response.json({ error: limitMessage(allowance, formatMoney((await getPlan()).priceCents)), limit: { subscriber: allowance.subscriber, signedIn: !!memberId } }, { status: 402 });
+  if (allowance.remaining <= 0) {
+    const [plan, lite] = await Promise.all([getPlan(), getLitePlan()]);
+    const prices = { full: formatMoney(plan.priceCents), lite: lite.enabled ? formatMoney(lite.priceCents) : null };
+    return Response.json({ error: limitMessage(allowance, prices), limit: { subscriber: allowance.subscriber, signedIn: !!memberId, plan: allowance.plan } }, { status: 402 });
+  }
   let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId) : null;
   if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });
   const isNew = !chat;
@@ -92,10 +96,11 @@ export async function POST(req: Request) {
             })
           : null;
       try {
-        const entry = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
-        await recordAiUse({ customerId: memberId, visitorId, chatId: chatRow.id });
+        const { entry, costMicros } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
+        await recordAiUse({ customerId: memberId, visitorId, chatId: chatRow.id, costMicros });
         await Promise.race([titling, new Promise((r) => setTimeout(r, 4000))]);
-        send({ type: "done", entry, cartCount: await cartCount(), allowance: { remaining: allowance.remaining - 1, limit: allowance.limit, subscriber: allowance.subscriber } });
+        const after = await aiAllowance({ customerId: memberId, visitorId });
+        send({ type: "done", entry, cartCount: await cartCount(), allowance: { remaining: after.remaining, limit: after.limit, subscriber: after.subscriber } });
       } catch (e) {
         let error = "Something went wrong. Please try again.";
         if (e instanceof AssistantLimitError) error = e.message;

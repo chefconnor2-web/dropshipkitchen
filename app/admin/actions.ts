@@ -10,7 +10,7 @@ import { slugify } from "@/lib/cj/normalize";
 import { normalizeConfig } from "@/lib/personalize-shared";
 import { saveLimits, type SpendTier } from "@/lib/membership";
 import { syncSubscriptions } from "@/lib/subscriptions";
-import { savePlan } from "@/lib/plan";
+import { saveLitePlan, savePlan } from "@/lib/plan";
 import { refreshLive } from "@/lib/inventory";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
 import { sendOrderEmail, sendTestEmail, type OrderEmailKind } from "@/lib/order-emails";
@@ -355,6 +355,11 @@ export async function syncSubscriptionsAction() {
 }
 
 /** Members: the subscription price and the margin every welcome box must keep. */
+export async function saveLitePlanAction(form: FormData) {
+  await saveLitePlan({ enabled: form.get("enabled") === "on", priceCents: Math.round(Number(form.get("price")) * 100), marginPct: Number(form.get("margin")) });
+  redirect(`/admin/members?notice=${encodeURIComponent("Lite plan saved. New subscribers pay the new price; everyone's AI budget follows the new margin.")}`);
+}
+
 export async function savePlanAction(form: FormData) {
   await savePlan({ priceCents: Math.round(Number(form.get("price")) * 100), marginPct: Number(form.get("margin")) });
   redirect(`/admin/members?notice=${encodeURIComponent("Plan saved. New subscribers pay the new price; existing ones keep theirs.")}`);

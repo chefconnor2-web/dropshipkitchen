@@ -17,6 +17,7 @@ import { stockLabel, stockStatus } from "@/lib/inventory";
 import { addKitToCart, type Kit, type KitItem } from "@/lib/kit";
 import { bulkPricingLabel, priceOrder } from "@/lib/volume";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
+import { costMicros } from "@/lib/ai-cost";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -309,7 +310,7 @@ export interface ScoutResult {
   picks: Array<{ pid: string; title: string; from_price_usd: string; note: string }>;
 }
 
-async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) => void, usage: { in: number; out: number }): Promise<ScoutResult> {
+async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }): Promise<ScoutResult> {
   const seen = new Map<string, CatalogHit>();
   const search = async (q: string) => {
     const query = q.trim().slice(0, 80);
@@ -343,6 +344,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
     });
     usage.in += r.usage.input_tokens;
     usage.out += r.usage.output_tokens;
+    usage.micros += costMicros(r.model, r.usage);
     messages.push({ role: "assistant", content: r.content });
     const calls = r.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     if (!calls.length) break;
@@ -380,7 +382,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
 }
 
 /** Run up to SCOUT_CONCURRENCY scouts at a time. */
-export async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number }) {
+export async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }) {
   const results: ScoutResult[] = new Array(parts.length);
   let next = 0;
   await Promise.all(
@@ -410,7 +412,7 @@ interface Ctx {
   added: string[];
   emit: (e: AssistantEvent) => void;
   client: Anthropic;
-  usage: { in: number; out: number };
+  usage: { in: number; out: number; micros: number };
 }
 
 async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<{ content: string; isError?: boolean }> {
@@ -557,7 +559,7 @@ export async function chatTurn(
   cartId: string,
   input: TurnInput,
   emit: (e: AssistantEvent) => void = () => {},
-): Promise<UiEntry & { role: "assistant" }> {
+): Promise<{ entry: UiEntry & { role: "assistant" }; costMicros: number }> {
   const text = input.text.trim().slice(0, MAX_MESSAGE_CHARS);
   const images = (input.images ?? []).slice(0, 4);
   const chat = await prisma.assistantChat.findUniqueOrThrow({ where: { id: chatId } });
@@ -583,7 +585,7 @@ export async function chatTurn(
       : text,
   });
   const client = new Anthropic();
-  const usage = { in: 0, out: 0 };
+  const usage = { in: 0, out: 0, micros: 0 };
   const known = new Map<string, ProductCard>();
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
   const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage };
@@ -608,6 +610,8 @@ export async function chatTurn(
     const response = await stream.finalMessage();
     usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
     usage.out += response.usage.output_tokens;
+    // Priced by the model that actually answered (a refusal fallback can switch it).
+    usage.micros += costMicros(response.model, response.usage);
     messages.push({ role: "assistant", content: response.content });
     const roundText = response.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
@@ -653,7 +657,8 @@ export async function chatTurn(
   });
   // Fetch the likely buys in the background so "Add" and "Add entire kit" are near-instant.
   prewarmProducts([...(ctx.kit?.items.map((i) => i.pid) ?? []), ...firstPickPerPart(ctx.cards)]);
-  return entry;
+  // What this message cost us (planner and scouts), for per-plan AI budgets.
+  return { entry, costMicros: usage.micros };
 }
 
 function firstPickPerPart(cards: ProductCard[]): string[] {

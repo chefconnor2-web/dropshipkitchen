@@ -7,8 +7,9 @@ import { COUNTED_ORDER } from "@/lib/customers";
 import { WINDOW_MS, getLimits, tierFor } from "@/lib/membership";
 import { syncSubscriptions } from "@/lib/subscriptions";
 import { config } from "@/lib/config";
-import { saveAiLimits, savePlanAction, setMemberLimit, syncSubscriptionsAction } from "@/app/admin/actions";
-import { getPlan, maxBoxCostCents, planRules } from "@/lib/plan";
+import { saveAiLimits, saveLitePlanAction, savePlanAction, setMemberLimit, syncSubscriptionsAction } from "@/app/admin/actions";
+import { getLitePlan, getPlan, liteAiBudgetMicros, maxBoxCostCents, planRules, stripeFeeCents } from "@/lib/plan";
+import { averageMessageMicros, messagesFor } from "@/lib/membership";
 import { loadPool, simulate } from "@/lib/mystery";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +27,9 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
     void syncSubscriptions().catch(() => null);
   }
 
-  const [limits, plan] = await Promise.all([getLimits(), getPlan()]);
+  const [limits, plan, lite, avg] = await Promise.all([getLimits(), getPlan(), getLitePlan(), averageMessageMicros()]);
+  const liteBudget = liteAiBudgetMicros(lite);
+  const liteMessages = messagesFor(liteBudget, avg.micros);
   // Can each published box be drawn within the plan's margin? (Welcome boxes are drawn under these rules.)
   const boxes = await prisma.mysteryBox.findMany({ where: { status: "PUBLISHED" }, orderBy: { name: "asc" } });
   const boxHealth = await Promise.all(boxes.map(async (b) => ({ b, stats: simulate(await loadPool(b.id), planRules(b, plan), 200) })));
@@ -51,10 +54,16 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
     const spend = m.orders.reduce((n, o) => n + o.subtotalCents + o.shippingCents, 0) + (months.get(m.id) ?? 0);
     const live = m.subscriptions.filter((s) => LIVE.includes(s.status));
     const tierLimit = tierFor(spend, limits.tiers).limit;
-    const limit = m.aiLimitOverride ?? (live.length ? tierLimit : limits.freeMessages);
+    const liteOnly = live.length > 0 && live.every((s) => s.plan === "lite");
+    const limit = m.aiLimitOverride ?? (liteOnly ? liteMessages : live.length ? tierLimit : limits.freeMessages);
     return { m, spend, live, tierLimit, limit, used: usage.get(m.id) ?? 0 };
   });
   const active = rows.filter((r) => r.live.length);
+  // Lite's real margin over the last 30 days: what Lite subscribers paid vs. what their AI cost us (and Stripe's fees).
+  const liteIds = rows.filter((r) => r.live.length && r.live.every((s) => s.plan === "lite")).map((r) => r.m.id);
+  const liteAi = liteIds.length ? await prisma.aiUsage.aggregate({ where: { customerId: { in: liteIds }, createdAt: { gte: since } }, _sum: { costMicros: true } }) : null;
+  const liteRevenue = liteIds.length * lite.priceCents;
+  const liteCostCents = (liteAi?._sum.costMicros ?? 0) / 10_000 + liteIds.length * stripeFeeCents(lite.priceCents);
   const mrr = active.reduce((n, r) => n + r.live.reduce((k, s) => k + s.priceCents, 0), 0);
   const tierRows = [...limits.tiers, ...Array(Math.max(0, 4 - limits.tiers.length)).fill(null)].slice(0, 6);
 
@@ -126,6 +135,40 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
           </tbody>
         </table>
         <p className="muted small">Boxes built before the plan may hold items too expensive for it: rebuild them in Boxes (the builder now picks within the plan).</p>
+      </section>
+
+      <section className="a-card">
+        <h2 className="a-h2">Lite plan (AI only)</h2>
+        <form action={saveLitePlanAction} className="row gap plan-form">
+          <label className="row gap">
+            <input name="enabled" type="checkbox" defaultChecked={lite.enabled} /> Offered
+          </label>
+          <label>
+            Price per month ($)
+            <input name="price" type="number" min={1} step="0.01" defaultValue={(lite.priceCents / 100).toFixed(2)} />
+          </label>
+          <label>
+            Margin after AI and Stripe fees (%)
+            <input name="margin" type="number" min={0} max={99} step="1" defaultValue={lite.marginPct} />
+          </label>
+          <button className="btn primary">Save Lite</button>
+        </form>
+        <p className="muted small">
+          {formatMoney(lite.priceCents)} − {lite.marginPct}% margin ({formatMoney(Math.round((lite.priceCents * lite.marginPct) / 100))}) − Stripe fee ({formatMoney(stripeFeeCents(lite.priceCents))}) leaves{" "}
+          <strong>{(liteBudget / 10_000).toFixed(1)}¢</strong> of AI per subscriber per 30 days. Each Lite subscriber is cut off once their measured AI cost reaches that.
+          {liteBudget === 0 && <strong className="err-text"> At this price and margin there’s no AI budget left: raise the price or lower the margin.</strong>}
+        </p>
+        <p className="muted small">
+          Average AI message: <strong>{(avg.micros / 10_000).toFixed(2)}¢</strong>{" "}
+          {avg.measured >= 10 ? `(measured over the last ${Math.min(300, avg.measured)} messages)` : "(a cautious estimate until 10 messages have been measured)"}, so Lite is about{" "}
+          <strong>{liteMessages} messages a month</strong>.
+        </p>
+        {liteIds.length > 0 && (
+          <p className="small">
+            Last 30 days: {liteIds.length} Lite subscriber{liteIds.length === 1 ? "" : "s"}, {formatMoney(liteRevenue)} revenue, {formatMoney(Math.round(liteCostCents))} AI + fees →{" "}
+            <strong>{Math.round((1 - liteCostCents / liteRevenue) * 100)}% margin</strong>.
+          </p>
+        )}
       </section>
 
       <section className="a-card">

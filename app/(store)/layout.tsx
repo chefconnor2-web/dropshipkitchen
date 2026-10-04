@@ -31,6 +31,9 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               <span className="hide-xs">Mystery boxes</span>
               <span className="show-xs">Boxes</span>
             </Link>
+            <Link href="/plans" className="hide-xs">
+              Plans
+            </Link>
             <Link href="/shop">
               <span className="hide-xs">Catalog</span>
               <span className="show-xs">Catalog</span>
