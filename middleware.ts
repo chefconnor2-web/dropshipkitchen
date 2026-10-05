@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { SHIP_COUNTRY_CODES } from "@/lib/countries";
 
 // Next.js 404s a static chunk whose route-group parentheses arrive percent-encoded
 // ("/_next/static/chunks/app/%28store%29/…"), which some proxies and clients send.
@@ -16,7 +17,7 @@ function staticChunk(req: NextRequest) {
 // GEOIP_URL sets the lookup service ({ip} is replaced); set it empty to switch guessing off.
 const SHIP_COOKIE = "cs_ship";
 const GEO_TRIED = "cs_geo";
-const SHIP_COUNTRIES = new Set(["CA", "US", "GB", "AU", "NZ", "IE"]);
+const SHIP_COUNTRIES = SHIP_COUNTRY_CODES;
 
 async function guessShipTo(req: NextRequest): Promise<{ country: string; zip: string } | null> {
   const template = process.env.GEOIP_URL ?? "https://ipwho.is/{ip}";

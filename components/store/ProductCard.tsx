@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { PublicProduct } from "@/lib/storefront";
 import { formatMoney } from "@/lib/money";
+import ShipBadge from "@/components/ShipBadge";
 
 export default function ProductCard({ product: p }: { product: PublicProduct }) {
   const [first, second] = p.images;
@@ -23,6 +24,7 @@ export default function ProductCard({ product: p }: { product: PublicProduct }) 
       <div className="pcard-body">
         {p.categories[0] && <div className="overline">{p.categories[0]}</div>}
         <h3 className="pcard-title">{p.title}</h3>
+        <ShipBadge pid={p.pid} className="pcard-ship" />
         <div className="pcard-foot">
           <span className="pcard-price">
             {p.variants.length > 1 && <span className="from">From </span>}

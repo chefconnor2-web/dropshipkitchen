@@ -1492,3 +1492,14 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
   .trk-step-at { margin-left: 8px; }
   .trk-updates li { grid-template-columns: 1fr; gap: 0; }
 }
+/* "Ships to …" badges on product cards */
+.ship-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 1.3; min-height: 1.3em; color: var(--muted, #6b6760); }
+.ship-badge i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.ship-ok { color: #2f7a46; }
+.ship-no { color: #a3402c; }
+.ship-wait i { background: #c9c3b8; animation: ship-pulse 1.2s ease-in-out infinite; }
+@keyframes ship-pulse { 50% { opacity: .35; } }
+.ship-bar { display: flex; width: max-content; max-width: 100%; white-space: nowrap; align-items: center; gap: 8px; font-size: 14px; color: var(--muted, #6b6760); margin: 0 0 14px; }
+.ship-bar select { font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line, #e4dfd7); background: var(--card, #fff); color: var(--ink, #1d1c1a); }
+.pcard-ship { margin-top: 6px; }
+.cx-card .ship-badge { margin: 2px 0 6px; font-size: 11.5px; }

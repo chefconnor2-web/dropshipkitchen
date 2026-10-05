@@ -7,14 +7,15 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import Link from "next/link";
 import { config, storeInitials } from "@/lib/config";
-import { cartCount } from "@/lib/cart";
+import { cartCount, getShipTo } from "@/lib/cart";
+import { countryLabel } from "@/lib/shipping";
 import { publishedCategories } from "@/lib/storefront";
 
 export default async function StoreLayout({ children }: { children: React.ReactNode }) {
-  const [count, categories] = await Promise.all([cartCount(), publishedCategories()]);
+  const [count, categories, shipTo] = await Promise.all([cartCount(), publishedCategories(), getShipTo()]);
   return (
     <div className="store">
-      <div className="announce">B2B sourcing from China · Shipping to Canada shown before you pay</div>
+      <div className="announce">B2B sourcing from China · Shipping to {countryLabel(shipTo.country)} shown before you pay</div>
       <header className="store-header">
         <div className="wrap header-row">
           <Link href="/" className="brand" aria-label={`${config.storeName} home`}>
