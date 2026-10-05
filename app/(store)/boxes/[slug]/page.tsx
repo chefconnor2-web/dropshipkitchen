@@ -24,7 +24,7 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
     include: { pool: { take: 8, include: { variant: { include: { product: { include: { images: { take: 1, orderBy: { position: "asc" } } } } } } } } },
   });
   if (!box) notFound();
-  // Sold only as the subscription's free welcome box: priced and drawn under the plan (price and margin).
+  // Sold only as Full's monthly surplus box: priced and drawn under the plan (price and margin).
   const plan = await getPlan();
   const available = simulate(await loadPool(box.id), planRules(box, plan), 40).successRate > 0;
   const shipTo = await getShipTo();
@@ -49,22 +49,22 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
           )}
         </div>
         <div>
-          <p className="eyebrow">Free with the AI assistant</p>
+          <p className="eyebrow">Surplus mystery box · every month with Full</p>
           <h1 className="page-title">{box.name}</h1>
           <p className="box-tagline">{box.tagline}</p>
           <div className="price">
-            Free
-            <span className="box-value">with your first month of the AI assistant · {formatMoney(plan.priceCents)}/month</span>
+            {formatMoney(plan.priceCents)}/month
+            <span className="box-value">plus shipping · includes Full: 2× the assistant usage of Lite</span>
           </div>
           <ul className="box-promises">
             <li>
               <strong>{box.itemCount} different items</strong>, worth at least {formatMoney(plan.priceCents)} at our regular prices
             </li>
             <li>
-              <strong>Free</strong>: you only pay its shipping to {countryLabel(shipTo.country)}, once, shown before you pay
+              <strong>A new box every month</strong>, with shipping to {countryLabel(shipTo.country)} added to your monthly bill (shown before you pay)
             </li>
             <li>
-              <strong>The AI sourcing assistant</strong> for {formatMoney(plan.priceCents)}/month, with a bigger allowance the more you order
+              <strong>The shopping assistant</strong> with 2× the usage of Lite
             </li>
             <li>Cancel any time from your account</li>
           </ul>
@@ -72,7 +72,7 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
           {available ? (
             <form action={subscribeToBox}>
               <input type="hidden" name="boxId" value={box.id} />
-              <button className="btn primary lg">Subscribe · {formatMoney(plan.priceCents)}/month + free box</button>
+              <button className="btn primary lg">Subscribe to Full · {formatMoney(plan.priceCents)}/month + shipping</button>
             </form>
           ) : (
             <p className="notice">Sold out right now. Check back soon.</p>

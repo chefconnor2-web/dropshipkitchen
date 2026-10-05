@@ -16,7 +16,7 @@ export default async function BoxesPage() {
         <div className="wrap">
           <p className="eyebrow">Mystery boxes</p>
           <h1 className="section-title">Surprise picks from Chinese factories. Always worth more than you pay.</h1>
-          <p className="section-lede">Subscribe to our AI sourcing assistant for {formatMoney(plan.priceCents)}/month and your first mystery box is free: pick one below and just pay its shipping. Just want the AI? <Link href="/plans">See the Lite plan</Link>.</p>
+          <p className="section-lede">Full is {formatMoney(plan.priceCents)}/month plus shipping: twice the assistant usage of Lite, and a surplus mystery box every month. Pick your box below. Just want the assistant? <Link href="/plans">See Lite</Link>.</p>
         </div>
       </section>
       <section className="band">
@@ -29,13 +29,13 @@ export default async function BoxesPage() {
                 <Link key={b.id} href={`/boxes/${b.slug}`} className="box-card">
                   <div className="box-art" aria-hidden>
                     <span>?</span>
-                    <em className="box-badge">Free with the assistant</em>
+                    <em className="box-badge">Every month with Full</em>
                   </div>
                   <div className="box-card-body">
                     <h2>{b.name}</h2>
                     <p>{b.tagline}</p>
                     <div className="box-card-foot">
-                      <strong>Free</strong>
+                      <strong>Monthly</strong>
                       <span>
                         {b.itemCount} items · worth {formatMoney(plan.priceCents)}+
                       </span>

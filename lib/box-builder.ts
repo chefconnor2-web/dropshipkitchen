@@ -88,7 +88,7 @@ export function priceBand(r: BoxRules, maxListCents = Infinity) {
 }
 
 export async function buildBoxWithAI(b: BoxBrief, emit: (e: BuilderEvent) => void): Promise<string> {
-  // Boxes are the subscription's free welcome box: priced and drawn under the plan (its price and margin),
+  // Boxes are Full's monthly surplus box: priced and drawn under the plan (its price and margin),
   // so the pool must be products cheap enough to keep that margin.
   const plan = await getPlan();
   const rules = planRules({ itemCount: b.itemCount }, plan);

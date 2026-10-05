@@ -1,7 +1,8 @@
 // AI limits by spend tier, and the signed account cookie.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_LIMITS, limitMessage, normalizeLimits, tierFor } from "../lib/membership";
+import { DEFAULT_LIMITS, FULL_USAGE_MULTIPLIER, limitMessage, normalizeLimits, planAiBudgetMicros, tierFor } from "../lib/membership";
+import { DEFAULT_LITE } from "../lib/plan";
 import { signValue, verifyValue } from "../lib/session";
 
 test("tierFor picks the highest tier the spend reaches", () => {
@@ -35,14 +36,15 @@ test("limitMessage points non-subscribers to both plans, and Lite subscribers to
   const base = { used: 5, remaining: 0, spendCents: 0 };
   const prices = { full: "$30.00", lite: "$5.00" };
   const free = limitMessage({ ...base, subscriber: false, plan: null, limit: 3, basis: "free" }, prices);
-  assert.match(free, /end of your free preview.*Full \(\$30\.00\/month\) with a free mystery box, or Lite \(\$5\.00\/month\)/);
+  assert.match(free, /end of your free preview.*Full \(\$30\.00\/month\) with a surplus mystery box every month, or Lite \(\$5\.00\/month\), or search the catalog yourself for free/);
+  assert.doesNotMatch(free, /free mystery box/);
   assert.match(limitMessage({ ...base, subscriber: false, plan: null, limit: 3, basis: "free" }, { full: "$30.00", lite: null }), /^(?!.*Lite).*Full \(\$30/);
-  assert.match(limitMessage({ ...base, subscriber: true, plan: "full", limit: 100, basis: "tier" }), /used this month's assistant time/);
-  assert.match(limitMessage({ ...base, subscriber: true, plan: "lite", limit: 6, basis: "lite" }, prices), /this month's Lite plan.*upgrade to Full \(\$30\.00\/month\)/);
+  assert.match(limitMessage({ ...base, subscriber: true, plan: "full", limit: 100, basis: "full" }), /used this month's assistant time/);
+  assert.match(limitMessage({ ...base, subscriber: true, plan: "lite", limit: 6, basis: "lite" }, prices), /this month's Lite plan.*upgrade to Full \(\$30\.00\/month\): twice the usage, plus a surplus mystery box every month/);
   // Customers are never told how many messages they get.
   for (const a of [
     { ...base, subscriber: false, plan: null, limit: 3, basis: "free" },
-    { ...base, subscriber: true, plan: "full", limit: 100, basis: "tier" },
+    { ...base, subscriber: true, plan: "full", limit: 100, basis: "full" },
     { ...base, subscriber: true, plan: "lite", limit: 6, basis: "lite" },
   ] as const)
     assert.doesNotMatch(limitMessage(a, prices), /\b(3|6|100)\b/);
@@ -54,4 +56,10 @@ test("signed cookie values verify, and tampering fails", () => {
   assert.equal(verifyValue(signed, "other-key"), null);
   assert.equal(verifyValue(signed.replace("cust_123", "cust_999"), "k1"), null);
   assert.equal(verifyValue("garbage", "k1"), null);
+});
+
+test("Full gets exactly twice Lite's AI budget", () => {
+  assert.equal(FULL_USAGE_MULTIPLIER, 2);
+  assert.equal(planAiBudgetMicros("lite", DEFAULT_LITE), 4_050_000);
+  assert.equal(planAiBudgetMicros("full", DEFAULT_LITE), 8_100_000);
 });

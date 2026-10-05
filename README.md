@@ -100,26 +100,30 @@ with personalized items can't ship as split parcels yet, and personalized produc
 Test with a CJ **sandbox** order first: CJ documents `podProperties` on `createOrderV2`, and this store
 places orders with `createOrderV3`.
 
-## AI assistant subscription, free welcome box and AI limits
+## Plans: Full, Lite and Free
 
-The AI assistant is a **monthly subscription** (default **$30/month**, set in `/admin/members`). The first payment is
-the first month plus the shipping of a **free welcome mystery box** the subscriber picks on `/boxes`; that invoice
-becomes a box order waiting for your approval like any other. Later months are the assistant only (recorded as
-`SubscriptionPayment`, counted toward spend). Subscribers manage their card or cancel in Stripe's billing portal from
-`/account`.
+- **Full** (default **$30/month + the box's shipping**, set in `/admin/members`): the shopping assistant with
+  **2× Lite's usage**, and a **surplus mystery box every month** from the box the subscriber picks on `/boxes`. Each
+  paid monthly invoice becomes a box order waiting for your approval like any other. Shipping is quoted at signup and
+  billed every month with the price. Subscriptions started before monthly boxes keep their one welcome box.
+- **Lite** ($5/month): just the assistant (below).
+- **Free**: search the catalog and shop it yourself, plus a few free assistant messages to try it.
 
-- **Welcome box margin.** Boxes are priced and drawn under the plan: the box's products may cost at most
+Subscribers manage their card or cancel in Stripe's billing portal from `/account`.
+
+- **Box margin.** Boxes are priced and drawn under the plan: each month's box products may cost at most
   price × (1 − margin) (default 86%: **$4.20 on $30**), and every box is worth at least the price at list prices.
-  Shipping is charged once, at cost, on top. The AI box builder picks pool items within that (about $10–12 list for
-  3 items). `/admin/members` shows each box's share of draws that fit; a box that can't fit shows as sold out.
+  The AI box builder picks pool items within that. `/admin/members` shows each box's share of draws that fit; a box
+  that can't fit shows as sold out.
 - **Lite plan.** $5/month, AI only, no box (`/plans`; edit in `/admin/members`). Its margin (default 10%) is
   kept after Stripe's fee: at $5 that leaves $4.05 of AI per subscriber per 30 days, and each Lite subscriber is cut
   off once their measured AI cost reaches it, so Lite never loses money. Every message's real cost is recorded
   (`AiUsage.costMicros`, from the API's token counts at Anthropic's prices in `lib/ai-cost.ts`), and Lite's "messages a
-  month" is the budget divided by the average measured cost. Someone on both plans gets the full plan's allowance.
+  month" is the budget divided by the average measured cost. Full gets twice Lite's budget, capped the same way.
+  Someone on both plans gets the full plan's allowance. Customers never see message counts.
 - **Free trial.** People without a subscription get **3 free AI messages** (editable).
-- **AI limits.** Subscribers get messages per 30 days by lifetime spend, in tiers you set (default $0 → 100,
-  $250 → 300, $1,000 → 1,000), so bigger spenders move up automatically. You can set anyone's limit by hand.
+- **AI limits.** Subscribers' limits come from their plan's AI budget (Lite, and 2× on Full). You can set anyone's
+  limit by hand in `/admin/members`.
 - **Webhook.** Add a Stripe webhook for `checkout.session.completed`, `invoice.paid`,
   `customer.subscription.updated` and `customer.subscription.deleted`, and set `STRIPE_WEBHOOK_SECRET`. Without it,
   they're picked up when `/admin/members` syncs (every 15 minutes while it's open, or **Sync with Stripe**).

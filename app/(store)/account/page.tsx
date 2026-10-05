@@ -40,11 +40,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <h1 className="page-title">Your account</h1>
         {error && <p className="notice err">{error}</p>}
         {signedout && <p className="notice ok">You’re signed out on every device.</p>}
-        {why === "subscribe" && <p className="notice ok">Sign in with your email first, then you’ll go straight to checkout. Your subscription and free box are saved to this account.</p>}
+        {why === "subscribe" && <p className="notice ok">Sign in with your email first, then you’ll go straight to checkout. Your subscription is saved to this account.</p>}
         <p>Sign in to see your subscription, your orders, your AI chats on any device and your AI allowance. No password: we email you a 6-digit code.</p>
         <SignInForm next={safeNext(next)} />
         <div className="account-cta">
-          <strong>New here?</strong> Subscribe to the AI sourcing assistant and get your first mystery box free.{" "}
+          <strong>New here?</strong> Full gives you twice the assistant usage and a surplus mystery box every month.{" "}
           <Link href="/plans">See plans →</Link>
         </div>
       </div>
@@ -58,13 +58,12 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
     getLimits(),
     activeSessionCount(member.id),
   ]);
-  const nextTier = allowance.subscriber && allowance.basis === "tier" ? limits.tiers.find((t) => t.minSpendCents > allowance.spendCents) : undefined;
   const pct = allowance.limit ? Math.min(100, Math.round((allowance.used / allowance.limit) * 100)) : 100;
 
   return (
     <div className="wrap page narrow account">
       <h1 className="page-title">Your account</h1>
-      {welcome && <p className="notice ok">You’re subscribed. Your free mystery box is being packed; we’ll email you when it ships.</p>}
+      {welcome && <p className="notice ok">You’re subscribed. If your plan includes a box, your first one is being packed; we’ll email you when it ships.</p>}
       {error && <p className="notice err">{error}</p>}
       <p className="muted">
         Signed in as <strong>{member.email}</strong>
@@ -74,7 +73,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <h2 className="section-title">Your plan</h2>
         {subs.length === 0 ? (
           <p>
-            No subscription yet. <Link href="/plans">See plans</Link>: Lite for AI only, or the full plan with your first mystery box free.
+            No subscription yet. <Link href="/plans">See plans</Link>: Lite for the assistant, or Full for twice the usage and a surplus mystery box every month.
           </p>
         ) : (
           <ul className="sub-list">
@@ -85,7 +84,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
                 </div>
                 <div className="muted small">
                   {formatMoney(s.priceCents)}/month
-                  {s.plan === "lite" ? " · AI only" : ` · free welcome box: ${s.boxName} (shipping to ${countryLabel(s.shipCountry)} paid)`}
+                  {s.plan === "lite"
+                    ? " · the assistant"
+                    : s.monthlyBox
+                      ? ` + ${formatMoney(s.shippingCents)} shipping · ${s.boxName} surplus box every month, to ${countryLabel(s.shipCountry)}`
+                      : ` · welcome box: ${s.boxName}`}
                   {s.currentPeriodEnd && s.status !== "canceled" && (s.cancelAtPeriodEnd ? ` · ends ${fmtDate(s.currentPeriodEnd)}` : ` · renews ${fmtDate(s.currentPeriodEnd)}`)}
                 </div>
               </li>
@@ -109,14 +112,10 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
           <strong>{allowanceWord(allowance.remaining, allowance.limit)}</strong>
           {allowance.subscriber ? (allowance.basis === "lite" ? " · Lite plan" : "") : " · free preview"}
         </p>
-        {allowance.subscriber && allowance.basis === "tier" && (
-          <p className="muted small">
-            You get more the more you shop{nextTier ? `: spend ${formatMoney(nextTier.minSpendCents - allowance.spendCents)} more to unlock the next level.` : ", and you’re at the top level."}
-          </p>
-        )}
+        {allowance.basis === "full" && <p className="muted small">Full gives you twice Lite’s usage, and it refills over the month.</p>}
         {allowance.basis === "lite" && (
           <p className="muted small">
-            Quick questions use less than big shopping searches. <Link href="/plans">Upgrade to Full</Link>, our most generous plan, with a free mystery box.
+            Quick questions use less than big shopping searches. <Link href="/plans">Upgrade to Full</Link> for twice the usage and a surplus mystery box every month.
           </p>
         )}
         {!allowance.subscriber && (

@@ -8,7 +8,7 @@ import { testConnection } from "@/lib/cj/client";
 import { importCjProduct } from "@/lib/cj/import";
 import { slugify } from "@/lib/cj/normalize";
 import { normalizeConfig } from "@/lib/personalize-shared";
-import { saveLimits, type SpendTier } from "@/lib/membership";
+import { getLimits, saveLimits } from "@/lib/membership";
 import { syncSubscriptions } from "@/lib/subscriptions";
 import { saveLitePlan, savePlan } from "@/lib/plan";
 import { refreshLive } from "@/lib/inventory";
@@ -322,14 +322,8 @@ export async function savePersonalize(form: FormData) {
 
 /** Members: save the free-trial size and the spend tiers for subscribers' AI messages. */
 export async function saveAiLimits(form: FormData) {
-  const tiers: SpendTier[] = [];
-  for (let i = 0; i < 6; i++) {
-    const spend = String(form.get(`tierSpend_${i}`) ?? "").trim();
-    const limit = String(form.get(`tierLimit_${i}`) ?? "").trim();
-    if (spend === "" || limit === "") continue;
-    tiers.push({ minSpendCents: Math.round(Number(spend) * 100), limit: Number(limit) });
-  }
-  await saveLimits({ freeMessages: Number(form.get("freeMessages")), tiers });
+  // Subscribers' limits come from their plan's AI budget now; only the free preview is set here.
+  await saveLimits({ ...(await getLimits()), freeMessages: Number(form.get("freeMessages")) });
   redirect(`/admin/members?notice=${encodeURIComponent("AI limits saved")}`);
 }
 

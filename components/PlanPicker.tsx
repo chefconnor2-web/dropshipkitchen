@@ -32,15 +32,14 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
             <strong>{money(offer.full.priceCents)}</strong>
             <span>/month</span>
           </div>
-          <div className="pp-sub">About {money(Math.round(perDay))} a day, with a free mystery box to start</div>
+          <div className="pp-sub">About {money(Math.round(perDay))} a day, plus your box’s shipping</div>
           <ul className="pp-list">
-            <li>Our most generous plan</li>
-            <li>A free mystery box with your first month</li>
-            <li>Even more help the more you shop</li>
+            <li>2× the assistant usage of Lite</li>
+            <li>A surplus mystery box every month</li>
             <li>It finds, compares and fills your cart for you</li>
           </ul>
           <Link href="/boxes" className="pp-btn pp-btn-main">
-            Get Full + free box
+            Choose your box
           </Link>
         </div>
         {offer.lite.enabled && (
@@ -50,7 +49,7 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
               <strong>{money(offer.lite.priceCents)}</strong>
               <span>/month</span>
             </div>
-            <div className="pp-sub">Your shopping assistant, without the box</div>
+            <div className="pp-sub">Just the assistant</div>
             <ul className="pp-list">
               <li>Ask for anything, by text, voice or photo</li>
               <li>It finds, compares and fills your cart for you</li>
@@ -63,6 +62,12 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
           </div>
         )}
       </div>
+      <Link href="/search" className="pp-free">
+        <span>
+          <strong>Free</strong> · Search the catalog and shop it yourself
+        </span>
+        <span aria-hidden>→</span>
+      </Link>
       <p className="pp-trust">
         <span>Cancel any time</span>
         <span aria-hidden>·</span>
