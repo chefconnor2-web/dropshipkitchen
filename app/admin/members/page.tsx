@@ -4,12 +4,12 @@ import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { Flash, timeAgo } from "@/components/admin";
 import { COUNTED_ORDER } from "@/lib/customers";
-import { WINDOW_MS, getLimits, tierFor } from "@/lib/membership";
+import { WINDOW_MS, getLimits } from "@/lib/membership";
 import { syncSubscriptions } from "@/lib/subscriptions";
 import { config } from "@/lib/config";
 import { saveAiLimits, saveLitePlanAction, savePlanAction, setMemberLimit, syncSubscriptionsAction } from "@/app/admin/actions";
 import { getLitePlan, getPlan, liteAiBudgetMicros, maxBoxCostCents, planRules, stripeFeeCents } from "@/lib/plan";
-import { averageMessageMicros, messagesFor } from "@/lib/membership";
+import { FULL_USAGE_MULTIPLIER, averageMessageMicros, messagesFor, planAiBudgetMicros } from "@/lib/membership";
 import { loadPool, simulate } from "@/lib/mystery";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +30,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
   const [limits, plan, lite, avg] = await Promise.all([getLimits(), getPlan(), getLitePlan(), averageMessageMicros()]);
   const liteBudget = liteAiBudgetMicros(lite);
   const liteMessages = messagesFor(liteBudget, avg.micros);
+  const fullMessages = messagesFor(planAiBudgetMicros("full", lite), avg.micros);
   // Can each published box be drawn within the plan's margin? (Welcome boxes are drawn under these rules.)
   const boxes = await prisma.mysteryBox.findMany({ where: { status: "PUBLISHED" }, orderBy: { name: "asc" } });
   const boxHealth = await Promise.all(boxes.map(async (b) => ({ b, stats: simulate(await loadPool(b.id), planRules(b, plan), 200) })));
@@ -50,13 +51,13 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
     (await prisma.aiUsage.groupBy({ by: ["customerId"], where: { customerId: { in: members.map((m) => m.id) }, createdAt: { gte: since } }, _count: true })).map((u) => [u.customerId, u._count]),
   );
   const rows = members.map((m) => {
-    // Same as the spend tiers: paid orders (welcome box included) plus later subscription months.
+    // Lifetime spend: paid orders (box orders included) plus subscription months without a box.
     const spend = m.orders.reduce((n, o) => n + o.subtotalCents + o.shippingCents, 0) + (months.get(m.id) ?? 0);
     const live = m.subscriptions.filter((s) => LIVE.includes(s.status));
-    const tierLimit = tierFor(spend, limits.tiers).limit;
     const liteOnly = live.length > 0 && live.every((s) => s.plan === "lite");
-    const limit = m.aiLimitOverride ?? (liteOnly ? liteMessages : live.length ? tierLimit : limits.freeMessages);
-    return { m, spend, live, tierLimit, limit, used: usage.get(m.id) ?? 0 };
+    const planLimit = liteOnly ? liteMessages : live.length ? fullMessages : limits.freeMessages;
+    const limit = m.aiLimitOverride ?? planLimit;
+    return { m, spend, live, planLimit, limit, used: usage.get(m.id) ?? 0 };
   });
   const active = rows.filter((r) => r.live.length);
   // Lite's real margin over the last 30 days: what Lite subscribers paid vs. what their AI cost us (and Stripe's fees).
@@ -65,7 +66,6 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
   const liteRevenue = liteIds.length * lite.priceCents;
   const liteCostCents = (liteAi?._sum.costMicros ?? 0) / 10_000 + liteIds.length * stripeFeeCents(lite.priceCents);
   const mrr = active.reduce((n, r) => n + r.live.reduce((k, s) => k + s.priceCents, 0), 0);
-  const tierRows = [...limits.tiers, ...Array(Math.max(0, 4 - limits.tiers.length)).fill(null)].slice(0, 6);
 
   return (
     <>
@@ -96,20 +96,20 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       </div>
 
       <section className="a-card">
-        <h2 className="a-h2">Subscription plan</h2>
+        <h2 className="a-h2">Full plan (assistant + monthly surplus box)</h2>
         <form action={savePlanAction} className="row gap plan-form">
           <label>
             Price per month ($)
             <input name="price" type="number" min={5} step="0.01" defaultValue={(plan.priceCents / 100).toFixed(2)} />
           </label>
           <label>
-            Welcome box margin (%)
+            Box margin (%)
             <input name="margin" type="number" min={0} max={95} step="1" defaultValue={plan.marginPct} />
           </label>
           <button className="btn primary">Save plan</button>
         </form>
         <p className="muted small">
-          A welcome box’s products may cost at most {formatMoney(maxBoxCostCents(plan))} ({100 - plan.marginPct}% of {formatMoney(plan.priceCents)}); shipping is charged to the subscriber on top, at
+          Each month’s box products may cost at most {formatMoney(maxBoxCostCents(plan))} ({100 - plan.marginPct}% of {formatMoney(plan.priceCents)}); shipping is billed to the subscriber every month on top, at
           cost. Every box is worth at least {formatMoney(plan.priceCents)} at list price.
         </p>
         <table className="table small">
@@ -178,27 +178,10 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
             Free messages for people without a subscription
             <input name="freeMessages" type="number" min={0} max={1000} defaultValue={limits.freeMessages} />
           </label>
-          <div className="small muted">Subscribers: messages per 30 days, by lifetime spend (orders, boxes included). People move up automatically as they spend.</div>
-          <table className="table small">
-            <thead>
-              <tr>
-                <th>Spent at least ($)</th>
-                <th>Messages / 30 days</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tierRows.map((t, i) => (
-                <tr key={i}>
-                  <td>
-                    <input name={`tierSpend_${i}`} type="number" min={0} step="1" defaultValue={t ? t.minSpendCents / 100 : ""} readOnly={i === 0} aria-label={`Tier ${i + 1} spend`} />
-                  </td>
-                  <td>
-                    <input name={`tierLimit_${i}`} type="number" min={0} defaultValue={t ? t.limit : ""} aria-label={`Tier ${i + 1} messages`} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="small muted">
+            Subscribers get an AI budget per 30 days, capped so no plan loses money: Lite {(liteBudget / 10_000).toFixed(0)}¢ (about {liteMessages} messages), Full {FULL_USAGE_MULTIPLIER}× that,{" "}
+            {(planAiBudgetMicros("full", lite) / 10_000).toFixed(0)}¢ (about {fullMessages} messages). Change Lite’s price or margin above to move both. Customers never see these numbers.
+          </div>
           <button className="btn primary">Save limits</button>
         </form>
       </section>
@@ -219,7 +202,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ m, spend, tierLimit, limit, used }) => (
+              {rows.map(({ m, spend, planLimit, limit, used }) => (
                 <tr key={m.id}>
                   <td>
                     <Link href={`/admin/customers/${m.id}`}>{m.name || m.email}</Link>
@@ -242,7 +225,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
                   <td>
                     <form action={setMemberLimit} className="row gap">
                       <input type="hidden" name="customerId" value={m.id} />
-                      <input name="limit" type="number" min={0} defaultValue={m.aiLimitOverride ?? ""} placeholder={`${tierLimit} (tier)`} style={{ width: 110 }} aria-label="Custom limit" />
+                      <input name="limit" type="number" min={0} defaultValue={m.aiLimitOverride ?? ""} placeholder={`${planLimit} (plan)`} style={{ width: 110 }} aria-label="Custom limit" />
                       <button className="btn tiny">Set</button>
                     </form>
                     <div className="muted">{m.aiLimitOverride != null ? "custom" : "by spend"}</div>
@@ -252,7 +235,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
             </tbody>
           </table>
         )}
-        <p className="muted small">Leave a limit empty to use their spend tier.</p>
+        <p className="muted small">Leave a limit empty to use their plan’s budget.</p>
       </section>
     </>
   );

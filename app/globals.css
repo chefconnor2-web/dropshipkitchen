@@ -1419,6 +1419,9 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .pp-btn-ghost { background: transparent; color: inherit; border: 1.5px solid var(--line, #d9d4ca); }
 .pp-btn-ghost:hover { border-color: currentColor; }
 .pp-btn:disabled { opacity: .7; cursor: progress; }
+.pp-free { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; padding: 14px 18px; border-radius: 14px; border: 1px dashed var(--line, #d9d4ca); color: inherit; text-decoration: none; font-size: 15px; }
+.pp-free:hover { border-style: solid; }
+.pp-free span:last-child { color: var(--muted, #6b6b6b); }
 .pp-trust { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 10px; margin: 18px 0 0; font-size: 13px; color: var(--muted, #6b6b6b); }
 .pp-compact .pp-price strong { font-size: 32px; }
 .pp-compact .pp-card { padding: 18px 16px 16px; }

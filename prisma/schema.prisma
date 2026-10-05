@@ -205,6 +205,9 @@ model Subscription {
   customer             Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   /// "full" ($30-style: welcome box + AI by spend tier) or "lite" (AI only, capped by cost to keep the margin).
   plan                 String    @default("full")
+  /// Full subscriptions started after monthly boxes: a surplus box every paid month (shipping billed monthly).
+  /// Older ones got one welcome box with the first month only.
+  monthlyBox           Boolean   @default(false)
   boxId                String
   boxName              String
   stripeSubscriptionId String    @unique
