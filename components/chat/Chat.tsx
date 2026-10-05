@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import DesignModal from "./DesignModal";
+import BrandMark from "@/components/BrandMark";
 import PlanPicker from "@/components/PlanPicker";
 import type { PlanOffer } from "@/lib/plan-offer";
 import type { ChatDesigner } from "@/lib/personalize";
@@ -627,9 +628,7 @@ export default function Chat({
         {empty ? (
           <div className="cx-empty">
             <div className="cx-contact">
-              <span className="cx-avatar cx-avatar-lg" aria-hidden>
-                {initials}
-              </span>
+              <BrandMark size={76} className="cx-avatar cx-avatar-lg" />
               <h1>{storeName}</h1>
               <p>Shopping assistant · replies in seconds</p>
             </div>

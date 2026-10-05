@@ -6,7 +6,8 @@ import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import Link from "next/link";
-import { config, storeInitials } from "@/lib/config";
+import { config } from "@/lib/config";
+import BrandMark from "@/components/BrandMark";
 import { cartCount, getShipTo } from "@/lib/cart";
 import { countryLabel } from "@/lib/shipping";
 import { publishedCategories } from "@/lib/storefront";
@@ -19,9 +20,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
       <header className="store-header">
         <div className="wrap header-row">
           <Link href="/" className="brand" aria-label={`${config.storeName} home`}>
-            <span className="brand-mark" aria-hidden>
-              {storeInitials()}
-            </span>
+            <BrandMark />
             <span className="brand-name">{config.storeName}</span>
           </Link>
           <nav className="header-nav" aria-label="Main">
@@ -69,9 +68,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
         <div className="wrap footer-grid">
           <div>
             <div className="brand footer-brand">
-              <span className="brand-mark" aria-hidden>
-                {storeInitials()}
-              </span>
+              <BrandMark />
               <span className="brand-name">{config.storeName}</span>
             </div>
             <p className="footer-blurb">Order anything from China, shipped to Canada. B2B sourcing with an AI assistant.</p>
