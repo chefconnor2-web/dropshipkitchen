@@ -2,6 +2,9 @@ import Link from "next/link";
 import { publishedCategories, publishedProducts, type PublicProduct } from "@/lib/storefront";
 import { config } from "@/lib/config";
 import ProductCard from "@/components/store/ProductCard";
+import ShipCountryBar from "@/components/ShipCountryBar";
+import { getShipTo } from "@/lib/cart";
+import { SHIP_COUNTRIES } from "@/lib/countries";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: `Shop all tools — ${config.storeName}` };
@@ -83,11 +86,14 @@ export default async function ShopPage({ searchParams }: { searchParams: Promise
         {products.length === 0 ? (
           <p className="muted empty">New gear is being tested. Check back soon.</p>
         ) : (
-          <div className="pgrid">
-            {products.map((p) => (
-              <ProductCard key={p.id} product={p} />
-            ))}
-          </div>
+          <>
+            <ShipCountryBar country={(await getShipTo()).country} countries={SHIP_COUNTRIES} />
+            <div className="pgrid">
+              {products.map((p) => (
+                <ProductCard key={p.id} product={p} />
+              ))}
+            </div>
+          </>
         )}
       </section>
     </div>

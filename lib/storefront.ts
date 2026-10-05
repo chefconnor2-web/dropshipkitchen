@@ -17,6 +17,8 @@ export interface PublicVariant {
 
 export interface PublicProduct {
   id: string;
+  /** CJ's product id, for the "ships to your country" badge. */
+  pid: string | null;
   slug: string;
   title: string;
   description: string;
@@ -35,6 +37,7 @@ export interface PublicProduct {
 
 const include = {
   images: { orderBy: { position: "asc" as const } },
+  supplierProduct: { select: { cjProductId: true } },
   variants: {
     where: { enabled: true },
     orderBy: { position: "asc" as const },
@@ -67,6 +70,7 @@ function toPublic(p: Loaded): PublicProduct {
   const order: StockStatus[] = ["IN_STOCK", "LOW_STOCK", "UNKNOWN", "UNAVAILABLE"];
   return {
     id: p.id,
+    pid: p.supplierProduct?.cjProductId ?? null,
     slug: p.slug,
     title: p.title,
     description: p.description,
