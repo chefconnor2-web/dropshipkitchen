@@ -4,17 +4,11 @@
 import { prisma } from "@/lib/db";
 import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
 import { processSingleton } from "@/lib/singleton";
+import { SHIP_COUNTRIES } from "@/lib/countries";
 import { chooseFromCountry, originCandidates } from "@/lib/fulfillment";
 import { choosePlan, parcelOptions, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
 
-export const SHIP_COUNTRIES: Array<{ code: string; name: string }> = [
-  { code: "CA", name: "Canada" },
-  { code: "US", name: "United States" },
-  { code: "GB", name: "United Kingdom" },
-  { code: "AU", name: "Australia" },
-  { code: "NZ", name: "New Zealand" },
-  { code: "IE", name: "Ireland" },
-];
+export { SHIP_COUNTRIES };
 
 export function countryLabel(code: string): string {
   return SHIP_COUNTRIES.find((c) => c.code === code)?.name ?? code;
