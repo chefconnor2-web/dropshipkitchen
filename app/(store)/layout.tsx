@@ -100,6 +100,12 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               <li>
                 <Link href="/cart">Your cart</Link>
               </li>
+              <li>
+                <Link href="/track">Track an order</Link>
+              </li>
+              <li>
+                <Link href="/account">Your account</Link>
+              </li>
             </ul>
           </div>
         </div>
