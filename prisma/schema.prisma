@@ -250,6 +250,18 @@ model AiUsage {
 }
 
 /// One-tap email sign-in links (only the hash is stored).
+/// Whether one product (by CJ product id) ships to one country, and the cheapest standard price for one unit.
+/// Product cards show it as a badge; answers are reused for a week.
+model ShipCheck {
+  pid       String
+  country   String
+  ok        Boolean
+  cents     Int?
+  checkedAt DateTime @default(now())
+
+  @@id([pid, country])
+}
+
 /// A 6-digit sign-in code emailed to a shopper. Only an HMAC of the code is stored.
 model LoginCode {
   id        String    @id @default(cuid())
@@ -337,7 +349,32 @@ model Order {
   stripeInvoiceId     String?
   subscriptionId      String?
 
+  /// Carrier tracking, kept fresh by lib/tracking.ts. Stage: label | in_transit | out_for_delivery | delivered | exception
+  trackingStage       String?
+  trackingStatus      String? // the carrier's own words, shown as the latest update
+  trackingEta         String? // CJ's delivery estimate, e.g. "7-12" (days)
+  lastMileCarrier     String?
+  lastMileNumber      String?
+  shippedAt           DateTime?
+  deliveredAt         DateTime?
+  trackingCheckedAt   DateTime?
+  trackingEvents      TrackingEvent[]
+
   @@index([stripeInvoiceId])
+  @@index([status, deliveredAt])
+}
+
+/// One step on an order's tracking timeline (a stage change, with the carrier's words). parcelIndex is set on split orders.
+model TrackingEvent {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  parcelIndex Int?
+  stage       String
+  detail      String?
+  at          DateTime @default(now())
+
+  @@index([orderId, at])
 }
 
 // Immutable purchase snapshot. Deliberately NOT relationally dependent on Product for its data.
@@ -488,6 +525,13 @@ model OrderParcel {
   cjStatus          String?
   cjTrackingNumber  String?
   cjError           String?
+  trackingStage     String?
+  trackingStatus    String?
+  trackingEta       String?
+  lastMileCarrier   String?
+  lastMileNumber    String?
+  shippedAt         DateTime?
+  deliveredAt       DateTime?
   createdAt         DateTime  @default(now())
 
   @@unique([orderId, index])

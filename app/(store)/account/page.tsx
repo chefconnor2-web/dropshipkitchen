@@ -5,6 +5,7 @@ import { activeSessionCount, getMember, safeNext } from "@/lib/session";
 import { getVisitorId } from "@/lib/chat-session";
 import { aiAllowance, getLimits } from "@/lib/membership";
 import { countryLabel } from "@/lib/shipping";
+import { STAGE_LABEL, type TrackingStage } from "@/lib/carriers";
 import { openBillingPortal, signOutAction, signOutEverywhereAction } from "../actions";
 import SignInForm from "./SignInForm";
 
@@ -136,6 +137,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
               <li key={o.id}>
                 <Link href={`/orders/${encodeURIComponent(o.number)}`}>{o.number}</Link>
                 <span className="muted small">{o.createdAt.toLocaleDateString("en-CA")}</span>
+                <span className={`trk-chip trk-chip-${o.status === "DECLINED_REFUNDED" ? "off" : (o.trackingStage ?? "waiting")}`}>
+                  {o.status === "DECLINED_REFUNDED" ? "Refunded" : o.trackingStage ? STAGE_LABEL[o.trackingStage as TrackingStage] : "Preparing"}
+                </span>
                 <span>{formatMoney(o.subtotalCents + o.shippingCents)}</span>
               </li>
             ))}

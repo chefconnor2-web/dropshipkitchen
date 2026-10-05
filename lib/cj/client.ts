@@ -18,6 +18,7 @@
 //   POST /shopping/pay/payBalanceV2         the same, for a parent order (by shipment order id)
 //   GET  /shopping/pay/getBalance           CJ account balance
 //   GET  /shopping/order/getOrderDetail     order status and tracking
+//   GET  /logistic/trackInfo                carrier status for tracking numbers (comma-separated batch)
 // Only lib/fulfillment.ts calls the order and payment endpoints, and only behind SUPPLIER_MODE.
 //
 // Every call is written to the CjApiCall table (path, HTTP status, CJ code, CJ requestId, timing)
@@ -313,6 +314,23 @@ export async function getBalance() {
 
 export async function getOrderDetail(orderId: string) {
   return authed<Record<string, unknown>>("/shopping/order/getOrderDetail", { orderId });
+}
+
+export interface CjTrackInfo {
+  trackingNumber?: string;
+  logisticName?: string | null;
+  trackingFrom?: string | null;
+  trackingTo?: string | null;
+  deliveryDay?: string | null;
+  deliveryTime?: string | null;
+  trackingStatus?: string | null;
+  lastMileCarrier?: string | null;
+  lastTrackNumber?: string | null;
+}
+
+/** Latest carrier status for up to a few dozen tracking numbers in one call. */
+export async function trackInfo(trackNumbers: string[]) {
+  return authed<CjTrackInfo[] | null>("/logistic/trackInfo", { trackNumber: trackNumbers.join(",") });
 }
 
 /** Connection test: obtains (or reuses) a token and performs one tiny catalog read. */

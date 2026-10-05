@@ -2,6 +2,7 @@
 // Shared pieces of the assistant chat: types, markdown, icons, step log, product and kit cards.
 
 import { Fragment, type ReactNode } from "react";
+import ShipBadge from "@/components/ShipBadge";
 import Link from "next/link";
 
 export interface Card {
@@ -327,6 +328,7 @@ export function ProductCard({
       <div className="cx-card-title" title={c.title}>
         {c.title}
       </div>
+      <ShipBadge pid={c.pid} />
       {pick ? (
         <div className="cx-pick">
           <label className="sr-only" htmlFor={`opt-${c.pid}`}>

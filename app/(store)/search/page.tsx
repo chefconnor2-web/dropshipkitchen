@@ -3,6 +3,10 @@ import { config } from "@/lib/config";
 import { cjConfigured } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { PAGE_SIZE, searchCatalog, type CatalogHit } from "@/lib/catalog-search";
+import { getShipTo } from "@/lib/cart";
+import { SHIP_COUNTRIES } from "@/lib/countries";
+import ShipBadge from "@/components/ShipBadge";
+import ShipCountryBar from "@/components/ShipCountryBar";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: `Search — ${config.storeName}`, robots: { index: false, follow: false } };
@@ -63,9 +67,10 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
               </div>
             ) : (
               <>
+                <ShipCountryBar country={(await getShipTo()).country} countries={SHIP_COUNTRIES} />
                 <p className="muted small search-count">
                   {total != null ? `${total.toLocaleString("en-US")} results` : `${hits.length} results`} for “{q}”
-                  {page > 1 ? ` · page ${page}` : ""}. Prices include everything but shipping, which you’ll see on each product.
+                  {page > 1 ? ` · page ${page}` : ""}. Prices include everything but shipping; each product shows whether it ships to you.
                 </p>
                 <div className="pgrid">
                   {hits.map((h) => (
@@ -75,12 +80,12 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                       </div>
                       <div className="pcard-body">
                         <h3 className="pcard-title">{h.title}</h3>
+                        <ShipBadge pid={h.pid} className="pcard-ship" />
                         <div className="pcard-foot">
                           <span className="pcard-price">
                             <span className="from">From </span>
                             {formatMoney(h.fromCents)}
                           </span>
-                          <span className="muted small">See shipping</span>
                         </div>
                       </div>
                     </Link>

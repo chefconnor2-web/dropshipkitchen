@@ -1,17 +1,25 @@
-// Customer and merchant emails for an order's life: confirmed → shipped (with tracking) or refunded.
+// Customer and merchant emails for an order's life: confirmed → shipped (with tracking) → delivered, or refunded.
 // Each kind goes out once per order (a "sent" log row blocks repeats); the admin can resend on purpose.
 
 import { prisma } from "@/lib/db";
 import { config, stripeKeyProblem } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { sendEmail } from "@/lib/email";
+import { orderViewToken } from "@/lib/session";
+import { trackingLinks } from "@/lib/carriers";
 
-export type OrderEmailKind = "order_confirmation" | "order_shipped" | "order_refunded" | "merchant_new_order";
+export type OrderEmailKind =
+  | "order_confirmation"
+  | "order_shipped"
+  | "order_delivered"
+  | "order_refunded"
+  | "merchant_new_order"
+  | "merchant_tracking_issue";
 
 type Loaded = NonNullable<Awaited<ReturnType<typeof load>>>;
 
 function load(orderId: string) {
-  return prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
+  return prisma.order.findUnique({ where: { id: orderId }, include: { items: true, parcels: { orderBy: { index: "asc" } } } });
 }
 
 function esc(s: string | null | undefined): string {
@@ -24,12 +32,32 @@ function testPrefix(): string {
   return !stripeKeyProblem() && (k.startsWith("sk_test_") || k.startsWith("rk_test_")) ? "[TEST] " : "";
 }
 
-export function orderUrl(o: { number: string; stripeSessionId: string | null }): string {
-  return `${config.siteUrl}/orders/${encodeURIComponent(o.number)}${o.stripeSessionId ? `?s=${encodeURIComponent(o.stripeSessionId)}` : ""}`;
+/** The customer's order page; the token opens it without signing in (see orderViewToken). */
+export function orderUrl(o: { number: string }, token: string): string {
+  return `${config.siteUrl}/orders/${encodeURIComponent(o.number)}?t=${encodeURIComponent(token)}`;
 }
 
-export function trackingUrl(n: string): string {
-  return `https://t.17track.net/en#nums=${encodeURIComponent(n)}`;
+/** Tracking numbers on an order: one, or one per parcel on a split order (stored comma-joined). */
+function numbers(o: Loaded): string[] {
+  return (o.cjTrackingNumber ?? "").split(",").map((n) => n.trim()).filter(Boolean);
+}
+
+function trackingBlock(o: Loaded): { html: string; text: string } {
+  const split = o.parcels.length > 1 && o.parcels.some((p) => p.cjTrackingNumber);
+  const rows = split
+    ? o.parcels
+        .filter((p) => p.cjTrackingNumber)
+        .map((p) => ({ title: `Parcel ${p.index + 1} of ${o.parcels.length}`, links: trackingLinks({ number: p.cjTrackingNumber, lastMileCarrier: p.lastMileCarrier, lastMileNumber: p.lastMileNumber }) }))
+    : numbers(o).slice(0, 1).map((n) => ({ title: "Tracking number", links: trackingLinks({ number: n, lastMileCarrier: o.lastMileCarrier, lastMileNumber: o.lastMileNumber }) }));
+  const html = rows
+    .map(
+      (r) => `<p style="margin:0 0 12px;font-size:14px;line-height:1.6"><strong>${esc(r.title)}:</strong> <span style="font-family:monospace">${esc(r.links[r.links.length - 1]?.number)}</span><br>${r.links
+        .map((l) => `<a href="${esc(l.href)}" style="color:#B43E0F">${esc(l.label)}</a>`)
+        .join(" &nbsp;·&nbsp; ")}</p>`,
+    )
+    .join("");
+  const text = rows.map((r) => `${r.title}: ${r.links[r.links.length - 1]?.number}\n${r.links.map((l) => `${l.label}: ${l.href}`).join("\n")}`).join("\n\n");
+  return { html, text };
 }
 
 function address(o: Loaded): string[] {
@@ -84,13 +112,13 @@ ${cta ? `<p style="margin:24px 0 8px"><a href="${esc(cta.href)}" style="display:
 </table></td></tr></table></body></html>`;
 }
 
-function render(kind: OrderEmailKind, o: Loaded): { to: string; subject: string; html: string; text: string } | null {
+function render(kind: OrderEmailKind, o: Loaded, token: string): { to: string; subject: string; html: string; text: string } | null {
   const items = itemsTable(o);
   const addr = address(o);
   const addrHtml = addr.length
     ? `<p style="margin:18px 0 0;font-size:14px;line-height:1.5"><strong>Shipping to</strong><br>${addr.map(esc).join("<br>")}</p>`
     : "";
-  const link = orderUrl(o);
+  const link = orderUrl(o, token);
   const p = testPrefix();
   const first = (o.customerName || "").split(" ")[0];
   const hi = first ? `Hi ${esc(first)}, ` : "";
@@ -111,17 +139,48 @@ function render(kind: OrderEmailKind, o: Loaded): { to: string; subject: string;
   }
   if (kind === "order_shipped") {
     if (!o.email || !o.cjTrackingNumber) return null;
-    const t = trackingUrl(o.cjTrackingNumber);
+    const t = trackingBlock(o);
+    const several = numbers(o).length > 1;
     return {
       to: o.email,
       subject: `${p}Order ${o.number} has shipped`,
       html: layout(
         "Your order is on its way.",
-        `${hi}order <strong>${esc(o.number)}</strong> has shipped. Tracking number: <strong>${esc(o.cjTrackingNumber)}</strong>. Tracking can take a day or two to show the first scan.`,
-        items.html + addrHtml,
-        { label: "Track your package", href: t },
+        `${hi}order <strong>${esc(o.number)}</strong> has shipped${several ? ` in ${numbers(o).length} parcels` : ""}. Follow every step on your order page; we update it automatically as the carrier scans your package. The first scan can take a day or two to appear.`,
+        t.html + items.html + addrHtml,
+        { label: "Track your order", href: link },
       ),
-      text: `Order ${o.number} has shipped.\nTracking number: ${o.cjTrackingNumber}\nTrack it: ${t}\n\n${items.text}\n\nView your order: ${link}`,
+      text: `Order ${o.number} has shipped.\nTrack every step: ${link}\n\n${t.text}\n\n${items.text}`,
+    };
+  }
+  if (kind === "order_delivered") {
+    if (!o.email) return null;
+    return {
+      to: o.email,
+      subject: `${p}Order ${o.number} was delivered`,
+      html: layout(
+        "Delivered.",
+        `${hi}the carrier reports order <strong>${esc(o.number)}</strong> as delivered. If you can’t find it, check with neighbours or your building’s mailroom, then just reply to this email and we’ll sort it out.`,
+        items.html + addrHtml,
+        { label: "View your order", href: link },
+      ),
+      text: `The carrier reports order ${o.number} as delivered. Can't find it? Reply to this email and we'll sort it out.\n\n${items.text}\n\nView your order: ${link}`,
+    };
+  }
+  if (kind === "merchant_tracking_issue") {
+    if (!config.email.storeEmail) return null;
+    const admin = `${config.siteUrl}/admin/orders/${o.id}`;
+    const status = o.trackingStatus || o.parcels.find((x) => x.trackingStage === "exception")?.trackingStatus || "a delivery problem";
+    return {
+      to: config.email.storeEmail,
+      subject: `${p}Delivery problem on order ${o.number}`,
+      html: layout(
+        "A parcel needs attention",
+        `The carrier reports <strong>${esc(status)}</strong> for order <strong>${esc(o.number)}</strong> (${esc(o.customerName || o.email || "customer")}). Reaching out before they ask builds trust.`,
+        trackingBlock(o).html,
+        { label: "Open in admin", href: admin },
+      ),
+      text: `The carrier reports "${status}" for order ${o.number}. ${admin}`,
     };
   }
   if (kind === "order_refunded") {
@@ -162,7 +221,7 @@ export async function sendOrderEmail(orderId: string, kind: OrderEmailKind, opts
     const o = await load(orderId);
     if (!o) return null;
     if (!opts.force && (await prisma.emailLog.findFirst({ where: { orderId, kind, status: "sent" } }))) return null;
-    const m = render(kind, o);
+    const m = render(kind, o, await orderViewToken(o.id));
     if (!m) return null;
     return await sendEmail({ ...m, kind, orderId });
   } catch (e) {
@@ -173,7 +232,7 @@ export async function sendOrderEmail(orderId: string, kind: OrderEmailKind, opts
 
 /** A sample email to prove delivery works, using the newest real order when there is one. */
 export async function sendTestEmail(to: string) {
-  const o = await prisma.order.findFirst({ where: { status: { not: "PENDING_PAYMENT" } }, orderBy: { createdAt: "desc" }, include: { items: true } });
+  const o = await prisma.order.findFirst({ where: { status: { not: "PENDING_PAYMENT" } }, orderBy: { createdAt: "desc" }, include: { items: true, parcels: true } });
   const body = o
     ? itemsTable(o).html
     : `<p style="font-size:15px">No orders yet, so this is a plain test. Real order emails include the items, totals and shipping address.</p>`;
