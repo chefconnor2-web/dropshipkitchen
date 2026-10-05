@@ -14,6 +14,7 @@ import { saveLitePlan, savePlan } from "@/lib/plan";
 import { refreshLive } from "@/lib/inventory";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
 import { sendOrderEmail, sendTestEmail, type OrderEmailKind } from "@/lib/order-emails";
+import { syncOrderTracking, syncTracking } from "@/lib/tracking";
 
 function msg(e: unknown) {
   return encodeURIComponent(e instanceof Error ? e.message : String(e));
@@ -210,13 +211,23 @@ export async function payCjOrderAction(form: FormData) {
 
 export async function refreshCjOrderAction(form: FormData) {
   const id = String(form.get("orderId"));
-  let q = "notice=" + encodeURIComponent("CJ order status refreshed");
+  let q = "notice=" + encodeURIComponent("CJ status and carrier tracking refreshed");
   try {
-    await refreshCjOrder(id);
+    const o = await prisma.order.findUniqueOrThrow({ where: { id }, select: { status: true } });
+    // Placed orders get the full tracking pass (CJ status, carrier status, timeline, customer emails).
+    if (o.status === "SUPPLIER_ORDER_PLACED") await syncOrderTracking(id);
+    else await refreshCjOrder(id);
   } catch (e) {
     q = `error=${msg(e)}`;
   }
   orderBack(id, q);
+}
+
+export async function syncAllTrackingAction() {
+  const r = await syncTracking({ all: true });
+  const text = r.skipped ? "A tracking sync is already running" : `Checked tracking on ${r.checked} order(s)${r.failed ? `, ${r.failed} failed` : ""}`;
+  revalidatePath("/admin/orders");
+  redirect(`/admin/orders?show=placed&notice=${encodeURIComponent(text)}`);
 }
 
 export async function saveCustomerAction(form: FormData) {

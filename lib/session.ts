@@ -55,6 +55,21 @@ export function verifyValue(signed: string, key: string): string | null {
   return want.length === got.length && timingSafeEqual(want, got) ? value : null;
 }
 
+/**
+ * A link token that opens one order's page without signing in (it goes in the order emails and the /track
+ * lookup). It is an HMAC of the order id with the server secret, so it can't be guessed or moved to another order.
+ */
+export async function orderViewToken(orderId: string): Promise<string> {
+  return createHmac("sha256", await signingKey()).update(`order-view\n${orderId}`).digest("base64url").slice(0, 32);
+}
+
+export async function checkOrderViewToken(orderId: string, token: string | undefined | null): Promise<boolean> {
+  if (!token || token.length !== 32) return false;
+  const want = Buffer.from(await orderViewToken(orderId));
+  const got = Buffer.from(token);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
 const sha256 = (t: string) => createHash("sha256").update(t).digest("hex");
 
 export function normalizeEmail(raw: unknown): string | null {
@@ -159,7 +174,7 @@ export function newCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
-async function clientIp(): Promise<string | null> {
+export async function clientIp(): Promise<string | null> {
   const h = await headers();
   return (h.get("x-forwarded-for")?.split(",")[0] ?? h.get("x-real-ip") ?? "").trim().slice(0, 64) || null;
 }

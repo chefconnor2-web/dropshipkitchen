@@ -8,6 +8,8 @@ import { podPropertiesForItems } from "@/lib/personalize";
 import { cjBalanceCents, quoteShipping, supplierMode } from "@/lib/fulfillment";
 import type { CjFreightOption } from "@/lib/cj/client";
 import { Flash, StatusChip, fmtTime, timeAgo } from "@/components/admin";
+import { orderViewToken } from "@/lib/session";
+import { STAGE_LABEL, type TrackingStage } from "@/lib/carriers";
 import {
   approveOrderAction,
   declineOrderAction,
@@ -39,6 +41,7 @@ export default async function AdminOrder({
     include: { items: { include: { checks: { orderBy: { checkedAt: "desc" } } } }, parcels: { orderBy: { index: "asc" } } },
   });
   if (!order) notFound();
+  const customerLink = `/orders/${encodeURIComponent(order.number)}?t=${await orderViewToken(order.id)}`;
 
   const designIds = order.items.map((i) => i.personalizationId).filter((x): x is string => !!x);
   const [svs, variants, images, emails, designs] = await Promise.all([
@@ -365,6 +368,24 @@ export default async function AdminOrder({
             <dd>{order.cjStatus ?? "—"}</dd>
             <dt>Tracking</dt>
             <dd>{order.cjTrackingNumber ? <code>{order.cjTrackingNumber}</code> : "Not shipped yet"}</dd>
+            {order.cjTrackingNumber && (
+              <>
+                <dt>Carrier</dt>
+                <dd className={order.trackingStage === "exception" ? "err-text" : order.trackingStage === "delivered" ? "ok-text" : undefined}>
+                  {order.trackingStage ? STAGE_LABEL[order.trackingStage as TrackingStage] : "—"}
+                  {order.trackingStatus ? ` · ${order.trackingStatus}` : ""}
+                  {order.lastMileCarrier ? ` · last mile ${order.lastMileCarrier}${order.lastMileNumber ? ` ${order.lastMileNumber}` : ""}` : ""}
+                  {order.trackingCheckedAt ? <span className="muted"> · checked {timeAgo(order.trackingCheckedAt)}</span> : null}
+                </dd>
+              </>
+            )}
+            <dt>Customer link</dt>
+            <dd>
+              <a href={customerLink} target="_blank" rel="noreferrer">
+                Their tracking page ↗
+              </a>{" "}
+              <span className="muted small">(opens without sign-in; share only with this customer)</span>
+            </dd>
             <dt>Shipping</dt>
             <dd>
               {order.cjLogisticName} · from {order.cjFromCountry}
@@ -378,7 +399,7 @@ export default async function AdminOrder({
           <div className="btn-row">
             <form action={refreshCjOrderAction} className="grow">
               <input type="hidden" name="orderId" value={order.id} />
-              <button className="a-btn">Refresh CJ status</button>
+              <button className="a-btn">Refresh status &amp; tracking</button>
             </form>
             {!order.cjPaidAt && (order.cjShipmentOrderId || order.cjOrderId) && (
               <form action={payCjOrderAction} className="grow">

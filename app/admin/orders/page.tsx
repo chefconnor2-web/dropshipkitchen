@@ -2,7 +2,9 @@ import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
-import { StatusChip, timeAgo } from "@/components/admin";
+import { Flash, StatusChip, timeAgo } from "@/components/admin";
+import { STAGE_LABEL, type TrackingStage } from "@/lib/carriers";
+import { syncAllTrackingAction } from "../actions";
 
 const FILTERS: Record<"action" | "placed" | "closed" | "all", { label: string; where: Prisma.OrderWhereInput }> = {
   action: { label: "Needs approval", where: { status: "AWAITING_MERCHANT_APPROVAL" } },
@@ -12,8 +14,8 @@ const FILTERS: Record<"action" | "placed" | "closed" | "all", { label: string; w
 };
 type FilterKey = keyof typeof FILTERS;
 
-export default async function OrdersPage({ searchParams }: { searchParams: Promise<{ show?: string }> }) {
-  const { show } = await searchParams;
+export default async function OrdersPage({ searchParams }: { searchParams: Promise<{ show?: string; notice?: string }> }) {
+  const { show, notice } = await searchParams;
   const counts = Object.fromEntries(
     await Promise.all((Object.keys(FILTERS) as FilterKey[]).map(async (k) => [k, await prisma.order.count({ where: FILTERS[k].where })])),
   ) as Record<FilterKey, number>;
@@ -45,7 +47,11 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
     <>
       <div className="a-head">
         <h1>Orders</h1>
+        <form action={syncAllTrackingAction}>
+          <button className="a-btn a-btn-sm">Check all tracking now</button>
+        </form>
       </div>
+      <Flash notice={notice} />
       <div className="seg-tabs" role="tablist" aria-label="Filter orders">
         {(Object.keys(FILTERS) as FilterKey[]).map((k) => (
           <Link key={k} href={`/admin/orders?show=${k}`} role="tab" aria-selected={k === filter} className={k === filter ? "on" : ""}>
@@ -81,6 +87,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                     </div>
                     <div className="order-line3">
                       <StatusChip status={o.status} sandbox={o.cjSandbox} />
+                      {o.trackingStage && <span className={`chip-status ${o.trackingStage === "exception" ? "tone-bad" : o.trackingStage === "delivered" ? "tone-good" : "tone-busy"}`}>{STAGE_LABEL[o.trackingStage as TrackingStage]}</span>}
                       <span className="muted">
                         {units} item{units === 1 ? "" : "s"} · {timeAgo(o.paidAt ?? o.createdAt)} · {o.number}
                       </span>
