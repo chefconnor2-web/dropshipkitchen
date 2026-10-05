@@ -7,7 +7,7 @@ import { cjConfigured } from "@/lib/config";
 import { importCjProduct } from "@/lib/cj/import";
 import { applyPricingRule } from "@/lib/pricing";
 import { blockedListing } from "@/lib/catalog-search";
-import { currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
+import { CJ_PRIORITY, currentCjLane, withCjPriority, type CjLane } from "@/lib/cj/lanes";
 import { processSingleton } from "@/lib/singleton";
 
 export const PID_RE = /^[A-Za-z0-9-]{6,64}$/;
@@ -33,7 +33,7 @@ export function openCjProduct(pid: string) {
 
 /** Import products in the background (one at a time, CJ is rate-limited) so Add is instant later. */
 export function prewarmProducts(pids: string[]) {
-  const unique = [...new Set(pids)].filter((p) => PID_RE.test(p)).slice(0, 12);
+  const unique = [...new Set(pids)].filter((p) => PID_RE.test(p)).slice(0, 16);
   void withCjPriority("background", async () => {
     for (const pid of unique) {
       const known = await prisma.product.findFirst({ where: { supplierProduct: { cjProductId: pid } }, select: { id: true } }).catch(() => null);
@@ -49,8 +49,10 @@ async function open(pid: string) {
 
   let productId: string;
   try {
-    // Check stock for a few options now; the rest are re-checked live at add-to-cart and checkout.
-    productId = (await importCjProduct(pid, { maxStockChecks: 3 })).productId;
+    // A shopper waiting on a tap gets the product without stock checks (two CJ calls instead of five):
+    // add-to-cart checks the chosen option and checkout re-checks everything. Background warm-ups check a few.
+    const waiting = currentCjLane().priority > CJ_PRIORITY.background;
+    productId = (await importCjProduct(pid, { maxStockChecks: waiting ? 0 : 3 })).productId;
   } catch {
     return null;
   }
