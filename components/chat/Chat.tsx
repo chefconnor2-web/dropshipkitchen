@@ -114,7 +114,6 @@ export default function Chat({
   const ev = useRef(events);
   const cartRef = useRef(cartCount);
   cartRef.current = cartCount;
-  const pendingAdds = useRef(0);
   const setCart = (n: number) => {
     cartRef.current = n;
     ev.current.onCart(n);
@@ -405,27 +404,12 @@ export default function Chat({
     speak(text).then(() => setSpeakingIdx((s) => (s === i ? null : s)));
   }
 
-  // Optimistic: the button, badge and toast update on tap; the server's answer confirms or rolls back.
+  // The button spins until the server confirms; the badge, toast and "✓ Added" only show for a real add, so a
+  // product that needs an option picked (or is sold out) never looks added when it isn't.
   async function quickAdd(card: Card, variantId?: string) {
     if (adding[card.pid]) return;
     const pick = picking[card.pid];
     setAdding((a) => ({ ...a, [card.pid]: true }));
-    setAddedPids((a) => ({ ...a, [card.pid]: true }));
-    setPicking((p) => {
-      const n = { ...p };
-      delete n[card.pid];
-      return n;
-    });
-    pendingAdds.current++;
-    setCart(cartRef.current + 1);
-    flash("Added to cart", true);
-    const undo = (message: string) => {
-      setAddedPids((a) => ({ ...a, [card.pid]: false }));
-      if (pick) setPicking((p) => ({ ...p, [card.pid]: pick }));
-      flash(message);
-    };
-    let serverCount: number | undefined;
-    let ok = false;
     try {
       const r = await fetch("/api/assistant/add", {
         method: "POST",
@@ -433,25 +417,28 @@ export default function Chat({
         body: JSON.stringify(variantId ? { variantId } : { pid: card.pid }),
       });
       const d = await r.json().catch(() => ({}));
-      if (typeof d.cartCount === "number") serverCount = d.cartCount;
       if (d.personalize) {
         // Made with the shopper's own photo or text: open the designer instead of adding.
-        setAddedPids((a) => ({ ...a, [card.pid]: false }));
         setDesigning({ pid: card.pid, designer: d.personalize });
-        setToast(null);
       } else if (d.choose) {
-        setAddedPids((a) => ({ ...a, [card.pid]: false }));
         setPicking((p) => ({ ...p, [card.pid]: { options: d.options, selected: d.options.find((o: Option) => o.available)?.id ?? d.options[0]?.id } }));
         flash("Pick an option, then tap Add");
-      } else if (d.ok) ok = true;
-      else undo(d.message ?? "Couldn’t add that");
+      } else if (d.ok) {
+        setAddedPids((a) => ({ ...a, [card.pid]: true }));
+        setPicking((p) => {
+          const n = { ...p };
+          delete n[card.pid];
+          return n;
+        });
+        if (typeof d.cartCount === "number") setCart(d.cartCount);
+        flash("Added to cart", true);
+      } else {
+        if (pick) setPicking((p) => ({ ...p, [card.pid]: pick }));
+        flash(d.message ?? "Couldn’t add that");
+      }
     } catch {
-      undo("Couldn’t add that. Please try again.");
+      flash("Couldn’t add that. Please try again.");
     } finally {
-      pendingAdds.current--;
-      // The server's count plus any other taps still on their way; a failure without a count takes ours back.
-      if (serverCount !== undefined) setCart(serverCount + pendingAdds.current);
-      else if (!ok) setCart(Math.max(0, cartRef.current - 1));
       setAdding((a) => ({ ...a, [card.pid]: false }));
     }
   }

@@ -27,6 +27,7 @@ export function currentCjLane(): CjLane {
 /**
  * Starts queued calls at least minIntervalMs apart (CJ's limit is on request rate), highest priority first,
  * then oldest, with up to maxConcurrent in flight: a slow CJ reply doesn't hold up the next call's start.
+ * Background work never fills the last slot, so a shopper's call (a tap on Add) always has one free.
  */
 export function makeThrottle(minIntervalMs: () => number, maxConcurrent: () => number = () => 1) {
   const waiting: Array<{ lane: CjLane; seq: number; run: () => Promise<void> }> = [];
@@ -41,7 +42,8 @@ export function makeThrottle(minIntervalMs: () => number, maxConcurrent: () => n
     pumping = true;
     try {
       while (waiting.length) {
-        if (running >= Math.max(1, maxConcurrent())) {
+        const max = Math.max(1, maxConcurrent());
+        if (running >= max) {
           await new Promise<void>((r) => (wake = r));
           continue;
         }
@@ -55,6 +57,11 @@ export function makeThrottle(minIntervalMs: () => number, maxConcurrent: () => n
         for (let i = 1; i < waiting.length; i++) {
           const a = waiting[i], b = waiting[next];
           if (a.lane.priority > b.lane.priority || (a.lane.priority === b.lane.priority && a.seq < b.seq)) next = i;
+        }
+        // Only background work is waiting and one slot is left: keep it for a shopper.
+        if (max > 1 && running >= max - 1 && waiting[next].lane.priority <= CJ_PRIORITY.background) {
+          await new Promise<void>((r) => (wake = r));
+          continue;
         }
         const [job] = waiting.splice(next, 1);
         running++;
@@ -75,6 +82,10 @@ export function makeThrottle(minIntervalMs: () => number, maxConcurrent: () => n
     const lane = currentCjLane();
     return new Promise<T>((resolve, reject) => {
       waiting.push({ lane, seq: seq++, run: () => fn().then(resolve, reject) });
+      // A pump parked on the reserved slot re-checks when a shopper's call arrives.
+      const w = wake;
+      wake = null;
+      w?.();
       void pump();
     });
   };
