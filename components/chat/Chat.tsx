@@ -1,5 +1,6 @@
 "use client";
-// One conversation with the sourcing assistant: streamed answers, photos, voice, edit and regenerate.
+// One conversation with the sourcing assistant, laid out like iMessage (blue and gray bubbles, tapbacks, typing
+// dots, read receipts) because everyone already knows how to read it: streamed answers, photos, voice, edit, regenerate.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -9,15 +10,14 @@ import type { PlanOffer } from "@/lib/plan-offer";
 import type { ChatDesigner } from "@/lib/personalize";
 import {
   ArrowUp,
-  ClipIcon,
   CopyIcon,
   DownIcon,
   EXAMPLES,
   KitCard,
-  Logo,
   Markdown,
   MicIcon,
   PencilIcon,
+  PlusIcon2,
   ProductCard,
   RetryIcon,
   SpeakerIcon,
@@ -28,6 +28,8 @@ import {
   XIcon,
   groupCards,
   readNdjson,
+  showStamp,
+  stampLabel,
   type Card,
   type Entry,
   type KitState,
@@ -57,7 +59,21 @@ export interface ChatEvents {
   onCart: (count: number) => void;
 }
 
-export default function Chat({ chatId, configured, cartCount, events }: { chatId: string | null; configured: boolean; cartCount: number; events: ChatEvents }) {
+export default function Chat({
+  chatId,
+  configured,
+  cartCount,
+  events,
+  storeName = "Assistant",
+  initials = "AI",
+}: {
+  chatId: string | null;
+  configured: boolean;
+  cartCount: number;
+  events: ChatEvents;
+  storeName?: string;
+  initials?: string;
+}) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(chatId !== null);
   const [input, setInput] = useState("");
@@ -234,7 +250,10 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
       setAttachments([]);
     }
     const userIndex = opts.editIndex ?? entries.length;
-    setEntries((e) => [...e.slice(0, userIndex), { role: "user", text: msg, ...(images.length ? { images } : {}) }]);
+    setEntries((e) => [...e.slice(0, userIndex), { role: "user", text: msg, ...(images.length ? { images } : {}), at: new Date().toISOString() }]);
+    // The assistant's tapback (and the server's timestamp) land on the message just sent.
+    const patchUser = (patch: Partial<Entry>) =>
+      !me.detached && setEntries((en) => en.map((x, k) => (k === userIndex && x.role === "user" ? ({ ...x, ...patch } as Entry) : x)));
     const t: Turn = { text: "", steps: [], groups: [] };
     setTurn({ ...t });
     const update = () => !me.detached && setTurn({ text: t.text, steps: [...t.steps], groups: [...t.groups] });
@@ -286,9 +305,12 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
           const next = { group: e.group, cards, done: e.done };
           t.groups = prev ? t.groups.map((x) => (x.group === e.group ? next : x)) : [...t.groups, next];
           update();
+        } else if (e.type === "react") {
+          patchUser({ reaction: e.emoji });
         } else if (e.type === "error") throw new Error(e.error);
         else if (e.type === "done") {
           reply = e.entry.text;
+          if (e.reaction) patchUser({ reaction: e.reaction });
           if (!me.detached) setEntries((en) => [...en, { ...e.entry, steps: t.steps, groups: t.groups }]);
           else if (id) cache.current.delete(id);
           ev.current.onCart(e.cartCount ?? 0);
@@ -478,101 +500,116 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         send(input);
       }}
     >
-      {attachments.length > 0 && (
-        <div className="cx-attach-row">
-          {attachments.map((a) => (
-            <div key={a.key} className={`cx-attach${a.error ? " is-error" : ""}`} title={a.error}>
-              <img src={a.preview} alt="" />
-              {!a.id && !a.error && (
-                <span className="cx-attach-busy">
-                  <Spinner />
-                </span>
-              )}
-              {a.error && <span className="cx-attach-err">!</span>}
-              <button type="button" className="cx-attach-x" onClick={() => removeAttachment(a.key)} aria-label="Remove photo">
-                <XIcon size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <label className="sr-only" htmlFor="cx-q">
-        Message the assistant
-      </label>
-      <textarea
-        id="cx-q"
-        ref={inputRef}
-        rows={1}
-        maxLength={1000}
-        value={input}
-        enterKeyHint="send"
-        placeholder={dictating ? "Listening…" : entries.length ? "Reply…" : "Tell me what you’re looking for…"}
-        onChange={(e) => setInput(e.target.value)}
-        onPaste={(e) => {
-          const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
-          if (files.length) {
-            e.preventDefault();
-            addFiles(files);
-          }
+      <button type="button" className="cx-plus" onClick={() => fileRef.current?.click()} aria-label="Add photos" title="Add photos" disabled={!configured}>
+        <PlusIcon2 />
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) addFiles(e.target.files);
+          e.target.value = "";
         }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            send(input);
-          }
-        }}
-        disabled={!configured}
       />
-      <div className="cx-composer-bar">
-        <div className="cx-tools">
-          <button type="button" className="cx-tool" onClick={() => fileRef.current?.click()} aria-label="Attach photos" title="Attach photos" disabled={!configured}>
-            <ClipIcon />
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={(e) => {
-              if (e.target.files?.length) addFiles(e.target.files);
-              e.target.value = "";
+      <div className="cx-pill">
+        {attachments.length > 0 && (
+          <div className="cx-attach-row">
+            {attachments.map((a) => (
+              <div key={a.key} className={`cx-attach${a.error ? " is-error" : ""}`} title={a.error}>
+                <img src={a.preview} alt="" />
+                {!a.id && !a.error && (
+                  <span className="cx-attach-busy">
+                    <Spinner />
+                  </span>
+                )}
+                {a.error && <span className="cx-attach-err">!</span>}
+                <button type="button" className="cx-attach-x" onClick={() => removeAttachment(a.key)} aria-label="Remove photo">
+                  <XIcon size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="cx-pill-row">
+          <label className="sr-only" htmlFor="cx-q">
+            Message the assistant
+          </label>
+          <textarea
+            id="cx-q"
+            ref={inputRef}
+            rows={1}
+            maxLength={1000}
+            value={input}
+            enterKeyHint="send"
+            placeholder={dictating ? "Listening…" : "Message"}
+            onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+              if (files.length) {
+                e.preventDefault();
+                addFiles(files);
+              }
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
+            disabled={!configured}
           />
-          {canListen && (
-            <button type="button" className={`cx-tool${dictating ? " is-on" : ""}`} onClick={toggleDictation} aria-label={dictating ? "Stop dictation" : "Dictate"} title={dictating ? "Stop dictation" : "Dictate"} disabled={!configured}>
+          {busy ? (
+            <button type="button" className="cx-send cx-stop" onClick={() => run.current?.ctrl.abort()} aria-label="Stop" title="Stop (Esc)">
+              <StopIcon />
+            </button>
+          ) : canSend ? (
+            <button type="submit" className="cx-send" aria-label="Send">
+              <ArrowUp />
+            </button>
+          ) : canListen ? (
+            <button type="button" className={`cx-mic${dictating ? " is-on" : ""}`} onClick={toggleDictation} aria-label={dictating ? "Stop dictation" : "Dictate"} title={dictating ? "Stop dictation" : "Dictate"} disabled={!configured}>
               <MicIcon />
               {dictating && <span className="cx-rec-dot" aria-hidden />}
             </button>
+          ) : (
+            <button type="submit" className="cx-send" disabled aria-label="Send">
+              <ArrowUp />
+            </button>
           )}
         </div>
-        <span className="cx-hint">{busy ? "Esc to stop" : dictating ? "Tap the mic to finish" : "Enter to send · Shift+Enter for a new line"}</span>
-        {busy ? (
-          <button type="button" className="cx-send cx-stop" onClick={() => run.current?.ctrl.abort()} aria-label="Stop">
-            <StopIcon />
-          </button>
-        ) : showVoiceButton ? (
-          <button
-            type="button"
-            className="cx-send cx-voice"
-            onClick={() => {
-              unlockSpeech();
-              setVoiceMode(true);
-            }}
-            aria-label="Voice mode"
-            title="Voice mode"
-            disabled={!configured}
-          >
-            <WaveIcon />
-          </button>
-        ) : (
-          <button type="submit" className="cx-send" disabled={!canSend} aria-label="Send">
-            <ArrowUp />
-          </button>
-        )}
       </div>
+      {showVoiceButton && (
+        <button
+          type="button"
+          className="cx-voice-btn"
+          onClick={() => {
+            unlockSpeech();
+            setVoiceMode(true);
+          }}
+          aria-label="Talk to the assistant"
+          title="Talk to the assistant"
+          disabled={!configured}
+        >
+          <WaveIcon />
+        </button>
+      )}
     </form>
   );
+
+  /** The status under the message just sent, like iMessage: Delivered, then Read once the assistant reacts or answers. */
+  const receipt = (i: number) => {
+    const e = entries[i];
+    if (!busy || i !== entries.length - 1 || e.role !== "user") return null;
+    return <div className="cx-receipt">{e.reaction || turn?.text || (turn?.steps.length ?? 0) > 1 ? "Read" : "Delivered"}</div>;
+  };
+
+  const stamp = (i: number) => {
+    const at = showStamp(entries, i);
+    return at ? <div className="cx-stamp">{stampLabel(at)}</div> : null;
+  };
 
   return (
     <div
@@ -602,34 +639,35 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
       <div className="cx-scroll" ref={scrollRef} onScroll={onScroll}>
         {empty ? (
           <div className="cx-empty">
-            <div className="cx-hello">
-              <h1>What do you need?</h1>
-              <p>Tell me like you’d tell a friend who knows every factory in China. I’ll find it, compare the options and fill your cart.</p>
+            <div className="cx-contact">
+              <span className="cx-avatar cx-avatar-lg" aria-hidden>
+                {initials}
+              </span>
+              <h1>{storeName}</h1>
+              <p>Shopping assistant · replies in seconds</p>
             </div>
-            {composer}
-            <ol className="cx-how" aria-label="How it works">
-              <li>
-                <b>1</b> Say what you need: type it, talk, or send a photo
-              </li>
-              <li>
-                <b>2</b> I find and compare the best options
-              </li>
-              <li>
-                <b>3</b> You check your cart and pay, shipping shown upfront
-              </li>
-            </ol>
-            {!configured && (
-              <p className="cx-err">
-                The assistant is switched off right now. You can still <Link href="/search">search the catalog</Link>.
-              </p>
-            )}
-            <p className="cx-try">Try one</p>
-            <div className="cx-examples">
-              {EXAMPLES.map((x) => (
-                <button key={x} type="button" className="cx-example" onClick={() => send(x)} disabled={!configured}>
-                  {x}
-                </button>
-              ))}
+            <div className="cx-col cx-greeting" aria-label="How it works">
+              <div className="cx-msg cx-bot">
+                <div className="cx-bubble cx-bubble-bot cx-no-tail">Hey! 👋 Tell me what you need, like you’d text a friend who knows every factory in China.</div>
+              </div>
+              <div className="cx-msg cx-bot">
+                <div className="cx-bubble cx-bubble-bot cx-no-tail">I’ll find it, compare the best options and fill your cart. You see the shipping before you pay.</div>
+              </div>
+              <div className="cx-msg cx-bot">
+                <div className="cx-bubble cx-bubble-bot">Type, talk 🎙️ or send a photo 📷. Or tap one of these:</div>
+              </div>
+              {!configured && (
+                <p className="cx-err">
+                  The assistant is switched off right now. You can still <Link href="/search">search the catalog</Link>.
+                </p>
+              )}
+              <div className="cx-examples" role="group" aria-label="Suggestions">
+                {EXAMPLES.map((x) => (
+                  <button key={x} type="button" className="cx-example" onClick={() => send(x)} disabled={!configured}>
+                    {x}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
@@ -642,6 +680,7 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
             {entries.map((e, i) =>
               e.role === "user" ? (
                 <div key={i} className="cx-msg cx-user">
+                  {stamp(i)}
                   {editing?.index === i ? (
                     <form
                       className="cx-edit"
@@ -673,7 +712,12 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
                       </div>
                     </form>
                   ) : (
-                    <div className="cx-user-col">
+                    <div className={`cx-user-col${e.reaction ? " has-tapback" : ""}`}>
+                      {e.reaction && (
+                        <span className="cx-tapback" role="img" aria-label={`The assistant reacted ${e.reaction}`} key={e.reaction}>
+                          {e.reaction}
+                        </span>
+                      )}
                       {e.images && e.images.length > 0 && (
                         <div className="cx-user-imgs">
                           {e.images.map((id) => (
@@ -683,7 +727,8 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
                           ))}
                         </div>
                       )}
-                      {e.text && <div className="cx-bubble">{e.text}</div>}
+                      {e.text && <div className="cx-bubble cx-bubble-me">{e.text}</div>}
+                      {receipt(i)}
                       {!busy && e.text && (
                         <div className="cx-actions cx-actions-user">
                           <button type="button" className="cx-icon-btn" onClick={() => copy(i, e.text)} aria-label="Copy message" title="Copy">
@@ -699,10 +744,16 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
                 </div>
               ) : (
                 <div key={i} className="cx-msg cx-bot">
-                  <Logo />
+                  {stamp(i)}
                   <div className="cx-bot-body">
-                    {e.steps && <Steps steps={e.steps} groups={e.groups ?? []} live={false} />}
-                    {e.text ? <Markdown text={e.text} /> : e.stopped ? null : <p className="cx-muted">No reply.</p>}
+                    {(e.groups?.length ?? 0) > 0 && <Steps steps={e.steps ?? []} groups={e.groups ?? []} live={false} />}
+                    {e.text ? (
+                      <div className="cx-bubble cx-bubble-bot">
+                        <Markdown text={e.text} />
+                      </div>
+                    ) : e.stopped ? null : (
+                      <div className="cx-bubble cx-bubble-bot cx-muted">No reply.</div>
+                    )}
                     {e.stopped && <p className="cx-stopped">You stopped this answer.</p>}
                     {e.added.length > 0 && (
                       <div className="cx-added">
@@ -760,15 +811,14 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
 
             {turn && (
               <div className="cx-msg cx-bot">
-                <Logo />
                 <div className="cx-bot-body">
-                  <Steps steps={turn.steps.length ? turn.steps : ["Thinking…"]} groups={turn.groups} live />
+                  {(turn.steps.length > 1 || turn.groups.length > 0) && <Steps steps={turn.steps} groups={turn.groups} live />}
                   {turn.text ? (
-                    <div className="cx-streaming">
+                    <div className="cx-bubble cx-bubble-bot cx-streaming">
                       <Markdown text={turn.text} />
                     </div>
                   ) : (
-                    <div className="cx-typing" aria-label="Working">
+                    <div className="cx-bubble cx-bubble-bot cx-typing" aria-label="The assistant is typing">
                       <span />
                       <span />
                       <span />
@@ -805,25 +855,23 @@ export default function Chat({ chatId, configured, cartCount, events }: { chatId
         )}
       </div>
 
-      {!empty && (
-        <div className="cx-dock">
-          {!atBottom && (
-            <button type="button" className="cx-jump" onClick={() => scrollToEnd(true)} aria-label="Jump to latest">
-              <DownIcon />
+      <div className="cx-dock">
+        {!atBottom && !empty && (
+          <button type="button" className="cx-jump" onClick={() => scrollToEnd(true)} aria-label="Jump to latest">
+            <DownIcon />
+          </button>
+        )}
+        {composer}
+        <p className="cx-disclaimer">
+          The assistant can make mistakes. Check specs before you order.{" "}
+          {allowance && !allowance.subscriber && plans && (
+            <button type="button" className="cx-plan-link" onClick={() => setShowPlans(true)}>
+              {allowance.remaining <= 0 ? "Free preview ended · Keep going" : allowance.remaining === 1 ? "Last free message · Keep going" : "Free preview · Plans"}
             </button>
-          )}
-          {composer}
-          <p className="cx-disclaimer">
-            The assistant can make mistakes. Check specs before you order.{" "}
-            {allowance && !allowance.subscriber && plans && (
-              <button type="button" className="cx-plan-link" onClick={() => setShowPlans(true)}>
-                {allowance.remaining <= 0 ? "Free preview ended · Keep going" : allowance.remaining === 1 ? "Last free message · Keep going" : "Free preview · Plans"}
-              </button>
-            )}{" "}
-            {cartCount > 0 && <Link href="/cart">Cart ({cartCount})</Link>}
-          </p>
-        </div>
-      )}
+          )}{" "}
+          {cartCount > 0 && <Link href="/cart">Cart ({cartCount})</Link>}
+        </p>
+      </div>
 
       {dragging && (
         <div className="cx-drop" aria-hidden>

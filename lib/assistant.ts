@@ -43,8 +43,9 @@ export interface ProductCard {
   group?: string;
 }
 export type UiEntry =
-  | { role: "user"; text: string; images?: string[] }
-  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit };
+  /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
+  | { role: "user"; text: string; images?: string[]; reaction?: string; at?: string }
+  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit; at?: string };
 
 /** Live events for the chat panel while a turn runs. */
 export type AssistantEvent =
@@ -53,7 +54,9 @@ export type AssistantEvent =
   /** Streamed words of the answer as the model writes them. */
   | { type: "text"; delta: string }
   /** The model finished a burst of text and is about to use tools. */
-  | { type: "break" };
+  | { type: "break" }
+  /** The assistant's emoji tapback on the shopper's message (arrives before the answer, like a friend reacting). */
+  | { type: "react"; emoji: string };
 
 function systemPrompt(): string {
   return `You are the sourcing assistant for ${config.storeName}, a Canadian B2B store where businesses and makers order almost anything from Chinese factories. Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
@@ -127,6 +130,39 @@ export async function generateTitle(text: string, hasImage: boolean): Promise<st
     return t && t.length <= 60 ? t : fallback;
   } catch {
     return fallback;
+  }
+}
+
+/** Tapbacks the assistant may use: warm, never mocking (no 😂 or 👎 on a customer's request). */
+export const REACTIONS = ["❤️", "👍", "‼️", "🔥", "👀", "🙌", "💯", "🤝", "😮", "🙏", "🎉", "⚡", "📦", "🛠️", "😍", "🫡"] as const;
+const REACTION_SET = new Set<string>(REACTIONS);
+
+/** Normalizes a model's reply to one allowed emoji ("❤" and "❤️" are the same tapback), or null for none. */
+export function parseReaction(raw: string): string | null {
+  const t = raw.trim().split(/\s+/)[0] ?? "";
+  if (REACTION_SET.has(t)) return t;
+  const withVs = t.replace(/\uFE0F/g, "") + "\uFE0F";
+  if (REACTION_SET.has(withVs)) return withVs;
+  return REACTIONS.find((r) => r.replace(/\uFE0F/g, "") === t.replace(/\uFE0F/g, "")) ?? null;
+}
+
+/**
+ * Picks the emoji tapback the assistant leaves on a shopper's message, the way a friend reacts in iMessage.
+ * A tiny, fast call (a fraction of a cent) that runs alongside the answer; its cost counts toward the plan budget.
+ */
+export async function pickReaction(text: string, hasImage: boolean): Promise<{ emoji: string | null; micros: number }> {
+  if (!text.trim() && !hasImage) return { emoji: null, micros: 0 };
+  try {
+    const r = await new Anthropic().messages.create({
+      model: SCOUT_MODEL,
+      max_tokens: 8,
+      system: `You are a friendly shopping assistant texting with a customer in iMessage. React to their latest message with ONE tapback emoji, the way a warm, upbeat person would. Pick from: ${REACTIONS.join(" ")}. Excited project or big order: 🔥 🙌 ⚡. Thanks or kind words: ❤️ 🙏. A clear request: 👍 🫡 🛠️ 📦. A photo: 👀 😍. Reply with the emoji only. Reply "none" if a reaction would feel wrong (a complaint, a problem with an order, or anything sad or sensitive).`,
+      messages: [{ role: "user", content: `${hasImage ? "[sent a photo] " : ""}${text.slice(0, 600)}` }],
+    });
+    const out = r.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+    return { emoji: parseReaction(out), micros: costMicros(r.model, r.usage) };
+  } catch {
+    return { emoji: null, micros: 0 };
   }
 }
 
@@ -559,9 +595,10 @@ export async function chatTurn(
   cartId: string,
   input: TurnInput,
   emit: (e: AssistantEvent) => void = () => {},
-): Promise<{ entry: UiEntry & { role: "assistant" }; costMicros: number }> {
+): Promise<{ entry: UiEntry & { role: "assistant" }; costMicros: number; reaction: string | null }> {
   const text = input.text.trim().slice(0, MAX_MESSAGE_CHARS);
   const images = (input.images ?? []).slice(0, 4);
+  const sentAt = new Date().toISOString();
   const chat = await prisma.assistantChat.findUniqueOrThrow({ where: { id: chatId } });
 
   // History is otherwise append-only: thinking and fallback blocks must go back to the API exactly as received.
@@ -575,6 +612,11 @@ export async function chatTurn(
     turns = n;
   }
   if (turns >= MAX_USER_TURNS) throw new AssistantLimitError("This chat is full. Start a new one to keep going.");
+  // The tapback lands while the answer is still being written.
+  const reacting = pickReaction(text, images.length > 0).then((r) => {
+    if (r.emoji) emit({ type: "react", emoji: r.emoji });
+    return r;
+  });
   messages.push({
     role: "user",
     content: images.length
@@ -643,8 +685,20 @@ export async function chatTurn(
     if (round === MAX_TOOL_ROUNDS - 1) reply ||= "I found a lot to go through. Tell me which part to look at next.";
   }
 
-  const entry: UiEntry & { role: "assistant" } = { role: "assistant", text: reply || "Done.", cards: ctx.cards.slice(0, 30), added: ctx.added, ...(ctx.kit ? { kit: ctx.kit } : {}) };
-  ui.push({ role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}) }, entry);
+  const reaction = await reacting;
+  usage.micros += reaction.micros;
+  const entry: UiEntry & { role: "assistant" } = {
+    role: "assistant",
+    text: reply || "Done.",
+    cards: ctx.cards.slice(0, 30),
+    added: ctx.added,
+    ...(ctx.kit ? { kit: ctx.kit } : {}),
+    at: new Date().toISOString(),
+  };
+  ui.push(
+    { role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(reaction.emoji ? { reaction: reaction.emoji } : {}), at: sentAt },
+    entry,
+  );
   await prisma.assistantChat.update({
     where: { id: chat.id },
     data: {
@@ -658,7 +712,7 @@ export async function chatTurn(
   // Fetch the likely buys in the background so "Add" and "Add entire kit" are near-instant.
   prewarmProducts([...(ctx.kit?.items.map((i) => i.pid) ?? []), ...firstPickPerPart(ctx.cards)]);
   // What this message cost us (planner and scouts), for per-plan AI budgets.
-  return { entry, costMicros: usage.micros };
+  return { entry, costMicros: usage.micros, reaction: reaction.emoji };
 }
 
 function firstPickPerPart(cards: ProductCard[]): string[] {
