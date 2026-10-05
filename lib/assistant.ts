@@ -18,6 +18,7 @@ import { addKitToCart, type Kit, type KitItem } from "@/lib/kit";
 import { bulkPricingLabel, priceOrder } from "@/lib/volume";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { costMicros } from "@/lib/ai-cost";
+import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -75,6 +76,7 @@ How to work:
 - After you present picks for a project, call propose_kit once with your recommended pick for each part you found (sensible quantities; an option in words when it matters, e.g. "20Ah"). The shopper sees it as a kit card with an "Add entire kit" button.
 - When the shopper asks to add the whole kit, everything, or all of it, call add_kit in the same turn with the kit's items (adjusted for anything they changed). Don't ask again; afterwards, list what was added and anything that failed.
 - Shoppers can send photos: a broken or worn part, a product they want more of, a label, spec plate or packaging, a sketch, or a space to fit out. Say briefly what you see and read any model numbers, voltages, sizes or connectors in it, then search for that exact item or compatible parts. If a key spec isn't visible, ask for it or for another photo.
+- Warehouses: products in CJ's US warehouse ship to US addresses only; products in the China warehouse ship to the US and Canada. get_product's ships_from says which applies; mention it when it matters (a US-warehouse-only item for a Canadian shopper can't be sent to them).
 - get_product says whether the product can ship to the shopper's country (ships_to_shopper). If it says NO, don't add it or put it in a kit: tell the shopper it can't ship to them and find an alternative that does (for a large lithium battery, try other packs; some ship from other warehouses). If a cart can't ship, view_cart and the cart page name the item that blocks it.
 - Some products are made with the shopper's own photo or text (print on demand). When they want something custom, personalized, printed with a photo, logo or name, or a personal gift, call show_personalized_products and point them to those cards. You can't add these to the cart yourself: tell them to tap Add on the card, which opens a designer where they upload a photo (any they already sent you is one tap away) or type text, see a preview, and add it. Personalized items can't be returned, so mention that they should check the preview.
 - Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
@@ -483,6 +485,7 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
     // Can this product reach the shopper at all? (CJ has no route for some items, e.g. large lithium
     // batteries to some countries.) One unit of the first in-stock option, from any warehouse that stocks it.
     const shipTo = await getShipTo().catch(() => ({ country: "CA", zip: "" }));
+    const warehouse = warehouseLabel(warehousesFrom(variants.map((v) => v.offer?.cjSupplierVariant.inventoryJson)));
     const probe = variants.find((v) => v.offer && stockStatus(v.offer.cjSupplierVariant.inventoryTotal) !== "UNAVAILABLE") ?? variants.find((v) => v.offer);
     let ships: string | undefined;
     if (probe?.offer) {
@@ -494,6 +497,7 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
       content: JSON.stringify({
         title: product.title,
         ...(ships ? { ships_to_shopper: `${countryLabel(shipTo.country)}: ${ships}` } : {}),
+        ...(warehouse ? { ships_from: warehouse } : {}),
         options: variants
           .filter((v) => v.offer)
           .map((v) => ({

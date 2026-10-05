@@ -15,11 +15,28 @@ export function countryLabel(code: string): string {
 }
 
 /** "X can’t ship to Canada…" naming the products that block a cart (VIDs → names via `nameOf`). */
-export function blockedMessage(blocked: string[], nameOf: (vid: string) => string | undefined, country: string): string | null {
+export function blockedMessage(
+  blocked: string[],
+  nameOf: (vid: string) => string | undefined,
+  country: string,
+  /** True for items stocked only in the US warehouse (which ships to US addresses only). */
+  usWarehouseOnly: (vid: string) => boolean = () => false,
+): string | null {
   if (!blocked.length) return null;
-  const names = [...new Set(blocked.map((v) => nameOf(v) ?? "An item in a mystery box"))];
-  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return `${list} can’t ship to ${countryLabel(country)} from any of our warehouses. Remove ${names.length === 1 ? "it" : "them"} to check out the rest, or choose another country.`;
+  const listOf = (vids: string[]) => {
+    const names = [...new Set(vids.map((v) => nameOf(v) ?? "An item in a mystery box"))];
+    return { names, text: names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` };
+  };
+  const usOnly = country !== "US" ? blocked.filter(usWarehouseOnly) : [];
+  const other = blocked.filter((v) => !usOnly.includes(v));
+  const parts: string[] = [];
+  if (usOnly.length) {
+    const l = listOf(usOnly);
+    parts.push(`${l.text} ${l.names.length === 1 ? "is" : "are"} in our US warehouse, which ships to US addresses only.`);
+  }
+  if (other.length) parts.push(`${listOf(other).text} can’t ship to ${countryLabel(country)} from any of our warehouses.`);
+  const n = listOf(blocked).names.length;
+  return `${parts.join(" ")} Remove ${n === 1 ? "it" : "them"} to check out the rest, or choose another country.`;
 }
 
 export function isShipCountry(code: string | null | undefined): code is string {

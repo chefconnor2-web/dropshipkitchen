@@ -3,6 +3,7 @@ import Link from "next/link";
 import { withCjPriority } from "@/lib/cj/lanes";
 import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
+import { usOnly, warehousesFrom } from "@/lib/warehouses";
 import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, estimateFromHistory, parcelsLabel, quoteCart, type CartQuote, type ShipEstimate, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
@@ -111,7 +112,12 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                     {design && <div className="cart-design small">{design}</div>}
                     {i.variant.offer && (
                       <Suspense key={quoteKey} fallback={null}>
-                        <BlockedMark quote={quote} vid={i.variant.offer.cjSupplierVariant.cjVariantId} country={shipTo.country} />
+                        <BlockedMark
+                          quote={quote}
+                          vid={i.variant.offer.cjSupplierVariant.cjVariantId}
+                          country={shipTo.country}
+                          usWarehouseOnly={usOnly(warehousesFrom([i.variant.offer.cjSupplierVariant.inventoryJson]))}
+                        />
                       </Suspense>
                     )}
                     <div className={`stock stock-${s} small`}>
@@ -196,7 +202,12 @@ async function shipState(q: Promise<CartQuote>, items: CartItems, country: strin
     const { tiers, blocked } = await q;
     if (tiers.length) return { tiers, blocked, error: null };
     const error =
-      blockedMessage(blocked, (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title, country) ??
+      blockedMessage(
+        blocked,
+        (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title,
+        country,
+        (vid) => usOnly(warehousesFrom([items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.offer?.cjSupplierVariant.inventoryJson])),
+      ) ??
       (items.reduce((n, i) => n + i.quantity, 0) >= 20
         ? "This order is too large to ship, even split into parcels. Lower the quantity or contact us for a freight quote."
         : "These items can’t ship to that country.");
@@ -206,9 +217,14 @@ async function shipState(q: Promise<CartQuote>, items: CartItems, country: strin
   }
 }
 
-async function BlockedMark({ quote, vid, country }: { quote: Promise<ShipState>; vid: string; country: string }) {
+async function BlockedMark({ quote, vid, country, usWarehouseOnly }: { quote: Promise<ShipState>; vid: string; country: string; usWarehouseOnly: boolean }) {
   const { blocked } = await quote;
-  return blocked.includes(vid) ? <div className="err-text small">Can’t ship to {countryLabel(country)}</div> : null;
+  if (!blocked.includes(vid)) return null;
+  return (
+    <div className="err-text small">
+      {usWarehouseOnly && country !== "US" ? "US warehouse · ships to US addresses only" : `Can’t ship to ${countryLabel(country)}`}
+    </div>
+  );
 }
 
 function SummaryRows({ subtotal, units, savings, shipping, tierLabel }: { subtotal: number; units: number; savings: number; shipping: React.ReactNode; tierLabel?: string }) {

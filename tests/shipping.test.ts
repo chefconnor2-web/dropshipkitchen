@@ -14,14 +14,23 @@ test("stockByCountry sums CJ's warehouse rows per country", () => {
   assert.equal(stockByCountry("garbage").size, 0);
 });
 
-test("originCandidates tries China first for Canada, then warehouses that stock everything", () => {
-  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3 }) }], "CA"), ["CN", "US"]);
-  // a Canadian warehouse would come before the US one
-  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3, CA: 2 }) }], "CA"), ["CN", "CA", "US"]);
-  // the US warehouse only counts when it covers the quantity
-  assert.deepEqual(originCandidates([{ quantity: 5, inventoryJson: inv({ CN: 10, US: 3 }) }], "CA"), ["CN"]);
+test("originCandidates: China for Canada, never the US warehouse; US addresses prefer the US warehouse", () => {
+  // US warehouse stock ships to US addresses only.
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3 }) }], "CA"), ["CN"]);
+  // a Canadian warehouse would come after China (same country), never the US one
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3, CA: 2 }) }], "CA"), ["CN", "CA"]);
   // US addresses still prefer the US warehouse when it covers everything
   assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3 }) }], "US"), ["US", "CN"]);
+  // the US warehouse only counts when it covers the quantity
+  assert.deepEqual(originCandidates([{ quantity: 5, inventoryJson: inv({ CN: 10, US: 3 }) }], "US"), ["CN"]);
+});
+
+test("a US-warehouse-only product can't go to Canada, but can go to the US", () => {
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ US: 40 }) }], "CA"), []);
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ US: 40 }) }], "US"), ["US"]);
+  // unknown stock: China, CJ's default, for either country
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: null }], "CA"), ["CN"]);
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: null }], "US"), ["CN"]);
 });
 
 const opt = (cents: number): ParcelOption[] => [{ method: "Line", cents, minDays: 7, maxDays: 12 }];

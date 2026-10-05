@@ -257,6 +257,8 @@ model ShipCheck {
   country   String
   ok        Boolean
   cents     Int?
+  /// Warehouses holding the product: "US", "CN", "US,CN", "?" when unknown (see lib/warehouses.ts); null on answers from before the warehouse rule.
+  origins   String?
   checkedAt DateTime @default(now())
 
   @@id([pid, country])

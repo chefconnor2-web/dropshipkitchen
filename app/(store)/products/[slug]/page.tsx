@@ -5,6 +5,8 @@ import { config } from "@/lib/config";
 import ProductView from "./ProductView";
 import { getShipTo } from "@/lib/cart";
 import { fastShipView } from "@/lib/ship-view";
+import { prisma } from "@/lib/db";
+import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const shipTo = await getShipTo();
   // Shipping for the first option, from memory or an estimate (never waits on CJ), so it's there on first paint.
   const firstVariant = p.variants.find((v) => v.stock !== "UNAVAILABLE") ?? p.variants[0];
+  const stock = await prisma.productVariant.findMany({
+    where: { id: { in: p.variants.map((v) => v.id) } },
+    select: { offer: { select: { cjSupplierVariant: { select: { inventoryJson: true } } } } },
+  });
+  const warehouse = warehouseLabel(warehousesFrom(stock.map((v) => v.offer?.cjSupplierVariant.inventoryJson)));
   const initialShip = firstVariant ? { variantId: firstVariant.id, view: await fastShipView(firstVariant.id, 1, shipTo.country, shipTo.zip) } : null;
   return (
     <div className="wrap page">
@@ -35,7 +42,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         {" / "}
         <span>{p.title}</span>
       </nav>
-      <ProductView product={p} shipTo={{ country: shipTo.country, zip: shipTo.zip }} initialShip={initialShip} />
+      <ProductView product={p} shipTo={{ country: shipTo.country, zip: shipTo.zip }} initialShip={initialShip} warehouse={warehouse} />
       {p.description && (
         <section className="pdp-details">
           <h2 className="section-title">Details</h2>

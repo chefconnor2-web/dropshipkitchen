@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 
-// "Ships to Canada" on product cards. Every badge on the page shares one request to /api/ship-check;
+// "Ships to Canada · from China" on product cards, and "US warehouse · ships to US only" where that's the
+// reason it can't reach the shopper. Every badge on the page shares one request to /api/ship-check;
 // answers still being worked out are asked for again every few seconds until they arrive.
-type Status = { state: "ok"; cents: number | null } | { state: "no" } | { state: "pending" };
-type Answer = { status: Status; countryName: string };
+type Status = { state: "ok"; cents: number | null; from?: string | null } | { state: "no"; from?: string | null } | { state: "pending" };
+type Answer = { status: Status; countryName: string; country: string };
 
 const answers = new Map<string, Answer>();
 const listeners = new Map<string, Set<(a: Answer) => void>>();
@@ -29,11 +30,11 @@ async function flush() {
     const pids = all.slice(i, i + BATCH);
     try {
       const r = await fetch("/api/ship-check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pids }) });
-      const d = (await r.json()) as { countryName: string; statuses: Record<string, Status> };
+      const d = (await r.json()) as { country: string; countryName: string; statuses: Record<string, Status> };
       for (const pid of pids) {
         const status = d.statuses[pid];
         if (!status) continue;
-        const a = { status, countryName: d.countryName };
+        const a = { status, countryName: d.countryName, country: d.country };
         answers.set(pid, a);
         listeners.get(pid)?.forEach((fn) => fn(a));
         if (status.state === "pending") {
@@ -71,16 +72,25 @@ export default function ShipBadge({ pid, className = "" }: { pid: string | null 
   }, [pid]);
   if (!pid) return null;
   if (!a) return <span className={`ship-badge ship-wait ${className}`} aria-hidden>&nbsp;</span>;
-  if (a.status.state === "ok")
+  if (a.status.state === "ok") {
+    const from = (a.status.from ?? "").split(",");
+    // US addresses go from the US warehouse when it has stock; everything else comes from China.
+    const origin = a.country === "US" && from.includes("US") ? "US warehouse" : from.includes("CN") ? "China" : null;
     return (
       <span className={`ship-badge ship-ok ${className}`}>
-        <i aria-hidden /> Ships to {a.countryName}
+        <i aria-hidden />
+        <span>
+          Ships to {a.countryName}
+          {origin && <span className="ship-from"> · from {origin}</span>}
+        </span>
       </span>
     );
+  }
   if (a.status.state === "no")
     return (
       <span className={`ship-badge ship-no ${className}`}>
-        <i aria-hidden /> Doesn’t ship to {a.countryName}
+        <i aria-hidden />
+        <span>{a.status.from === "US" && a.country !== "US" ? "US warehouse · ships to US only" : `Doesn’t ship to ${a.countryName}`}</span>
       </span>
     );
   return (

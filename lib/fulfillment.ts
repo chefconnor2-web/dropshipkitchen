@@ -9,6 +9,7 @@ import { config } from "@/lib/config";
 import { priceToCents } from "@/lib/money";
 import { ORDER_STATUS } from "@/lib/orders";
 import { sendOrderEmail } from "@/lib/order-emails";
+import { canShipFrom } from "@/lib/warehouses";
 import { choosePlan, parcelOptions, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
 import { podPropertiesForItems } from "@/lib/personalize";
 
@@ -65,7 +66,13 @@ export function originCandidates(items: Array<{ quantity: number; inventoryJson:
   const covering = [...countries].filter((c) => items.every((i, n) => (stock[n].get(c) ?? 0) >= i.quantity));
   // Same-country warehouses first (no border), then the US, then the rest.
   covering.sort((a, b) => Number(b === destCountry) - Number(a === destCountry) || Number(b === "US") - Number(a === "US") || a.localeCompare(b));
-  return [...new Set([chooseFromCountry(items, destCountry), ...covering, "CN"])];
+  // China is CJ's default when stock is unknown; but when every item's stock is known and China has none of
+  // it, shipping "from China" would only fail at CJ later (e.g. a US-warehouse-only item to Canada).
+  const allKnown = items.length > 0 && stock.every((m) => m.size > 0);
+  const chinaFallback = !allKnown || covering.includes("CN");
+  return [...new Set([chooseFromCountry(items, destCountry), ...covering, ...(chinaFallback ? ["CN"] : [])])].filter(
+    (origin) => canShipFrom(origin, destCountry) && (origin !== "CN" || chinaFallback),
+  );
 }
 
 function countryName(code: string): string {
