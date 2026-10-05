@@ -40,14 +40,17 @@ export const config = {
     storeEmail: process.env.STORE_EMAIL?.trim() || "",
   },
   siteUrl: (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, ""),
-  storeName: process.env.STORE_NAME || "Tetherless",
+  storeName: process.env.STORE_NAME || "C1",
   // mock (default): never sends orders to CJ · sandbox: CJ sandbox orders only (no charge, no shipping)
   // · live: also real CJ orders, paid from the CJ balance, each one confirmed by the merchant.
   supplierMode: (process.env.SUPPLIER_MODE || "mock").toLowerCase(),
 };
 
-/** Initials of the store name ("Tetherless" → "T", "Outpost Power Co." → "OC"): logo mark, SKU and order prefixes. */
+/** Initials of the store name ("C1" → "C1", "Outpost Power Co." → "OC"): SKU and order prefixes. */
 export function storeInitials(): string {
+  // A name that's already short ("C1") is its own initials.
+  const compact = config.storeName.replace(/[^A-Za-z0-9]/g, "");
+  if (compact.length > 0 && compact.length <= 3) return compact.toUpperCase();
   const words = config.storeName.split(/[^A-Za-z0-9]+/).filter(Boolean);
   const pick = words.length > 2 ? [words[0], words[words.length - 1]] : words;
   return pick.map((w) => w[0].toUpperCase()).join("").slice(0, 3) || "ST";
