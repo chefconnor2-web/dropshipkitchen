@@ -53,10 +53,12 @@ async function resolveVariant(productId: string, hint?: string) {
 /** Adds every kit item to the cart; one failure doesn't stop the rest. */
 export async function addKitToCart(cartId: string, items: KitItem[], onItem: (done: number, total: number, r: KitLineResult) => void = () => {}) {
   const results: KitLineResult[] = [];
+  // Open every product at once (CJ's rate limit still paces the calls, but replies overlap), then add in order.
+  const opening = items.map((item) => openCjProduct(item.pid).catch(() => null));
   for (const [i, item] of items.entries()) {
     let r: KitLineResult;
     try {
-      const product = await openCjProduct(item.pid);
+      const product = await opening[i];
       const variant = product ? await resolveVariant(product.id, item.option) : null;
       if (!variant) r = { part: item.part, title: item.title, ok: false, message: "Not available any more." };
       else {

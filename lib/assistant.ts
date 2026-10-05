@@ -714,7 +714,7 @@ export async function chatTurn(
     },
   });
   // Fetch the likely buys in the background so "Add" and "Add entire kit" are near-instant.
-  prewarmProducts([...(ctx.kit?.items.map((i) => i.pid) ?? []), ...firstPickPerPart(ctx.cards)]);
+  prewarmProducts([...(ctx.kit?.items.map((i) => i.pid) ?? []), ...firstPickPerPart(ctx.cards), ...ctx.cards.map((c) => c.pid)]);
   // What this message cost us (planner and scouts), for per-plan AI budgets.
   return { entry, costMicros: usage.micros, reaction: reaction.emoji };
 }

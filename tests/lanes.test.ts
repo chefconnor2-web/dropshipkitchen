@@ -73,3 +73,21 @@ test("no more than maxConcurrent calls are in flight", async () => {
   })));
   assert.equal(peak, 2);
 });
+
+test("background work never takes the last slot: a tap starts while slow background calls run", async () => {
+  const throttled = makeThrottle(() => 1, () => 3);
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const slow = (name: string) => throttled(async () => { started.push(name); await gate; });
+  const bg = [1, 2, 3, 4].map((i) => withCjPriority("background", () => slow(`bg${i}`)));
+  await new Promise((r) => setTimeout(r, 40));
+  // Two background calls are in flight; the third slot is held for a shopper.
+  assert.deepEqual(started, ["bg1", "bg2"]);
+  const tap = withCjPriority("urgent", () => throttled(async () => void started.push("tap")));
+  await tap;
+  assert.deepEqual(started, ["bg1", "bg2", "tap"]);
+  release();
+  await Promise.all(bg);
+  assert.deepEqual(started.slice(3).sort(), ["bg3", "bg4"]);
+});

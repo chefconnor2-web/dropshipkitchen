@@ -5,6 +5,9 @@ import { withCjPriority } from "@/lib/cj/lanes";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { prewarmCartQuote } from "@/lib/cart-quote";
 
+/** How long an Add waits on a first-time CJ stock check before adding anyway (checkout verifies). */
+const STOCK_WAIT_MS = 1500;
+
 export async function addVariantToCart(
   cartId: string,
   variantId: string,
@@ -25,8 +28,9 @@ export async function addVariantToCart(
     if (design?.variantId !== variantId) return { ok: false, message: "That design doesn’t match this option. Please design it again." };
   }
 
-  // A known cached stock count answers at once (checkout re-checks stale stock live before payment), and
-  // a stale one is refreshed in the background. Only a variant we have never counted waits on CJ.
+  // A known cached stock count answers at once, and a stale one is refreshed in the background. A variant we
+  // have never counted gets a short live check; if CJ is slow or busy the item goes in anyway, because
+  // checkout re-checks every line live before payment. Only a confirmed sold-out option is refused here.
   const svId = variant.offer.cjSupplierVariantId;
   const cached = await prisma.cjSupplierVariant.findUnique({ where: { id: svId }, select: { inventoryTotal: true, inventoryCheckedAt: true } });
   let fresh: { total: number | null } | undefined;
@@ -34,11 +38,10 @@ export async function addVariantToCart(
     fresh = { total: cached.inventoryTotal };
     if (isStale(cached.inventoryCheckedAt)) void withCjPriority("background", () => ensureFreshInventory([svId])).catch(() => null);
   } else {
-    fresh = (await ensureFreshInventory([svId])).get(svId);
+    const live = ensureFreshInventory([svId]).then((m) => m.get(svId)).catch(() => undefined);
+    fresh = await Promise.race([live, new Promise<undefined>((r) => setTimeout(() => r(undefined), STOCK_WAIT_MS))]);
   }
-  const status = stockStatus(fresh?.total);
-  if (status === "UNKNOWN") return { ok: false, message: "We couldn't confirm availability right now. Please try again shortly." };
-  if (status === "UNAVAILABLE") return { ok: false, message: "Sorry, that option is currently unavailable." };
+  if (stockStatus(fresh?.total) === "UNAVAILABLE") return { ok: false, message: "Sorry, that option is currently unavailable." };
 
   // Each design is its own cart line; plain lines of the same variant merge.
   const existing = personalizationId ? null : await prisma.cartItem.findFirst({ where: { cartId, variantId, personalizationId: null } });
