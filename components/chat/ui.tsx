@@ -36,8 +36,9 @@ export interface Kit {
   items: KitItem[];
 }
 /** `steps` and `groups` are only kept in the browser, to show how the answer was found. */
-export type BotEntry = { role: "assistant"; text: string; cards: Card[]; added: string[]; kit?: Kit; steps?: string[]; groups?: LiveGroup[]; stopped?: boolean };
-export type UserEntry = { role: "user"; text: string; images?: string[] };
+export type BotEntry = { role: "assistant"; text: string; cards: Card[]; added: string[]; kit?: Kit; steps?: string[]; groups?: LiveGroup[]; stopped?: boolean; at?: string };
+/** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
+export type UserEntry = { role: "user"; text: string; images?: string[]; reaction?: string; at?: string };
 export type Entry = UserEntry | BotEntry;
 export interface Turn {
   text: string;
@@ -59,6 +60,26 @@ export const EXAMPLES = [
   "Everything for a road trip with two kids",
   "Battery setup for a custom 48V e-bike, plus the tools to build it",
 ];
+
+/** iMessage-style timestamp: "Today 2:14 PM", "Yesterday 9:02 AM", "Monday 9:02 AM", "Oct 3, 2026 at 9:02 AM". */
+export function stampLabel(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400_000);
+  if (diff === 0) return `Today ${time}`;
+  if (diff === 1) return `Yesterday ${time}`;
+  if (diff > 1 && diff < 7) return `${d.toLocaleDateString("en-US", { weekday: "long" })} ${time}`;
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} at ${time}`;
+}
+
+/** A timestamp goes above the first message and above any message sent an hour or more after the one before. */
+export function showStamp(entries: Array<{ at?: string }>, i: number): string | null {
+  const at = entries[i]?.at;
+  if (!at) return null;
+  const prev = [...entries.slice(0, i)].reverse().find((e) => e.at)?.at;
+  return !prev || new Date(at).getTime() - new Date(prev).getTime() >= 3600_000 ? at : null;
+}
 
 export function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -209,6 +230,7 @@ const icon = (d: ReactNode, size = 18) => (
   </svg>
 );
 export const MicIcon = () => icon(<><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>);
+export const PlusIcon2 = () => icon(<path d="M12 5v14M5 12h14" />, 20);
 export const WaveIcon = () => icon(<path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4" />);
 export const ClipIcon = () => icon(<path d="m21 11-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" />);
 export const SpeakerIcon = () => icon(<><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" /></>, 15);

@@ -100,11 +100,11 @@ export async function POST(req: Request) {
             })
           : null;
       try {
-        const { entry, costMicros } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
+        const { entry, costMicros, reaction } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
         await recordAiUse({ customerId: memberId, visitorId, chatId: chatRow.id, costMicros });
         await Promise.race([titling, new Promise((r) => setTimeout(r, 4000))]);
         const after = await aiAllowance({ customerId: memberId, visitorId });
-        send({ type: "done", entry, cartCount: await cartCount(), allowance: { remaining: after.remaining, limit: after.limit, subscriber: after.subscriber } });
+        send({ type: "done", entry, reaction, cartCount: await cartCount(), allowance: { remaining: after.remaining, limit: after.limit, subscriber: after.subscriber } });
       } catch (e) {
         let error = "Something went wrong. Please try again.";
         if (e instanceof AssistantLimitError) error = e.message;

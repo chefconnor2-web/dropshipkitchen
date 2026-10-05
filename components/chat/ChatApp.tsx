@@ -293,7 +293,16 @@ export default function ChatApp(props: { storeName: string; initials: string; co
               </button>
             </>
           )}
-          <div className="topbar-title">{active ? active.title : <span className="topbar-brand">{props.storeName} <span>Shopping assistant</span></span>}</div>
+          {/* Like the contact at the top of an iMessage thread. */}
+          <div className="topbar-title topbar-contact">
+            <span className="cx-avatar" aria-hidden>
+              {props.initials}
+            </span>
+            <span className="topbar-name">
+              {props.storeName}
+              <span className="topbar-sub">{active ? active.title : "Shopping assistant"}</span>
+            </span>
+          </div>
           <button type="button" className="sb-icon show-mobile" onClick={newChat} aria-label="New chat">
             <NewChatIcon />
           </button>
@@ -303,7 +312,7 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             {cartCount > 0 && <span className="sb-badge">{cartCount}</span>}
           </Link>
         </header>
-        <Chat chatId={chatId} configured={props.configured} cartCount={cartCount} events={events} />
+        <Chat chatId={chatId} configured={props.configured} cartCount={cartCount} events={events} storeName={props.storeName} initials={props.initials} />
       </main>
     </div>
   );
