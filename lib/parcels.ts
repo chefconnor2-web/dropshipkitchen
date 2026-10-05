@@ -141,7 +141,7 @@ export async function planParcels(
   // Products are checked side by side (CJ calls overlap); each tries its warehouses in order.
   const origins = await Promise.all(
     items.map(async (line) => {
-      for (const origin of line.origins?.length ? line.origins : [from]) if ((await quoteFrom(origin, [{ vid: line.vid, quantity: 1 }])).length) return origin;
+      for (const origin of line.origins ?? [from]) if ((await quoteFrom(origin, [{ vid: line.vid, quantity: 1 }])).length) return origin;
       return undefined;
     }),
   );

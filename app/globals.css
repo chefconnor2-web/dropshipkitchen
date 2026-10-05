@@ -1678,3 +1678,6 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .pcard-ship { margin-top: 6px; }
 .cx-card .ship-badge { margin: 2px 0 6px; font-size: 11.5px; }
 .chat-app .cx-card .ship-badge { margin: 2px 11px 0; }
+.ship-badge { align-items: flex-start; }
+.ship-badge i { margin-top: 0.42em; }
+.ship-from { white-space: nowrap; opacity: 0.85; }

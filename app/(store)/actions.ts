@@ -9,6 +9,7 @@ import { allocatePrice, drawBox, loadPool, type PoolVariant } from "@/lib/myster
 import { addVariantToCart } from "@/lib/cart-add";
 import { priceOrder } from "@/lib/volume";
 import { createFreightRequest } from "@/lib/freight";
+import { usOnly, warehousesFrom } from "@/lib/warehouses";
 import { blockedMessage, daysLabel, isShipCountry, parcelsLabel, quoteCart, quoteTiers } from "@/lib/shipping";
 import { withCjPriority } from "@/lib/cj/lanes";
 
@@ -127,7 +128,12 @@ async function placeCheckout() {
   const tiers = quote.tiers;
   const tier = tiers.find((t) => t.key === shipTo.tier) ?? tiers[0];
   if (!tier) {
-    const why = blockedMessage(quote.blocked, (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title, shipTo.country);
+    const why = blockedMessage(
+      quote.blocked,
+      (vid) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.product.title,
+      shipTo.country,
+      (vid) => usOnly(warehousesFrom([items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid)?.variant.offer?.cjSupplierVariant.inventoryJson])),
+    );
     redirect(`/cart?error=${encodeURIComponent(why ?? "Sorry, we can’t ship these items to that country.")}`);
   }
 

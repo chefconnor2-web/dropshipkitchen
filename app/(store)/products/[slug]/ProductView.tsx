@@ -10,8 +10,11 @@ export default function ProductView({
   product: p,
   shipTo,
   initialShip,
+  warehouse,
 }: {
   product: PublicProduct;
+  /** Where it ships from and to, e.g. "US warehouse · ships to US addresses only". */
+  warehouse?: string | null;
   shipTo: { country: string; zip: string };
   initialShip?: { variantId: string; view: ShipView } | null;
 }) {
@@ -36,6 +39,11 @@ export default function ProductView({
           mockupSrc={variant?.imageSrc ?? p.images[0]?.src ?? null}
         />
         <ul className="assurances">
+          {warehouse && (
+            <li className="pdp-warehouse">
+              <strong>Ships from</strong> {warehouse}
+            </li>
+          )}
           {p.estimatedDelivery && (
             <li>
               <strong>Estimated delivery</strong> {p.estimatedDelivery}
