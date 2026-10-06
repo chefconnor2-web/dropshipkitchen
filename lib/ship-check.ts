@@ -1,67 +1,92 @@
-// "Ships to Canada" badges on product cards: does one unit of a product ship to the shopper's country?
-// Answers come from the same live CJ freight quote as the cart (all warehouses tried) and are kept for a
-// week per product and country, so a grid shows them at once after the first look. Unknown ones are worked
-// out in the background, behind anything a shopper is waiting on, and the card fills in when ready.
+// "Ships to Canada" badges on product cards. The answer follows the store's warehouse rule (lib/warehouses.ts):
+// China-warehouse stock ships to the US and Canada; US-warehouse stock ships to US addresses only. So a badge only
+// needs to know which warehouse holds the product, never a freight quote (the cart still quotes live before
+// checkout). Unknown products answer at once with CJ's default, China ("Ships to Canada"), while a background
+// stock lookup confirms the warehouse; the card quietly updates if it turns out to be US-only.
 import { prisma } from "@/lib/db";
 import { getStockByVid, getVariantsByPid } from "@/lib/cj/client";
 import { withCjPriority } from "@/lib/cj/lanes";
-import { quoteCart } from "@/lib/shipping";
 import { processSingleton } from "@/lib/singleton";
 import { PID_RE } from "@/lib/open-product";
-import { originsCode, usOnly, warehousesFrom } from "@/lib/warehouses";
+import { canShipFrom, originsCode, parseOrigins, warehousesFrom } from "@/lib/warehouses";
 
-/** from: where the product ships from ("US", "CN", "US,CN"), when known. */
-export type ShipStatus = { state: "ok"; cents: number | null; from?: string | null } | { state: "no"; from?: string | null } | { state: "pending" };
+/**
+ * from: where the product ships from ("US", "CN", "US,CN"), when known. provisional: answered by the default
+ * (China) while the warehouse is being confirmed; ask again later.
+ */
+export type ShipStatus =
+  | { state: "ok"; cents: number | null; from?: string | null; provisional?: boolean }
+  | { state: "no"; from?: string | null }
+  | { state: "pending" };
 
 const TTL_MS = 7 * 86_400_000;
 /** Products checked per request (the rest are asked for again as the shopper scrolls or polls). */
 const MAX_PER_REQUEST = 30;
 const inflight = processSingleton("ship-check-inflight", () => new Map<string, Promise<void>>());
 
-/** Cached answers for these products in this country; anything unknown or stale starts a background check. */
+/** Can a product held in these warehouses reach this country? Unknown warehouse: China, CJ's default. */
+export function shipsByRule(origins: string | null | undefined, country: string): boolean {
+  const w = parseOrigins(origins && origins !== "?" ? origins : null);
+  if (!w.known) return true;
+  return (w.cn && canShipFrom("CN", country)) || (w.us && canShipFrom("US", country)) || (!w.us && !w.cn);
+}
+
+/** Answers for these products in this country, always right away. Unknown or stale ones are confirmed in the background. */
 export async function shipStatuses(pids: string[], country: string): Promise<Record<string, ShipStatus>> {
   const wanted = [...new Set(pids.filter((p) => PID_RE.test(p)))].slice(0, MAX_PER_REQUEST);
-  const rows = await prisma.shipCheck.findMany({ where: { country, pid: { in: wanted } } });
-  const byPid = new Map(rows.map((r) => [r.pid, r]));
+  // Where a product ships from doesn't depend on the shopper's country, so any country's answer tells us.
+  const rows = await prisma.shipCheck.findMany({ where: { pid: { in: wanted }, origins: { not: null } }, orderBy: { checkedAt: "desc" } });
+  const known = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) if (!known.has(r.pid) || r.country === country) known.set(r.pid, r);
+  // Products already in our catalog with counted stock answer straight from the database.
+  const missing = wanted.filter((p) => !known.has(p));
+  const local = missing.length
+    ? await prisma.cjSupplierVariant.findMany({
+        where: { supplierProduct: { cjProductId: { in: missing } }, inventoryJson: { not: null } },
+        select: { inventoryJson: true, supplierProduct: { select: { cjProductId: true } } },
+      })
+    : [];
+  const localOrigins = new Map<string, string | null>();
+  for (const pid of missing) {
+    const w = warehousesFrom(local.filter((v) => v.supplierProduct.cjProductId === pid).map((v) => v.inventoryJson));
+    if (w.known) localOrigins.set(pid, originsCode(w));
+  }
+
   const out: Record<string, ShipStatus> = {};
   for (const pid of wanted) {
-    // Answers from before the warehouse rule (US stock ships to the US only) have no origins and may be wrong:
-    // ask again. New answers always store origins ("?" when the warehouse is unknown).
-    const row = byPid.get(pid);
-    const r = row && row.origins !== null ? row : undefined;
-    const from = r?.origins && r.origins !== "?" ? r.origins : null;
-    if (r) out[pid] = r.ok ? { state: "ok", cents: r.cents, from } : { state: "no", from };
-    else out[pid] = { state: "pending" };
-    if (!r || Date.now() - r.checkedAt.getTime() > TTL_MS) startCheck(pid, country);
+    const r = known.get(pid);
+    const origins = r ? r.origins : localOrigins.get(pid);
+    const from = origins && origins !== "?" ? origins : null;
+    if (origins === undefined) {
+      // Never seen: answer by the default now, confirm the warehouse in the background.
+      out[pid] = { state: "ok", cents: null, from: null, provisional: true };
+      startCheck(pid);
+      continue;
+    }
+    // A stored "no" for this very country (an old live quote with no route) still counts.
+    const ok = r && r.country === country && !r.ok ? false : shipsByRule(origins, country);
+    out[pid] = ok ? { state: "ok", cents: null, from } : { state: "no", from };
+    if (r && Date.now() - r.checkedAt.getTime() > TTL_MS) startCheck(pid);
   }
   return out;
 }
 
-function startCheck(pid: string, country: string) {
-  const key = `${pid}|${country}`;
-  if (inflight.has(key)) return;
-  const job = withCjPriority("background", () => check(pid, country))
+function startCheck(pid: string) {
+  if (inflight.has(pid)) return;
+  const job = withCjPriority("background", () => check(pid))
     .catch(() => null)
-    .finally(() => inflight.delete(key));
-  inflight.set(key, job.then(() => undefined));
+    .finally(() => inflight.delete(pid));
+  inflight.set(pid, job.then(() => undefined));
 }
 
-/** One unit of the product's first option, quoted to the country like a one-item cart. */
-async function check(pid: string, country: string) {
+/** Which warehouses hold the product's first option: one or two CJ calls, no freight quote. */
+async function check(pid: string) {
   const item = await firstItem(pid);
-  if (!item) return; // couldn't tell (CJ error): leave it unknown, try again next time
-  const w = warehousesFrom([item.inventoryJson]);
-  const origins = originsCode(w) ?? "?";
-  // US-warehouse-only stock ships to US addresses only: no need to ask CJ for a quote to anywhere else.
-  if (usOnly(w) && country !== "US") {
-    const data = { ok: false, cents: null, origins, checkedAt: new Date() };
-    await prisma.shipCheck.upsert({ where: { pid_country: { pid, country } }, create: { pid, country, ...data }, update: data });
-    return;
-  }
-  const quote = await quoteCart([{ ...item, quantity: 1 }], country);
-  const standard = quote.tiers.find((t) => t.key === "standard") ?? quote.tiers[0];
-  const data = { ok: quote.tiers.length > 0, cents: standard?.cents ?? null, origins, checkedAt: new Date() };
-  await prisma.shipCheck.upsert({ where: { pid_country: { pid, country } }, create: { pid, country, ...data }, update: data });
+  if (!item) return; // couldn't tell (CJ error): the default answer stands, try again next time
+  const origins = originsCode(warehousesFrom([item.inventoryJson])) ?? "?";
+  // Stored under a neutral country key; the rule turns it into an answer for any shopper.
+  const data = { ok: true, cents: null, origins, checkedAt: new Date() };
+  await prisma.shipCheck.upsert({ where: { pid_country: { pid, country: "*" } }, create: { pid, country: "*", ...data }, update: data });
 }
 
 /** The product's first sellable option: from our catalog when imported, else straight from CJ (one call). */

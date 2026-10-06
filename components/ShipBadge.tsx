@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 // "Ships to Canada · from China" on product cards, and "US warehouse · ships to US only" where that's the
 // reason it can't reach the shopper. Every badge on the page shares one request to /api/ship-check;
 // answers still being worked out are asked for again every few seconds until they arrive.
-type Status = { state: "ok"; cents: number | null; from?: string | null } | { state: "no"; from?: string | null } | { state: "pending" };
+// provisional: answered by the default (China) while the warehouse is being confirmed; the badge shows it
+// right away and quietly asks again until it's confirmed.
+type Status = { state: "ok"; cents: number | null; from?: string | null; provisional?: boolean } | { state: "no"; from?: string | null } | { state: "pending" };
 type Answer = { status: Status; countryName: string; country: string };
 
 const answers = new Map<string, Answer>();
@@ -14,8 +16,8 @@ const attempts = new Map<string, number>();
 const queue = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 const BATCH = 30;
-const RETRY_MS = 2500;
-const MAX_ATTEMPTS = 24; // about a minute
+const RETRY_MS = 4000;
+const MAX_ATTEMPTS = 15; // about a minute
 
 function ask(pid: string, delay = 40) {
   queue.add(pid);
@@ -37,7 +39,7 @@ async function flush() {
         const a = { status, countryName: d.countryName, country: d.country };
         answers.set(pid, a);
         listeners.get(pid)?.forEach((fn) => fn(a));
-        if (status.state === "pending") {
+        if (status.state === "pending" || (status.state === "ok" && status.provisional)) {
           const n = (attempts.get(pid) ?? 0) + 1;
           attempts.set(pid, n);
           if (n < MAX_ATTEMPTS && listeners.get(pid)?.size) ask(pid, RETRY_MS);
@@ -65,7 +67,7 @@ export default function ShipBadge({ pid, className = "" }: { pid: string | null 
     set.add(setA);
     const known = answers.get(pid);
     if (known) setA(known);
-    if (!known || known.status.state === "pending") ask(pid);
+    if (!known || known.status.state === "pending" || (known.status.state === "ok" && known.status.provisional)) ask(pid);
     return () => {
       set.delete(setA);
     };
