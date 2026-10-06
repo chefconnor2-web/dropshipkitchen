@@ -33,3 +33,13 @@ test("the cart explains a US-warehouse-only item to a Canadian shopper", async (
   // US shoppers never get the US-only wording
   assert.match(blockedMessage(["A"], (v) => names[v], "US", () => true)!, /^Grill set can’t ship to United States/);
 });
+
+test("badge answers follow the warehouse rule, with China as the default", async () => {
+  const { shipsByRule } = await import("../lib/ship-check");
+  assert.equal(shipsByRule(null, "CA"), true); // unknown: China, CJ's default
+  assert.equal(shipsByRule("?", "CA"), true);
+  assert.equal(shipsByRule("CN", "CA"), true);
+  assert.equal(shipsByRule("US", "CA"), false);
+  assert.equal(shipsByRule("US", "US"), true);
+  assert.equal(shipsByRule("US,CN", "CA"), true);
+});
