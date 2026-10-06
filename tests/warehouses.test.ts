@@ -40,4 +40,12 @@ test("sea shipping: China (or unknown) stock to Canada can go by boat; US-only s
   assert.equal(seaEligible(warehousesFrom([null]), "CA"), true);
   assert.equal(seaEligible(warehousesFrom([rows({ US: 9 })]), "CA"), false);
   assert.equal(seaEligible(warehousesFrom([rows({ CN: 50 })]), "US"), false);
+test("badge answers follow the warehouse rule, with China as the default", async () => {
+  const { shipsByRule } = await import("../lib/ship-check");
+  assert.equal(shipsByRule(null, "CA"), true); // unknown: China, CJ's default
+  assert.equal(shipsByRule("?", "CA"), true);
+  assert.equal(shipsByRule("CN", "CA"), true);
+  assert.equal(shipsByRule("US", "CA"), false);
+  assert.equal(shipsByRule("US", "US"), true);
+  assert.equal(shipsByRule("US,CN", "CA"), true);
 });
