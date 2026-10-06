@@ -33,3 +33,11 @@ test("the cart explains a US-warehouse-only item to a Canadian shopper", async (
   // US shoppers never get the US-only wording
   assert.match(blockedMessage(["A"], (v) => names[v], "US", () => true)!, /^Grill set can’t ship to United States/);
 });
+
+test("sea shipping: China (or unknown) stock to Canada can go by boat; US-only stock can't", async () => {
+  const { seaEligible } = await import("../lib/warehouses");
+  assert.equal(seaEligible(warehousesFrom([rows({ CN: 50 })]), "CA"), true);
+  assert.equal(seaEligible(warehousesFrom([null]), "CA"), true);
+  assert.equal(seaEligible(warehousesFrom([rows({ US: 9 })]), "CA"), false);
+  assert.equal(seaEligible(warehousesFrom([rows({ CN: 50 })]), "US"), false);
+});

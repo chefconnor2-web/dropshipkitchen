@@ -3,7 +3,7 @@ import Link from "next/link";
 import { withCjPriority } from "@/lib/cj/lanes";
 import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
-import { usOnly, warehousesFrom } from "@/lib/warehouses";
+import { SEA_DAYS, seaEligible, usOnly, warehousesFrom } from "@/lib/warehouses";
 import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, estimateFromHistory, parcelsLabel, quoteCart, type CartQuote, type ShipEstimate, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
@@ -50,7 +50,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
     <div className="wrap page">
       <h1 className="page-title">Your cart</h1>
       {error && <p className="notice err">{error}</p>}
-      {freight === "sent" && <p className="notice ok">Freight quote requested. We’ll email you within one business day.</p>}
+      {freight === "sent" && <p className="notice ok">Shipping quote requested. We’ll email you within one business day.</p>}
       {items.length === 0 && boxes.length === 0 ? (
         <div className="empty-cart">
           <p>Your cart is empty.</p>
@@ -195,12 +195,28 @@ interface ShipState {
   tiers: ShipTier[];
   blocked: string[];
   error: string | null;
+  /** Blocked items that can go by sea instead (China → Canada), by name. */
+  sea?: string[];
 }
 
 async function shipState(q: Promise<CartQuote>, items: CartItems, country: string): Promise<ShipState> {
   try {
     const { tiers, blocked } = await q;
     if (tiers.length) return { tiers, blocked, error: null };
+    const itemOf = (vid: string) => items.find((i) => i.variant.offer?.cjSupplierVariant.cjVariantId === vid);
+    // Can't fly, but can sail: China → Canada by boat, quoted per order (big lithium batteries, mostly).
+    const seaVids = blocked.filter((vid) => seaEligible(warehousesFrom([itemOf(vid)?.variant.offer?.cjSupplierVariant.inventoryJson]), country));
+    const sea = [...new Set(seaVids.map((vid) => itemOf(vid)?.variant.product.title ?? "An item"))];
+    const rest = blocked.filter((vid) => !seaVids.includes(vid));
+    if (sea.length && !rest.length) {
+      const list = sea.length === 1 ? sea[0] : `${sea.slice(0, -1).join(", ")} and ${sea[sea.length - 1]}`;
+      return {
+        tiers,
+        blocked,
+        sea,
+        error: `${list} can’t fly to Canada (large lithium batteries go by boat). It ships by sea from China instead, ${SEA_DAYS}: get a sea-shipping price below, or remove ${sea.length === 1 ? "it" : "them"} to check out the rest now.`,
+      };
+    }
     const error =
       blockedMessage(
         blocked,
@@ -211,7 +227,7 @@ async function shipState(q: Promise<CartQuote>, items: CartItems, country: strin
       (items.reduce((n, i) => n + i.quantity, 0) >= 20
         ? "This order is too large to ship, even split into parcels. Lower the quantity or contact us for a freight quote."
         : "These items can’t ship to that country.");
-    return { tiers, blocked, error };
+    return { tiers, blocked, error, sea };
   } catch {
     return { tiers: [], blocked: [], error: "We couldn’t get a shipping price right now. Refresh to try again." };
   }
@@ -220,6 +236,7 @@ async function shipState(q: Promise<CartQuote>, items: CartItems, country: strin
 async function BlockedMark({ quote, vid, country, usWarehouseOnly }: { quote: Promise<ShipState>; vid: string; country: string; usWarehouseOnly: boolean }) {
   const { blocked } = await quote;
   if (!blocked.includes(vid)) return null;
+  if (!usWarehouseOnly && country === "CA") return <div className="sea-text small">🚢 Ships to Canada by sea · {SEA_DAYS}</div>;
   return (
     <div className="err-text small">
       {usWarehouseOnly && country !== "US" ? "US warehouse · ships to US addresses only" : `Can’t ship to ${countryLabel(country)}`}
@@ -288,7 +305,7 @@ async function ShippingSummary({
   offerFreight: boolean;
   freightSent: boolean;
 }) {
-  const { tiers, error: shipError } = await quote;
+  const { tiers, error: shipError, sea } = await quote;
   const tier = tiers.find((t) => t.key === shipToTier) ?? tiers[0];
   const shipping = tier?.cents ?? null;
   const showFreight = offerFreight && suggestFreight(subtotal, shipping, units);
@@ -323,7 +340,22 @@ async function ShippingSummary({
       <form action={checkout}>
         <CheckoutButton disabled={!tier} />
       </form>
-      {showFreight && !freightSent && (
+      {!!sea?.length && !freightSent && (
+        <div className="freight-box sea-box">
+          <p>
+            <strong>🚢 Ship by sea to Canada</strong>
+            <span className="muted small"> · {SEA_DAYS} from China</span>
+          </p>
+          <form action={requestFreightQuote} className="freight-form">
+            <input type="hidden" name="mode" value="sea" />
+            <input name="email" type="email" required placeholder="Your email" autoComplete="email" />
+            <textarea name="notes" rows={2} placeholder="Delivery address area, deadline… (optional)" />
+            <button className="btn primary">Get a sea-shipping price</button>
+            <p className="muted small">We book it with our supplier and email you the price within one business day. Your cart stays as it is.</p>
+          </form>
+        </div>
+      )}
+      {showFreight && !sea?.length && !freightSent && (
         <details className="freight-box" open={!tier}>
           <summary>
             <strong>Large order? Get a freight quote</strong>

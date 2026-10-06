@@ -1686,3 +1686,6 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .brand-flag { display: inline-block; flex: none; line-height: 0; }
 .brand-flag svg { width: 100%; height: 100%; display: block; }
 .brand-flag.cx-avatar { background: none; border-radius: 0; }
+.sea-box { border-color: #9cc3e6; background: #f2f8fd; }
+.sea-box p { margin: 0 0 8px; }
+.sea-text { color: #1f5f99; }

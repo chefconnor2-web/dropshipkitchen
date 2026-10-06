@@ -46,6 +46,12 @@ export function parseOrigins(code: string | null | undefined): WarehouseSet {
   return { us: parts.includes("US"), cn: parts.includes("CN"), known: !!code };
 }
 
+/** Sea shipping: items that can't fly (big lithium batteries) still reach Canada from China by boat, quoted per order. */
+export const SEA_DAYS = "about 4–7 weeks";
+export function seaEligible(w: WarehouseSet, dest: string | null | undefined): boolean {
+  return dest === "CA" && !usOnly(w);
+}
+
 /** True when the product only sits in the US warehouse, so it can't reach a non-US address. */
 export function usOnly(w: WarehouseSet): boolean {
   return w.known && w.us && !w.cn;

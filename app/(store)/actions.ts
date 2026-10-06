@@ -308,11 +308,13 @@ export async function requestFreightQuote(form: FormData) {
   if (!items.length) redirect("/cart");
   const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
   const shipTo = await getShipTo();
+  const sea = form.get("mode") === "sea";
+  // Parcel price, for comparison only: skipped for sea (those items can't go as parcels at all), and never
+  // allowed to hold up the shopper's request.
   let parcelQuoteCents: number | null = null;
-  try {
-    parcelQuoteCents = (await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip))[0]?.cents ?? null;
-  } catch {
-    /* comparison only */
+  if (!sea) {
+    const parcel = (async () => (await quoteTiers(cartShipItems(cart, await cartBoxPicks(cart)), shipTo.country, shipTo.zip))[0]?.cents ?? null)().catch(() => null);
+    parcelQuoteCents = await Promise.race([parcel, new Promise<null>((r) => setTimeout(() => r(null), 4000))]);
   }
   await createFreightRequest({
     email,
@@ -329,6 +331,7 @@ export async function requestFreightQuote(form: FormData) {
     })),
     subtotalCents: priced.totalCents,
     parcelQuoteCents,
+    mode: sea ? "sea" : "freight",
   });
   redirect("/cart?freight=sent");
 }
