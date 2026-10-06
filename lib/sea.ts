@@ -33,7 +33,10 @@ export interface SeaRates {
   autoBook: boolean;
 }
 
-export const DEFAULT_SEA_RATES: SeaRates = { enabled: false, perKgCents: 0, minCents: 0, perOrderCents: 0, bufferPct: 20, agentEmail: "", autoBook: true };
+// Starting rate card, on until the merchant saves their own: consolidated dangerous-goods sea freight China → Canada
+// runs about $3–5/kg door to door; $4/kg with a $120 freight minimum, $90 per order for brokerage and delivery and a
+// 15% buffer keeps a 30 kg battery near $242. Replace it with the agent's real rate (Admin → Freight).
+export const DEFAULT_SEA_RATES: SeaRates = { enabled: true, perKgCents: 400, minCents: 120_00, perOrderCents: 90_00, bufferPct: 15, agentEmail: "", autoBook: true };
 const KEY = "sea-rates";
 
 const cache = processSingleton("sea-rates", () => ({ at: 0, rates: DEFAULT_SEA_RATES }));

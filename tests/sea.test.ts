@@ -1,7 +1,7 @@
 // Sea shipping to Canada: priced from the merchant's rate card, offered only when the whole order can sail.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canSail, seaPriceCents, SEA_METHOD } from "../lib/sea";
+import { canSail, DEFAULT_SEA_RATES, seaPriceCents, SEA_METHOD } from "../lib/sea";
 import { daysLabel } from "../lib/shipping";
 
 const rows = (o: Record<string, number>) => JSON.stringify(Object.entries(o).map(([countryCode, totalInventoryNum]) => ({ countryCode, totalInventoryNum })));
@@ -32,4 +32,11 @@ test("only whole orders that can leave China for Canada sail", () => {
 test("sea tier reads as weeks by boat", () => {
   assert.equal(daysLabel({ minDays: 20, maxDays: 35, method: SEA_METHOD }), "about 4–7 weeks by boat");
   assert.equal(daysLabel({ minDays: 5, maxDays: 10, method: "CJPacket" }), "5–10 business days");
+});
+
+test("starting rate card is on and competitive", () => {
+  assert.equal(DEFAULT_SEA_RATES.enabled, true);
+  assert.equal(seaPriceCents(30_000, DEFAULT_SEA_RATES), 242_00);
+  assert.equal(seaPriceCents(60_000, DEFAULT_SEA_RATES), 380_00);
+  assert.equal(seaPriceCents(120_000, DEFAULT_SEA_RATES), 656_00);
 });
