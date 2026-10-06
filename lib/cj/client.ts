@@ -3,7 +3,7 @@
 // Endpoints used:
 //   POST /authentication/getAccessToken     { apiKey }
 //   POST /authentication/refreshAccessToken { refreshToken }
-//   GET  /product/listV2                    keyWord, page, size
+//   GET  /product/listV2                    keyWord, page, size, countryCode (warehouse country)
 //   GET  /product/query                     pid
 //   GET  /product/variant/query             pid
 //   GET  /product/variant/queryByVid        vid
@@ -218,8 +218,9 @@ async function authed<T>(
 
 // ---- public API ----
 
-export async function listProductsV2(keyWord: string, page = 1, size = 20) {
-  return authed<CjListV2Data>("/product/listV2", { keyWord, page, size });
+/** countryCode: only products CJ stocks in that warehouse country (e.g. "CA" for its Canadian warehouse). */
+export async function listProductsV2(keyWord: string, page = 1, size = 20, opts: { countryCode?: string } = {}) {
+  return authed<CjListV2Data>("/product/listV2", { keyWord: keyWord || undefined, page, size, countryCode: opts.countryCode });
 }
 
 export async function getProductDetail(pid: string) {

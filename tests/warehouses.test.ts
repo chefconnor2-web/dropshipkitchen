@@ -21,7 +21,7 @@ test("warehouse labels", () => {
   assert.equal(warehouseLabel(warehousesFrom([rows({ US: 4 }), rows({ CN: 2 })])), "In the US and China warehouses · ships to the US and Canada");
   assert.equal(warehouseLabel(warehousesFrom([null])), null);
   assert.equal(originsCode(usOnlyW), "US");
-  assert.deepEqual(parseOrigins("US,CN"), { us: true, cn: true, known: true });
+  assert.deepEqual(parseOrigins("US,CN"), { us: true, cn: true, ca: false, known: true });
   assert.equal(parseOrigins(null).known, false);
 });
 
@@ -50,4 +50,17 @@ test("badge answers follow the warehouse rule, with China as the default", async
   assert.equal(shipsByRule("US", "CA"), false);
   assert.equal(shipsByRule("US", "US"), true);
   assert.equal(shipsByRule("US,CN", "CA"), true);
+});
+
+test("Canadian warehouse: ships within Canada only, labelled with its speed", async () => {
+  const { shipsByRule } = await import("../lib/ship-check");
+  assert.equal(canShipFrom("CA", "CA"), true);
+  assert.equal(canShipFrom("CA", "US"), false);
+  const caOnly = warehousesFrom([rows({ CA: 30 })]);
+  assert.equal(warehouseLabel(caOnly), "Canadian warehouse · ships within Canada, 3–7 days");
+  assert.equal(usOnly(warehousesFrom([rows({ US: 3, CA: 3 })])), false); // Canada can still get it
+  assert.equal(originsCode(warehousesFrom([rows({ CN: 5, CA: 2 })])), "CN,CA");
+  assert.equal(shipsByRule("CA", "CA"), true);
+  assert.equal(shipsByRule("CA", "US"), false);
+  assert.equal(shipsByRule("CN,CA", "US"), true);
 });

@@ -185,6 +185,10 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             <GridIcon />
             <span>Browse catalog</span>
           </Link>
+          <Link href="/search?from=CA" className="sb-row">
+            <span aria-hidden style={{ width: 17, textAlign: "center" }}>🇨🇦</span>
+            <span>Ships from Canada</span>
+          </Link>
           <Link href="/boxes" className="sb-row">
             <GiftIcon />
             <span>Mystery boxes</span>
