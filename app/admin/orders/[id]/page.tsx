@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SEA_METHOD } from "@/lib/sea";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
@@ -17,6 +18,8 @@ import {
   placeCjOrderAction,
   quoteShippingAction,
   refreshCjOrderAction,
+  bookSeaAction,
+  linkSeaAction,
   refreshOrderCj,
   resendOrderEmailAction,
 } from "@/app/admin/actions";
@@ -76,10 +79,11 @@ export default async function AdminOrder({
   const addr = ship?.address ?? {};
   const awaiting = order.status === "AWAITING_MERCHANT_APPROVAL";
   const mode = supplierMode();
+  const byShip = order.customerShipMethod === SEA_METHOD;
   let quote = JSON.parse(order.cjQuoteJson || "[]") as CjFreightOption[];
   let autoQuoteError: string | null = null;
   // Opening an order that needs approval fetches its shipping quote, so the next tap is choosing a method.
-  if (awaiting && mode !== "mock" && quote.length === 0 && ship?.address?.country) {
+  if (awaiting && !byShip && mode !== "mock" && quote.length === 0 && ship?.address?.country) {
     try {
       quote = await quoteShipping(order.id);
     } catch (e) {
@@ -238,7 +242,37 @@ export default async function AdminOrder({
         </p>
       )}
 
-      {awaiting && (
+      {awaiting && byShip && (
+        <section className="a-card fulfil" aria-label="Book sea shipping">
+          <div className="a-card-head">
+            <h2 className="a-h2">🚢 Ships by sea · China → Canada</h2>
+          </div>
+          <p className="small">
+            The customer paid {formatMoney(order.shippingCents)} for sea shipping (your rate card plus buffer). Sending the booking emails
+            your CJ agent the items, CJ SKUs and the delivery address{mode === "live" ? "" : "; in test mode it goes to your store inbox instead"}.
+          </p>
+          <form action={bookSeaAction}>
+            <input type="hidden" name="orderId" value={order.id} />
+            <button className="a-btn a-btn-primary">Send sea booking to CJ agent</button>
+          </form>
+          {order.cjError && <p className="notice err">{order.cjError}</p>}
+          <div className="other-actions">
+            <details className="decline">
+              <summary className="a-btn a-btn-ghost danger-text">Decline &amp; refund…</summary>
+              <form action={declineOrderAction} className="decline-form">
+                <input type="hidden" name="orderId" value={order.id} />
+                <label>
+                  Reason (optional, for your records)
+                  <input name="note" placeholder="e.g. agent can’t ship this" />
+                </label>
+                <button className="a-btn a-btn-danger">Refund {formatMoney(order.subtotalCents + order.shippingCents)} and decline</button>
+              </form>
+            </details>
+          </div>
+        </section>
+      )}
+
+      {awaiting && !byShip && (
         <section className="a-card fulfil" aria-label="Fulfil this order">
           <div className="a-card-head">
             <h2 className="a-h2">Fulfil with CJ</h2>
@@ -395,13 +429,31 @@ export default async function AdminOrder({
               <code>{order.cjOrderId ?? "—"}</code>
             </dd>
           </dl>
+          {order.cjLogisticName === SEA_METHOD && (
+            <form action={linkSeaAction} className="sea-link">
+              <input type="hidden" name="orderId" value={order.id} />
+              <label>
+                CJ order id
+                <input name="cjOrderId" defaultValue={order.cjOrderId ?? ""} placeholder="from your agent’s reply" />
+              </label>
+              <label>
+                Tracking number
+                <input name="tracking" defaultValue={order.cjTrackingNumber ?? ""} />
+              </label>
+              <label>
+                What CJ charged (USD)
+                <input name="cost" inputMode="decimal" defaultValue={order.cjAmountCents != null ? (order.cjAmountCents / 100).toFixed(2) : ""} />
+              </label>
+              <button className="a-btn">Save agent’s reply</button>
+            </form>
+          )}
           {order.cjError && <p className="notice err">{order.cjError}</p>}
           <div className="btn-row">
             <form action={refreshCjOrderAction} className="grow">
               <input type="hidden" name="orderId" value={order.id} />
               <button className="a-btn">Refresh status &amp; tracking</button>
             </form>
-            {!order.cjPaidAt && (order.cjShipmentOrderId || order.cjOrderId) && (
+            {!order.cjPaidAt && order.cjLogisticName !== SEA_METHOD && (order.cjShipmentOrderId || order.cjOrderId) && (
               <form action={payCjOrderAction} className="grow">
                 <input type="hidden" name="orderId" value={order.id} />
                 <button className="a-btn a-btn-primary">Retry payment</button>

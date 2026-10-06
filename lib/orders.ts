@@ -46,6 +46,11 @@ export async function markOrderPaidFromSession(session: Stripe.Checkout.Session)
   await linkOrderToCustomer(paid.id);
   await sendOrderEmail(paid.id, "order_confirmation");
   await sendOrderEmail(paid.id, "merchant_new_order");
+  // Sea orders (big batteries to Canada) go to the CJ agent straight away when auto-booking is on.
+  if (paid.customerShipMethod === "SEA") {
+    const { autoBookSea } = await import("@/lib/sea");
+    await autoBookSea(paid.id);
+  }
   return paid;
 }
 

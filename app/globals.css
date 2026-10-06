@@ -1692,3 +1692,13 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .search-scope { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .search-scope a { text-decoration: none; padding: 7px 14px; border-radius: 99px; border: 1.5px solid #4a4f55; color: var(--on-dark-2); font-size: 14px; font-weight: 600; }
 .search-scope a.on { background: var(--on-dark); color: var(--graphite); border-color: var(--on-dark); }
+
+/* Admin: sea shipping rate card and sea order booking */
+.sea-rates { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 14px; margin: 12px 0 8px; align-items: end; }
+.sea-rates label, .sea-link label { display: grid; gap: 4px; margin: 0; font-size: 13px; color: var(--a-muted); }
+.sea-rates .wide { grid-column: 1 / -1; }
+.sea-rates .check { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; color: var(--a-ink); font-size: 14px; }
+.sea-rates .check input { width: 18px; height: 18px; margin: 0; accent-color: var(--a-accent); }
+.sea-rates input:not([type="checkbox"]), .sea-link input { font: inherit; font-size: 16px; padding: 8px 10px; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; color: var(--a-ink); min-width: 0; }
+.sea-rates .a-btn { justify-self: start; }
+.sea-link { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 14px; align-items: end; margin-top: 12px; }

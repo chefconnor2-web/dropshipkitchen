@@ -105,7 +105,8 @@ export async function syncOrderTracking(orderId: string, known?: Lookup) {
   const before = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
   if (before.status !== ORDER_STATUS.SUPPLIER_ORDER_PLACED) return before;
   try {
-    await refreshCjOrder(orderId);
+    // A sea booking has no CJ order to re-read until the agent's order id is linked.
+    if (before.cjOrderId || before.cjLogisticName === SPLIT_METHOD) await refreshCjOrder(orderId);
   } catch (e) {
     // Couldn't re-read the CJ order; the carrier lookup below can still move things along.
     console.warn(`[tracking] refresh ${before.number} failed:`, e instanceof Error ? e.message : e);
