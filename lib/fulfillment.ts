@@ -49,11 +49,12 @@ export function stockByCountry(inventoryJson: string | null): Map<string, number
   return out;
 }
 
-/** Where to ship from: the US warehouse when it can cover every item for a US address, else China (CJ's default). */
+/** Where to ship from: the destination's own warehouse (US or Canada) when it covers every item, else China (CJ's default). */
 export function chooseFromCountry(items: Array<{ quantity: number; inventoryJson: string | null }>, destCountry?: string | null): string {
-  if (destCountry && destCountry !== "US") return "CN";
-  const usCovers = items.every((i) => (stockByCountry(i.inventoryJson).get("US") ?? 0) >= i.quantity);
-  return items.length > 0 && usCovers ? "US" : "CN";
+  const dest = destCountry || "US"; // no address yet: the US rule, as before
+  if (dest !== "US" && dest !== "CA") return "CN";
+  const localCovers = items.every((i) => (stockByCountry(i.inventoryJson).get(dest) ?? 0) >= i.quantity);
+  return items.length > 0 && localCovers ? dest : "CN";
 }
 
 /**

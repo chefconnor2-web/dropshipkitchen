@@ -1689,3 +1689,6 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .sea-box { border-color: #9cc3e6; background: #f2f8fd; }
 .sea-box p { margin: 0 0 8px; }
 .sea-text { color: #1f5f99; }
+.search-scope { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.search-scope a { text-decoration: none; padding: 7px 14px; border-radius: 99px; border: 1.5px solid #4a4f55; color: var(--on-dark-2); font-size: 14px; font-weight: 600; }
+.search-scope a.on { background: var(--on-dark); color: var(--graphite); border-color: var(--on-dark); }

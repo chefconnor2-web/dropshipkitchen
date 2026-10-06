@@ -17,8 +17,12 @@ test("stockByCountry sums CJ's warehouse rows per country", () => {
 test("originCandidates: China for Canada, never the US warehouse; US addresses prefer the US warehouse", () => {
   // US warehouse stock ships to US addresses only.
   assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3 }) }], "CA"), ["CN"]);
-  // a Canadian warehouse would come after China (same country), never the US one
-  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3, CA: 2 }) }], "CA"), ["CN", "CA"]);
+  // Canada's own warehouse comes first when it covers the order (3–7 days), then China; never the US one
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3, CA: 2 }) }], "CA"), ["CA", "CN"]);
+  // not enough in Canada: China
+  assert.deepEqual(originCandidates([{ quantity: 5, inventoryJson: inv({ CN: 10, CA: 2 }) }], "CA"), ["CN"]);
+  // Canadian stock never ships to the US
+  assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CA: 9 }) }], "US"), []);
   // US addresses still prefer the US warehouse when it covers everything
   assert.deepEqual(originCandidates([{ quantity: 1, inventoryJson: inv({ CN: 10, US: 3 }) }], "US"), ["US", "CN"]);
   // the US warehouse only counts when it covers the quantity

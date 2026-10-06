@@ -77,7 +77,15 @@ export default function ShipBadge({ pid, className = "" }: { pid: string | null 
   if (a.status.state === "ok") {
     const from = (a.status.from ?? "").split(",");
     // US addresses go from the US warehouse when it has stock; everything else comes from China.
-    const origin = a.country === "US" && from.includes("US") ? "US warehouse" : from.includes("CN") ? "China" : null;
+    // Domestic stock first: Canada's warehouse for Canadian addresses, the US warehouse for US ones.
+    const origin =
+      a.country === "CA" && from.includes("CA")
+        ? "Canada · 3–7 days"
+        : a.country === "US" && from.includes("US")
+          ? "US warehouse"
+          : from.includes("CN")
+            ? "China"
+            : null;
     return (
       <span className={`ship-badge ship-ok ${className}`}>
         <i aria-hidden />
@@ -92,7 +100,13 @@ export default function ShipBadge({ pid, className = "" }: { pid: string | null 
     return (
       <span className={`ship-badge ship-no ${className}`}>
         <i aria-hidden />
-        <span>{a.status.from === "US" && a.country !== "US" ? "US warehouse · ships to US only" : `Doesn’t ship to ${a.countryName}`}</span>
+        <span>
+          {a.status.from === "US" && a.country !== "US"
+            ? "US warehouse · ships to US only"
+            : a.status.from === "CA" && a.country !== "CA"
+              ? "Canadian warehouse · ships within Canada only"
+              : `Doesn’t ship to ${a.countryName}`}
+        </span>
       </span>
     );
   return (

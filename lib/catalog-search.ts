@@ -28,11 +28,12 @@ const MAX_IMAGES = 5000;
 
 export const PAGE_SIZE = 24;
 
-export async function searchCatalog(q: string, page: number): Promise<{ hits: CatalogHit[]; total: number | null }> {
-  const key = `${q.toLowerCase()}|${page}`;
+/** from: a warehouse country to limit results to (e.g. "CA": what CJ stocks in Canada, for fast Canadian shipping). */
+export async function searchCatalog(q: string, page: number, from?: string): Promise<{ hits: CatalogHit[]; total: number | null }> {
+  const key = `${q.toLowerCase()}|${page}|${from ?? ""}`;
   const hit = resultCache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit;
-  const { items, total } = parseListV2((await listProductsV2(q, page, PAGE_SIZE)).data);
+  const { items, total } = parseListV2((await listProductsV2(q, page, PAGE_SIZE, { countryCode: from })).data);
   const hits: CatalogHit[] = [];
   for (const r of items) {
     if (r.priceCents == null || r.priceCents <= 0 || blockedListing(r.name)) continue;

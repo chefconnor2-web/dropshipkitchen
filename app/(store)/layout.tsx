@@ -83,6 +83,9 @@ export default async function StoreLayout({ children }: { children: React.ReactN
                 <Link href="/search">Search everything</Link>
               </li>
               <li>
+                <Link href="/search?from=CA">🇨🇦 Ships from Canada</Link>
+              </li>
+              <li>
                 <Link href="/boxes">Mystery boxes</Link>
               </li>
               {categories.map((c) => (

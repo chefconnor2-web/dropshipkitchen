@@ -76,7 +76,7 @@ How to work:
 - After you present picks for a project, call propose_kit once with your recommended pick for each part you found (sensible quantities; an option in words when it matters, e.g. "20Ah"). The shopper sees it as a kit card with an "Add entire kit" button.
 - When the shopper asks to add the whole kit, everything, or all of it, call add_kit in the same turn with the kit's items (adjusted for anything they changed). Don't ask again; afterwards, list what was added and anything that failed.
 - Shoppers can send photos: a broken or worn part, a product they want more of, a label, spec plate or packaging, a sketch, or a space to fit out. Say briefly what you see and read any model numbers, voltages, sizes or connectors in it, then search for that exact item or compatible parts. If a key spec isn't visible, ask for it or for another photo.
-- Warehouses: products in CJ's US warehouse ship to US addresses only; products in the China warehouse ship to the US and Canada. get_product's ships_from says which applies; mention it when it matters (a US-warehouse-only item for a Canadian shopper can't be sent to them).
+- Warehouses: products in CJ's US warehouse ship to US addresses only; products in the China warehouse ship to the US and Canada; products in CJ's Canadian warehouse ship within Canada in 3-7 days (vs 1-3 weeks from China). For a Canadian shopper in a hurry, search with from_canada: true first, and fall back to the full catalog if it comes up short. get_product's ships_from says which applies; mention it when it matters (a US-warehouse-only item for a Canadian shopper can't be sent to them).
 - Sea shipping: if ships_to_shopper is NO for a shopper in Canada and the product isn't US-warehouse-only (usually a big lithium battery, which can't fly), it can still go to Canada by boat from China, about 4–7 weeks, priced per order. Tell them they can add it and tap "Get a sea-shipping price" in the cart; don't put it in a kit with fast-shipping items without saying so.
 - get_product says whether the product can ship to the shopper's country (ships_to_shopper). If it says NO, don't add it or put it in a kit: tell the shopper it can't ship to them and find an alternative that does (for a large lithium battery, try other packs; some ship from other warehouses). If a cart can't ship, view_cart and the cart page name the item that blocks it.
 - Some products are made with the shopper's own photo or text (print on demand). When they want something custom, personalized, printed with a photo, logo or name, or a personal gift, call show_personalized_products and point them to those cards. You can't add these to the cart yourself: tell them to tap Add on the card, which opens a designer where they upload a photo (any they already sent you is one tap away) or type text, see a preview, and add it. Personalized items can't be returned, so mention that they should check the preview.
@@ -192,8 +192,12 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
             additionalProperties: false,
           },
         },
+        from_canada: {
+          type: "boolean",
+          description: "true to search only CJ's Canadian warehouse (delivered in Canada in 3-7 days; a much smaller range). Use when a shopper in Canada needs it fast or asks for local stock.",
+        },
       },
-      required: ["parts"],
+      required: ["parts", "from_canada"],
       additionalProperties: false,
     },
   },
@@ -343,6 +347,8 @@ export interface Part {
   name: string;
   need: string;
   queries: string[];
+  /** Search only this warehouse country ("CA": CJ's Canadian warehouse). */
+  from?: string;
 }
 export interface ScoutResult {
   part: string;
@@ -355,7 +361,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
     const query = q.trim().slice(0, 80);
     if (!query) return [];
     emit({ type: "progress", note: `${part.name}: searching “${query}”…` });
-    const { hits } = await searchCatalog(query, 1);
+    const { hits } = await searchCatalog(query, 1, part.from);
     const top = hits.slice(0, 15);
     for (const h of top) seen.set(h.pid, h);
     emit({ type: "found", group: part.name, cards: top.slice(0, 6).map((h) => ({ ...h, group: part.name })), done: false });
@@ -461,7 +467,12 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
       .map((p) => {
         const o = p as Record<string, unknown>;
         const queries = (Array.isArray(o.queries) ? o.queries : []).map((q) => String(q)).filter(Boolean).slice(0, 3);
-        return { name: String(o.name ?? "Item").slice(0, 40), need: String(o.need ?? "").slice(0, 300), queries: queries.length ? queries : [String(o.name ?? "")] };
+        return {
+          name: String(o.name ?? "Item").slice(0, 40),
+          need: String(o.need ?? "").slice(0, 300),
+          queries: queries.length ? queries : [String(o.name ?? "")],
+          ...(input.from_canada === true ? { from: "CA" } : {}),
+        };
       });
     if (!parts.length) return { content: "No parts given.", isError: true };
     ctx.emit({ type: "progress", note: `Sending ${parts.length} scout${parts.length === 1 ? "" : "s"} to search…` });

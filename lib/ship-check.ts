@@ -28,7 +28,7 @@ const inflight = processSingleton("ship-check-inflight", () => new Map<string, P
 export function shipsByRule(origins: string | null | undefined, country: string): boolean {
   const w = parseOrigins(origins && origins !== "?" ? origins : null);
   if (!w.known) return true;
-  return (w.cn && canShipFrom("CN", country)) || (w.us && canShipFrom("US", country)) || (!w.us && !w.cn);
+  return (w.cn && canShipFrom("CN", country)) || (w.us && canShipFrom("US", country)) || (w.ca && canShipFrom("CA", country)) || (!w.us && !w.cn && !w.ca);
 }
 
 /** Answers for these products in this country, always right away. Unknown or stale ones are confirmed in the background. */
