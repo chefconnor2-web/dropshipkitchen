@@ -1,8 +1,10 @@
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { Flash, timeAgo } from "@/components/admin";
-import { setFreightStatusAction } from "@/app/admin/actions";
+import { saveSeaRatesAction, setFreightStatusAction } from "@/app/admin/actions";
 import type { FreightLine } from "@/lib/freight";
+import { getSeaRates, seaPriceCents } from "@/lib/sea";
+import { supplierMode } from "@/lib/fulfillment";
 
 const STATUSES = [
   { key: "new", label: "New", tone: "tone-warn" },
@@ -15,6 +17,8 @@ export default async function FreightPage({ searchParams }: { searchParams: Prom
   const { notice, error } = await searchParams;
   const requests = await prisma.freightRequest.findMany({ orderBy: { createdAt: "desc" }, take: 100 });
   const open = requests.filter((r) => r.status === "new").length;
+  const sea = await getSeaRates();
+  const dollars = (c: number) => (c ? (c / 100).toFixed(2) : "");
 
   return (
     <>
@@ -27,6 +31,53 @@ export default async function FreightPage({ searchParams }: { searchParams: Prom
         </div>
       </div>
       <Flash notice={notice} error={error} />
+      <section className="a-card" id="sea">
+        <div className="a-card-head">
+          <h2 className="a-h2">Sea shipping to Canada · automatic</h2>
+          <span className={`chip-status ${sea.enabled ? "tone-good" : "tone-muted"}`}>{sea.enabled ? "On" : "Off"}</span>
+        </div>
+        <p className="small muted">
+          For items CJ can’t fly (big lithium and EV batteries). Ask your CJ agent once for their China → Canada sea rate for dangerous goods,
+          enter it here, and Canadian shoppers get a sea price right in the cart and check out like any other order. When they pay, the
+          booking is emailed to your agent{supplierMode() === "live" ? "" : " (in test mode it comes to your store inbox instead)"}. When the agent
+          replies, paste CJ’s order id or tracking number on the order and tracking runs on its own.
+        </p>
+        <form action={saveSeaRatesAction} className="sea-rates">
+          <label>
+            Freight per kg (USD)
+            <input name="perKg" inputMode="decimal" defaultValue={dollars(sea.perKgCents)} placeholder="e.g. 4.50" />
+          </label>
+          <label>
+            Minimum freight (USD)
+            <input name="min" inputMode="decimal" defaultValue={dollars(sea.minCents)} placeholder="e.g. 150" />
+          </label>
+          <label>
+            Per order: customs, port, delivery (USD)
+            <input name="perOrder" inputMode="decimal" defaultValue={dollars(sea.perOrderCents)} placeholder="e.g. 120" />
+          </label>
+          <label>
+            Safety buffer (%)
+            <input name="bufferPct" inputMode="decimal" defaultValue={String(sea.bufferPct)} />
+          </label>
+          <label className="wide">
+            CJ agent email (bookings go here)
+            <input name="agentEmail" type="email" defaultValue={sea.agentEmail} placeholder="agent@cjdropshipping.com" />
+          </label>
+          <label className="check">
+            <input type="checkbox" name="autoBook" defaultChecked={sea.autoBook} /> Email the booking automatically when the customer pays
+          </label>
+          <label className="check">
+            <input type="checkbox" name="enabled" defaultChecked={sea.enabled} /> Sell sea shipping to Canada at checkout
+          </label>
+          <button className="a-btn a-btn-primary">Save</button>
+        </form>
+        {sea.perKgCents > 0 && (
+          <p className="small">
+            Customer pays for sea shipping:{" "}
+            {[10, 30, 60, 120].map((kg) => `${kg} kg ${formatMoney(seaPriceCents(kg * 1000, sea))}`).join(" · ")}
+          </p>
+        )}
+      </section>
       <section className="a-card">
         <p className="small muted">
           Arrange these with CJ’s team (CJ dashboard → Wholesale / bulk shipping, or your CJ agent), then reply to the customer by email

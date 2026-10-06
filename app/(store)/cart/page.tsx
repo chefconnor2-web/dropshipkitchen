@@ -4,6 +4,7 @@ import { withCjPriority } from "@/lib/cj/lanes";
 import { designLabel } from "@/lib/personalize";
 import { cartBoxPicks, cartShipItems, getCartId, getShipTo, loadCart } from "@/lib/cart";
 import { SEA_DAYS, seaEligible, usOnly, warehousesFrom } from "@/lib/warehouses";
+import { SEA_METHOD } from "@/lib/sea";
 import { SHIP_COUNTRIES, blockedMessage, countryLabel, daysLabel, estimateFromHistory, parcelsLabel, quoteCart, type CartQuote, type ShipEstimate, type ShipTier } from "@/lib/shipping";
 import { formatMoney } from "@/lib/money";
 import { BULK_MIN_UNITS, priceOrder } from "@/lib/volume";
@@ -308,7 +309,8 @@ async function ShippingSummary({
   const { tiers, error: shipError, sea } = await quote;
   const tier = tiers.find((t) => t.key === shipToTier) ?? tiers[0];
   const shipping = tier?.cents ?? null;
-  const showFreight = offerFreight && suggestFreight(subtotal, shipping, units);
+  // Sea is already the bulk route; a freight quote on top would only confuse.
+  const showFreight = offerFreight && tier?.method !== SEA_METHOD && suggestFreight(subtotal, shipping, units);
   return (
     <>
       {tier?.parcels && tier.parcels.length > 1 && (

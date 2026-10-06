@@ -7,6 +7,7 @@ import { processSingleton } from "@/lib/singleton";
 import { SHIP_COUNTRIES } from "@/lib/countries";
 import { chooseFromCountry, originCandidates } from "@/lib/fulfillment";
 import { choosePlan, parcelOptions, planParcels, planWindow, type ParcelPlanEntry } from "@/lib/parcels";
+import { SEA_METHOD, seaTier } from "@/lib/sea";
 
 export { SHIP_COUNTRIES };
 
@@ -67,7 +68,8 @@ export function parcelsLabel(t: Pick<ShipTier, "parcels">): string {
   return t.parcels && t.parcels.length > 1 ? `${t.parcels.length} parcels` : "";
 }
 
-export function daysLabel(t: Pick<ShipTier, "minDays" | "maxDays">): string {
+export function daysLabel(t: Pick<ShipTier, "minDays" | "maxDays"> & { method?: string }): string {
+  if (t.method === SEA_METHOD) return "about 4–7 weeks by boat";
   if (t.minDays == null) return "Delivery time confirmed at dispatch";
   return t.minDays === t.maxDays ? `${t.minDays} business days` : `${t.minDays}–${t.maxDays} business days`;
 }
@@ -123,6 +125,20 @@ export async function quoteTiers(items: ShipItem[], country: string, zip?: strin
  * fresh one is fetched in the background. Pass `maxAgeMs: FRESH_MS` where the price will be charged.
  */
 export async function quoteCart(items: ShipItem[], country: string, zip?: string, opts: { maxAgeMs?: number } = {}): Promise<CartQuote> {
+  return withSea(await quoteCartByAir(items, country, zip, opts), items, country);
+}
+
+/**
+ * Nothing CJ can send (big lithium batteries to Canada): offer the sea option from the merchant's rate card.
+ * Added on every read rather than cached, so a rate change shows at once.
+ */
+async function withSea(quote: CartQuote, items: ShipItem[], country: string): Promise<CartQuote> {
+  if (quote.tiers.length || !quote.blocked.length) return quote;
+  const sea = await seaTier(items, country).catch(() => null);
+  return sea ? { ...quote, tiers: [sea] } : quote;
+}
+
+async function quoteCartByAir(items: ShipItem[], country: string, zip?: string, opts: { maxAgeMs?: number } = {}): Promise<CartQuote> {
   if (!items.length) return { tiers: [], blocked: [] };
   const key = quoteKey(items, country, zip);
   const hit = await remembered(key, opts.maxAgeMs ?? STALE_MS);
@@ -137,7 +153,7 @@ export async function quoteCart(items: ShipItem[], country: string, zip?: string
 export async function peekQuote(items: ShipItem[], country: string, zip?: string): Promise<{ quote: CartQuote; fresh: boolean } | null> {
   if (!items.length) return null;
   const hit = await remembered(quoteKey(items, country, zip), STALE_MS);
-  return hit ? { quote: hit.quote, fresh: Date.now() - hit.at < FRESH_MS } : null;
+  return hit ? { quote: await withSea(hit.quote, items, country), fresh: Date.now() - hit.at < FRESH_MS } : null;
 }
 
 /** Asks CJ (one request per cart at a time; a more urgent caller joins and raises its priority). */

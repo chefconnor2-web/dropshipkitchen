@@ -56,6 +56,7 @@ export default async function CustomerOrderPage({
       shippingCents: true,
       cjTrackingNumber: true,
       cjLogisticName: true,
+      customerShipMethod: true,
       stripeSessionId: true,
       customerId: true,
       createdAt: true,
@@ -135,7 +136,9 @@ export default async function CustomerOrderPage({
               : stage === "in_transit"
                 ? "Moving through the carrier network toward you."
                 : "With the local courier today."
-          : confirmed
+          : confirmed && order.customerShipMethod === "SEA"
+            ? "Booked to sail from our China warehouse to Canada, about 4–7 weeks door to door. You’ll get an email with tracking once it’s on its way."
+            : confirmed
             ? "Your order is with our warehouse. You’ll get an email with tracking the moment it ships."
             : "We’re checking your order. You’ll get an email as soon as it’s confirmed.";
   const eta = stage && stage !== "delivered" && !exception ? etaText(order.trackingEta ?? order.parcels.find((p) => p.trackingEta)?.trackingEta ?? null) : null;

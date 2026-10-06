@@ -15,6 +15,7 @@ import { refreshLive } from "@/lib/inventory";
 import { approveOrder, declineAndRefund, recheckOrderSupplierData } from "@/lib/orders";
 import { sendOrderEmail, sendTestEmail, type OrderEmailKind } from "@/lib/order-emails";
 import { syncOrderTracking, syncTracking } from "@/lib/tracking";
+import { bookSeaShipment, linkSeaShipment, saveSeaRates } from "@/lib/sea";
 
 function msg(e: unknown) {
   return encodeURIComponent(e instanceof Error ? e.message : String(e));
@@ -271,6 +272,57 @@ export async function resendOrderEmailAction(form: FormData) {
       ? `notice=${encodeURIComponent(`Email sent to ${log.to}`)}`
       : `error=${encodeURIComponent(log.error || "Email not sent.")}`;
   redirect(`/admin/orders/${id}?${q}`);
+}
+
+// ---- sea shipping to Canada (lib/sea.ts) ----
+
+const dollarsToCents = (v: FormDataEntryValue | null) => {
+  const n = Number(String(v ?? "").replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
+};
+
+export async function saveSeaRatesAction(form: FormData) {
+  let q = "notice=" + encodeURIComponent("Sea shipping rates saved");
+  try {
+    const buffer = Number(form.get("bufferPct"));
+    await saveSeaRates({
+      enabled: form.get("enabled") === "on",
+      perKgCents: dollarsToCents(form.get("perKg")),
+      minCents: dollarsToCents(form.get("min")),
+      perOrderCents: dollarsToCents(form.get("perOrder")),
+      bufferPct: Number.isFinite(buffer) && buffer >= 0 ? Math.min(buffer, 200) : 20,
+      agentEmail: String(form.get("agentEmail") || "").trim().slice(0, 254),
+      autoBook: form.get("autoBook") === "on",
+    });
+  } catch (e) {
+    q = `error=${msg(e)}`;
+  }
+  revalidatePath("/admin/freight");
+  redirect(`/admin/freight?${q}`);
+}
+
+export async function bookSeaAction(form: FormData) {
+  const id = String(form.get("orderId"));
+  let q = "notice=" + encodeURIComponent("Sea booking sent");
+  try {
+    await bookSeaShipment(id);
+  } catch (e) {
+    q = `error=${msg(e)}`;
+  }
+  orderBack(id, q);
+}
+
+export async function linkSeaAction(form: FormData) {
+  const id = String(form.get("orderId"));
+  let q = "notice=" + encodeURIComponent("Saved. Tracking now updates on its own");
+  try {
+    const cost = dollarsToCents(form.get("cost"));
+    await linkSeaShipment(id, { cjOrderId: String(form.get("cjOrderId") || ""), trackingNumber: String(form.get("tracking") || ""), costCents: cost || null });
+    await syncOrderTracking(id).catch(() => null);
+  } catch (e) {
+    q = `error=${msg(e)}`;
+  }
+  orderBack(id, q);
 }
 
 export async function setFreightStatusAction(form: FormData) {
