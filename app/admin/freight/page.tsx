@@ -22,7 +22,7 @@ export default async function FreightPage({ searchParams }: { searchParams: Prom
         <div>
           <h1>Freight requests</h1>
           <div className="a-sub">
-            {open} new · large orders asking for a sea or air freight quote
+            {open} new · large orders asking for a freight quote, and items that can’t fly (big lithium batteries) going to Canada by sea
           </div>
         </div>
       </div>
@@ -48,6 +48,7 @@ export default async function FreightPage({ searchParams }: { searchParams: Prom
                 <h2 className="a-h2">
                   {formatMoney(r.subtotalCents)} to {r.country} {r.postalCode}
                 </h2>
+                {r.mode === "sea" && <span className="chip-status tone-busy">Sea · can’t fly</span>}
                 <span className={`chip-status ${st.tone}`}>{st.label}</span>
               </div>
               <p className="small">

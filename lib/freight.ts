@@ -31,7 +31,11 @@ export async function createFreightRequest(r: {
   items: FreightLine[];
   subtotalCents: number;
   parcelQuoteCents: number | null;
+  /** "sea": items that can't fly (big lithium batteries), China → Canada by boat. */
+  mode?: "freight" | "sea";
 }) {
+  const sea = r.mode === "sea";
+  const what = sea ? "sea-shipping" : "freight";
   const req = await prisma.freightRequest.create({
     data: {
       email: r.email,
@@ -42,6 +46,7 @@ export async function createFreightRequest(r: {
       itemsJson: JSON.stringify(r.items),
       subtotalCents: r.subtotalCents,
       parcelQuoteCents: r.parcelQuoteCents,
+      mode: sea ? "sea" : "freight",
     },
   });
   const lines = r.items.map((i) => `${i.quantity} × ${i.title}${i.option && !/^default$/i.test(i.option) ? ` (${i.option})` : ""} @ ${formatMoney(i.unitCents)}`).join("\n");
@@ -50,7 +55,7 @@ export async function createFreightRequest(r: {
     await sendEmail({
       to: config.email.storeEmail,
       kind: "freight_request",
-      subject: `Freight quote request · ${formatMoney(r.subtotalCents)} · ${r.country}`,
+      subject: `${sea ? "Sea-shipping" : "Freight"} quote request · ${formatMoney(r.subtotalCents)} · ${r.country}`,
       text: `${r.email}${r.company ? ` (${r.company})` : ""} wants a freight quote to ${r.country} ${r.postalCode ?? ""}.\n\n${lines}\n\nGoods: ${formatMoney(r.subtotalCents)}\nParcel shipping would be: ${r.parcelQuoteCents != null ? formatMoney(r.parcelQuoteCents) : "not available"}\n\nNotes: ${r.notes || "-"}\n\nAdmin: ${config.siteUrl}/admin/freight`,
       html: `<p><strong>${esc(r.email)}</strong>${r.company ? ` (${esc(r.company)})` : ""} wants a freight quote to ${esc(r.country)} ${esc(r.postalCode ?? "")}.</p><pre>${esc(lines)}</pre><p>Goods: ${formatMoney(r.subtotalCents)}<br>Parcel shipping would be: ${r.parcelQuoteCents != null ? formatMoney(r.parcelQuoteCents) : "not available"}</p><p>Notes: ${esc(r.notes || "-")}</p><p><a href="${config.siteUrl}/admin/freight">Open in admin</a></p>`,
     });
@@ -58,9 +63,9 @@ export async function createFreightRequest(r: {
   await sendEmail({
     to: r.email,
     kind: "freight_request_received",
-    subject: `We got your freight quote request`,
-    text: `Thanks. We'll email you a freight quote for your order to ${r.country} within one business day.\n\n${lines}\n\n${config.storeName}`,
-    html: `<p>Thanks. We'll email you a freight quote for your order to ${esc(r.country)} within one business day.</p><pre>${esc(lines)}</pre><p>${esc(config.storeName)}</p>`,
+    subject: `We got your ${what} quote request`,
+    text: `Thanks. We'll email you a ${what} quote for your order to ${r.country} within one business day.\n\n${lines}\n\n${config.storeName}`,
+    html: `<p>Thanks. We'll email you a ${what} quote for your order to ${esc(r.country)} within one business day.</p><pre>${esc(lines)}</pre><p>${esc(config.storeName)}</p>`,
   });
   return req;
 }
