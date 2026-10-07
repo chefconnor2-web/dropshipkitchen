@@ -4,6 +4,7 @@
 import { Fragment, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
 import Link from "next/link";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -37,7 +38,7 @@ export interface Kit {
   items: KitItem[];
 }
 /** `steps` and `groups` are only kept in the browser, to show how the answer was found. */
-export type BotEntry = { role: "assistant"; text: string; cards: Card[]; added: string[]; kit?: Kit; steps?: string[]; groups?: LiveGroup[]; stopped?: boolean; at?: string };
+export type BotEntry = { role: "assistant"; text: string; cards: Card[]; added: string[]; kit?: Kit; items?: ConnectorItem[]; steps?: string[]; groups?: LiveGroup[]; stopped?: boolean; at?: string };
 /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
 export type UserEntry = { role: "user"; text: string; images?: string[]; reaction?: string; at?: string };
 export type Entry = UserEntry | BotEntry;
@@ -45,6 +46,8 @@ export interface Turn {
   text: string;
   steps: string[];
   groups: LiveGroup[];
+  /** Connector cards (flights…) as they arrive. */
+  items: ConnectorItem[];
 }
 export interface KitState {
   busy: boolean;
@@ -417,6 +420,74 @@ export function KitCard({ kit, state, onAdd }: { kit: Kit; state?: KitState; onA
         </div>
       )}
       {state?.error && <p className="cx-kit-err">{state.error}</p>}
+    </div>
+  );
+}
+
+/** Connector cards grouped under their search label, in arrival order. */
+export function groupItems(items: ConnectorItem[]): Array<[string, ConnectorItem[]]> {
+  const out = new Map<string, ConnectorItem[]>();
+  for (const it of items) out.set(it.group ?? "", [...(out.get(it.group ?? "") ?? []), it]);
+  return [...out];
+}
+
+export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
+  if (!items.length) return null;
+  return (
+    <>
+      {groupItems(items).map(([group, list]) => (
+        <div key={group || "all"} className="cx-group">
+          {group && <div className="cx-group-label">{group}</div>}
+          <div className="cx-cards cx-flights">
+            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} /> : null))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+export function FlightCard({ f }: { f: Flight }) {
+  return (
+    <div className="cx-flight">
+      <div className="cx-flight-head">
+        {f.logo ? <img src={f.logo} alt="" className="cx-flight-logo" loading="lazy" /> : <span className="cx-flight-logo cx-flight-logo-x">✈</span>}
+        <span className="cx-flight-airline" title={f.airline}>
+          {f.airline}
+        </span>
+        <span className="cx-flight-price">{flightPrice(f)}</span>
+      </div>
+      {f.slices.map((s, i) => (
+        <div key={i} className="cx-flight-slice">
+          <div className="cx-flight-date">{shortDate(s.depart)}</div>
+          <div className="cx-flight-times">
+            <span>
+              <b>{clock(s.depart)}</b> {s.from}
+            </span>
+            <span className="cx-flight-line" aria-hidden />
+            <span>
+              <b>
+                {clock(s.arrive)}
+                {dayShift(s.depart, s.arrive) && <sup>{dayShift(s.depart, s.arrive)}</sup>}
+              </b>{" "}
+              {s.to}
+            </span>
+          </div>
+          <div className="cx-flight-meta">
+            {durationLabel(s.durationMin)} · {stopsLabel(s)}
+          </div>
+        </div>
+      ))}
+      <div className="cx-flight-foot">
+        <span>
+          {f.cabin}
+          {f.checkedBags > 0 ? ` · ${f.checkedBags} bag${f.checkedBags > 1 ? "s" : ""}` : " · no checked bag"}
+          {f.refundable ? " · refundable" : ""}
+        </span>
+        <button type="button" className="cx-btn" disabled title="Booking flights in the chat is coming soon">
+          Booking soon
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import "@fontsource/ibm-plex-sans/400.css";
+import { duffelConfigured, duffelTestMode } from "@/lib/duffel";
 import "@fontsource/ibm-plex-sans/500.css";
 import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
@@ -42,6 +43,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <div className="admin-modes" aria-label="Environment">
           <span className={`mode-chip mode-${mode}`}>{MODE_LABEL[mode]}</span>
           <span className={`mode-chip ${stripeReady ? "mode-test" : "mode-off"}`}>{stripeReady ? "Stripe test mode" : "Stripe not set"}</span>
+          {duffelConfigured() && <span className={`mode-chip ${duffelTestMode() ? "mode-test" : "mode-live"}`}>{duffelTestMode() ? "Flights test mode" : "Flights live"}</span>}
           <Link href="/" target="_blank" className="mode-chip mode-link">
             View store ↗
           </Link>
