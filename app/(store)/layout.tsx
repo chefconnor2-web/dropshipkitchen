@@ -16,7 +16,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
   const [count, categories, shipTo] = await Promise.all([cartCount(), publishedCategories(), getShipTo()]);
   return (
     <div className="store">
-      <div className="announce">B2B sourcing from China · Shipping to {countryLabel(shipTo.country)} shown before you pay</div>
+      <div className="announce">{config.storeTagline} · Shipping to {countryLabel(shipTo.country)} shown before you pay</div>
       <header className="store-header">
         <div className="wrap header-row">
           <Link href="/" className="brand" aria-label={`${config.storeName} home`}>
@@ -71,13 +71,13 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               <BrandMark />
               <span className="brand-name">{config.storeName}</span>
             </div>
-            <p className="footer-blurb">Order anything from China, shipped to Canada. B2B sourcing with an AI assistant.</p>
+            <p className="footer-blurb">{config.storeTagline}. Text what you need: products from factories worldwide, flights and more, found, priced and paid for in one conversation.</p>
           </div>
           <div>
             <div className="footer-h">Shop</div>
             <ul className="footer-links">
               <li>
-                <Link href="/">Shopping assistant</Link>
+                <Link href="/">Chat to buy</Link>
               </li>
               <li>
                 <Link href="/search">Search everything</Link>

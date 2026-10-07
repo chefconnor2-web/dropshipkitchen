@@ -634,14 +634,14 @@ export default function Chat({
             <div className="cx-contact">
               <BrandMark size={76} className="cx-avatar cx-avatar-lg" />
               <h1>{storeName}</h1>
-              <p>Shopping assistant · replies in seconds</p>
+              <p>Your personal POS · replies in seconds</p>
             </div>
             <div className="cx-col cx-greeting" aria-label="How it works">
               <div className="cx-msg cx-bot">
-                <div className="cx-bubble cx-bubble-bot cx-no-tail">Hey! 👋 Tell me what you need, like you’d text a friend who knows every factory in China.</div>
+                <div className="cx-bubble cx-bubble-bot cx-no-tail">Hey! 👋 I’m your personal POS. Tell me what you need, parts, supplies or a flight, like you’d text a friend.</div>
               </div>
               <div className="cx-msg cx-bot">
-                <div className="cx-bubble cx-bubble-bot cx-no-tail">I’ll find it, compare the best options and fill your cart. You see the shipping before you pay.</div>
+                <div className="cx-bubble cx-bubble-bot cx-no-tail">I’ll find it, compare the best options and check you out right here. You see the full price before you pay.</div>
               </div>
               <div className="cx-msg cx-bot">
                 <div className="cx-bubble cx-bubble-bot">Type, talk 🎙️ or send a photo 📷. Or tap one of these:</div>
@@ -810,10 +810,13 @@ export default function Chat({
                       <Markdown text={turn.text} />
                     </div>
                   ) : (
-                    <div className="cx-bubble cx-bubble-bot cx-typing" aria-label="The assistant is typing">
-                      <span />
-                      <span />
-                      <span />
+                    <div className="cx-thinking-row">
+                      <BrandMark size={30} mood="thinking" />
+                      <div className="cx-bubble cx-bubble-bot cx-typing" aria-label="The assistant is typing">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
                     </div>
                   )}
                 </div>

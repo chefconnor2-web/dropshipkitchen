@@ -40,13 +40,14 @@ export const config = {
     storeEmail: process.env.STORE_EMAIL?.trim() || "",
   },
   siteUrl: (process.env.SITE_URL || "http://localhost:3000").replace(/\/+$/, ""),
-  storeName: process.env.STORE_NAME || "C1",
+  storeName: process.env.STORE_NAME || "Chit POS",
+  storeTagline: "Your own personal POS system in a chat",
   // mock (default): never sends orders to CJ · sandbox: CJ sandbox orders only (no charge, no shipping)
   // · live: also real CJ orders, paid from the CJ balance, each one confirmed by the merchant.
   supplierMode: (process.env.SUPPLIER_MODE || "mock").toLowerCase(),
 };
 
-/** Initials of the store name ("C1" → "C1", "Outpost Power Co." → "OC"): SKU and order prefixes. */
+/** Initials of the store name ("Chit POS" → "CP", "C1" → "C1"): SKU and order prefixes. */
 export function storeInitials(): string {
   // A name that's already short ("C1") is its own initials.
   const compact = config.storeName.replace(/[^A-Za-z0-9]/g, "");

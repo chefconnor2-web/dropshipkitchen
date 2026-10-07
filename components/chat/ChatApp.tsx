@@ -303,7 +303,7 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             <BrandMark size={34} className="cx-avatar" />
             <span className="topbar-name">
               {props.storeName}
-              <span className="topbar-sub">{active ? active.title : "Shopping assistant"}</span>
+              <span className="topbar-sub">{active ? active.title : "Your personal POS"}</span>
             </span>
           </div>
           <button type="button" className="sb-icon show-mobile" onClick={newChat} aria-label="New chat">

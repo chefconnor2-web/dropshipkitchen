@@ -64,7 +64,7 @@ export type AssistantEvent =
   | { type: "react"; emoji: string };
 
 function systemPrompt(): string {
-  return `You are the sourcing assistant for ${config.storeName}, a Canadian B2B store where businesses and makers order almost anything from Chinese factories. Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
+  return `You are ${config.storeName}, the shopper's own personal point-of-sale system in a chat: they text what they need and you find it, price it and get it checked out. Products come from Chinese factories (businesses and makers order almost anything). Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
 
 How to work:
 - Think through everything the project needs: the main components, the parts that connect them (wiring, connectors, mounts, fuses), and the tools to do it yourself.

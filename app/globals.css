@@ -1683,9 +1683,77 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .ship-from { white-space: nowrap; opacity: 0.85; }
 
 /* C1 mark: China, Canada and the US side by side */
-.brand-flag { display: inline-block; flex: none; line-height: 0; }
-.brand-flag svg { width: 100%; height: 100%; display: block; }
-.brand-flag.cx-avatar { background: none; border-radius: 0; }
+/* Bubble Guy (components/BrandMark.tsx). The drawings have a soft glow around the body; it's cropped a little
+   so the blob reads at avatar sizes, and faded out with a mask so no square edge shows. --blob-hue re-tints it.
+   Outer .brand-flag: pop in, then float. Inner .blob: squash and stretch in time with the float, a wiggle now
+   and then, and eyelids (::after) that blink. */
+:root { --blob-hue: 0deg; }
+.brand-flag { display: inline-block; flex: none; line-height: 0; position: relative; animation: blobPop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) backwards, blobFloat 3.6s ease-in-out 0.7s infinite; }
+.brand-flag.cx-avatar { border-radius: 0; background: none; }
+.blob {
+  --blob-img: url(/brand/blob.png);
+  position: absolute; inset: 0;
+  background: var(--blob-img) center / 130% no-repeat;
+  filter: hue-rotate(var(--blob-hue));
+  transform-origin: 50% 72%;
+  animation: blobIdle 7.2s ease-in-out 0.7s infinite;
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 72%, transparent 100%);
+  mask-image: radial-gradient(circle closest-side, #000 72%, transparent 100%);
+}
+.blob.green { --blob-img: url(/brand/blob-green.png); }
+.blob.amber { --blob-img: url(/brand/blob-amber.png); }
+.blob.red { --blob-img: url(/brand/blob-red.png); }
+/* Eyelids, one per eye: the same drawing shifted sideways so the plain skin between the eyes sits over each
+   eye, seen through a soft oval around that eye, faded in for the instant of a blink. */
+.blob::before, .blob::after { content: ""; position: absolute; inset: 0; opacity: 0; animation: blobBlink 5.3s linear 1.2s infinite; }
+.blob::before {
+  background: var(--blob-img) 85.2% 50% / 130% no-repeat;
+  -webkit-mask-image: radial-gradient(6% 9.5% at 39.8% 47.2%, #000 70%, transparent 100%);
+  mask-image: radial-gradient(6% 9.5% at 39.8% 47.2%, #000 70%, transparent 100%);
+}
+.blob::after {
+  background: var(--blob-img) 14.8% 50% / 130% no-repeat;
+  -webkit-mask-image: radial-gradient(6% 9.5% at 60.2% 47.2%, #000 70%, transparent 100%);
+  mask-image: radial-gradient(6% 9.5% at 60.2% 47.2%, #000 70%, transparent 100%);
+}
+.blob.thinking { animation: blobThink 1.3s ease-in-out infinite; }
+.blob.nervous { animation: blobNervous 0.9s ease-in-out infinite; }
+.blob.thinking::before, .blob.thinking::after { animation-duration: 2.6s; }
+/* A happy jiggle when the logo (or the link it sits in) is hovered or tapped. */
+.brand-flag:hover > .blob, a:hover > .brand-flag > .blob, a:active > .brand-flag > .blob { animation: blobJelly 0.8s ease-in-out; }
+@keyframes blobPop { 0% { transform: scale(0.2); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1); } }
+@keyframes blobFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7%); } }
+@keyframes blobIdle {
+  /* Two float cycles: squashed at the bottom, a little stretched at the top. */
+  0%, 50% { transform: scale(1.04, 0.96); }
+  25%, 75% { transform: scale(0.98, 1.03); }
+  /* Then a small side-to-side wiggle before it settles. */
+  84% { transform: scale(1.02, 0.98) rotate(-5deg); }
+  89% { transform: scale(1, 1) rotate(4deg); }
+  94% { transform: scale(1.02, 0.98) rotate(-2deg); }
+  100% { transform: scale(1.04, 0.96) rotate(0); }
+}
+@keyframes blobBlink {
+  0%, 44%, 49.5%, 88%, 91.5%, 93.5%, 97.5%, 100% { opacity: 0; }
+  46%, 47.5%, 89.5%, 90%, 95%, 95.5% { opacity: 1; }
+}
+@keyframes blobJelly {
+  0% { transform: scale(1, 1); }
+  20% { transform: scale(1.18, 0.84); }
+  40% { transform: scale(0.88, 1.12); }
+  60% { transform: scale(1.07, 0.94); }
+  80% { transform: scale(0.97, 1.03); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes blobThink {
+  0%, 100% { transform: translateY(0) scale(1.04, 0.96) rotate(0); }
+  30% { transform: translateY(-10%) scale(0.95, 1.07) rotate(-6deg); }
+  55% { transform: translateY(0) scale(1.1, 0.9) rotate(0); }
+  80% { transform: translateY(-5%) scale(0.98, 1.03) rotate(5deg); }
+}
+@keyframes blobNervous { 0%, 100% { transform: scale(1, 1) rotate(0); } 25% { transform: scale(1.06, 0.95) rotate(-3deg); } 75% { transform: scale(0.97, 1.04) rotate(3deg); } }
+@media (prefers-reduced-motion: reduce) { .brand-flag, .blob, .blob::before, .blob::after { animation: none !important; } }
+.cx-thinking-row { display: flex; align-items: flex-end; gap: 6px; }
 .sea-box { border-color: #9cc3e6; background: #f2f8fd; }
 .sea-box p { margin: 0 0 8px; }
 .sea-text { color: #1f5f99; }
