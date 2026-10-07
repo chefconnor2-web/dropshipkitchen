@@ -810,10 +810,13 @@ export default function Chat({
                       <Markdown text={turn.text} />
                     </div>
                   ) : (
-                    <div className="cx-bubble cx-bubble-bot cx-typing" aria-label="The assistant is typing">
-                      <span />
-                      <span />
-                      <span />
+                    <div className="cx-thinking-row">
+                      <BrandMark size={30} mood="thinking" />
+                      <div className="cx-bubble cx-bubble-bot cx-typing" aria-label="The assistant is typing">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
                     </div>
                   )}
                 </div>

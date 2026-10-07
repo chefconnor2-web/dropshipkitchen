@@ -1683,9 +1683,29 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .ship-from { white-space: nowrap; opacity: 0.85; }
 
 /* C1 mark: China, Canada and the US side by side */
+/* Bubble Guy (components/BrandMark.tsx). The drawings have a soft glow around the body; it's cropped a little
+   so the blob reads at avatar sizes. --blob-hue re-tints it. */
+:root { --blob-hue: 0deg; }
 .brand-flag { display: inline-block; flex: none; line-height: 0; }
-.brand-flag svg { width: 100%; height: 100%; display: block; }
-.brand-flag.cx-avatar { background: none; border-radius: 0; }
+.blob {
+  background: url(/brand/blob.png) center / 130% no-repeat;
+  filter: hue-rotate(var(--blob-hue));
+  animation: blobBreathe 4.2s ease-in-out infinite;
+  /* Fades the cropped glow out before the box edge, so no square shows on any background. */
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 72%, transparent 100%);
+  mask-image: radial-gradient(circle closest-side, #000 72%, transparent 100%);
+}
+.blob.green { background-image: url(/brand/blob-green.png); }
+.blob.amber { background-image: url(/brand/blob-amber.png); }
+.blob.red { background-image: url(/brand/blob-red.png); }
+.blob.nervous { animation: blobNervous 0.9s ease-in-out infinite; }
+.blob.thinking { animation: blobThink 1.4s ease-in-out infinite; }
+.brand-flag.cx-avatar { border-radius: 0; background-color: transparent; }
+@keyframes blobBreathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.05, 0.96) translateY(1px); } }
+@keyframes blobNervous { 0%, 100% { transform: scale(1, 1) rotate(0); } 25% { transform: scale(1.06, 0.95) rotate(-3deg); } 75% { transform: scale(0.97, 1.04) rotate(3deg); } }
+@keyframes blobThink { 0%, 100% { transform: scale(1) rotate(0); } 35% { transform: scale(1.14, 0.92) rotate(-6deg); } 70% { transform: scale(0.94, 1.08) rotate(5deg); } }
+@media (prefers-reduced-motion: reduce) { .blob { animation: none !important; } }
+.cx-thinking-row { display: flex; align-items: flex-end; gap: 6px; }
 .sea-box { border-color: #9cc3e6; background: #f2f8fd; }
 .sea-box p { margin: 0 0 8px; }
 .sea-text { color: #1f5f99; }
