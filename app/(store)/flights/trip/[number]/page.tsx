@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { getMemberId } from "@/lib/session";
-import { completeFlightBooking, FLIGHT_STATUS, routeLabel, tripToken, type PassengerInput } from "@/lib/flight-booking";
+import { completeFlightBooking, confirmationEmailStatus, FLIGHT_STATUS, routeLabel, tripToken, type PassengerInput } from "@/lib/flight-booking";
 import { FlightCard } from "@/components/chat/ui";
 import { flightPrice, type FlightCard as Card } from "@/lib/flights-shared";
 import { timingSafeEqual } from "node:crypto";
@@ -38,9 +38,20 @@ export default async function TripPage({ params, searchParams }: { params: Promi
   const names = (JSON.parse(b.passengersJson) as PassengerInput[]).map((p) => `${p.given_name} ${p.family_name}`);
   const price = flightPrice({ priceCents: b.priceCents, currency: b.currency });
   const working = status === FLIGHT_STATUS.BOOKING;
+  const emailed = status === FLIGHT_STATUS.BOOKED ? await confirmationEmailStatus(b) : null;
   const head =
     status === FLIGHT_STATUS.BOOKED
-      ? { title: "You're booked", sub: `Confirmation code ${b.bookingReference}. Use it to check in with ${card.airline}. We've emailed your e-ticket details to ${b.email}.`, tone: "is-done" }
+      ? {
+          title: "You're booked",
+          sub: `Confirmation code ${b.bookingReference}. Use it to check in with ${card.airline}. ${
+            emailed === "sent"
+              ? `We've emailed your trip details to ${b.email}.`
+              : emailed === "failed"
+                ? "We couldn't email your confirmation, so keep this code (or bookmark this page)."
+                : `Your confirmation is on its way to ${b.email}.`
+          }`,
+          tone: "is-done",
+        }
       : working
         ? { title: "Booking your ticket…", sub: "Payment received. We're confirming your seat with the airline; this usually takes a few seconds.", tone: "" }
         : status === FLIGHT_STATUS.FAILED_REFUNDED
