@@ -27,6 +27,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/suppliers/cj", label: "CJ", icon: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm9 16-4.5-4.5" },
     { href: "/admin", label: "Home", icon: "M4 13h6V4H4zm10 7h6V4h-6zM4 20h6v-4H4z" },
   ];
+  if (duffelConfigured()) tabs.splice(tabs.length - 1, 0, { href: "/admin/flights", label: "Flights", icon: "M2 16l20-6-20-6 3 6-3 6zm3-6h9" });
   return (
     <div className="admin">
       <header className="admin-top">

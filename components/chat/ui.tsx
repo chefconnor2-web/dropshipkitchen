@@ -447,7 +447,7 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
   );
 }
 
-export function FlightCard({ f }: { f: Flight }) {
+export function FlightCard({ f, bookable = true }: { f: Flight; bookable?: boolean }) {
   return (
     <div className="cx-flight">
       <div className="cx-flight-head">
@@ -484,9 +484,11 @@ export function FlightCard({ f }: { f: Flight }) {
           {f.checkedBags > 0 ? ` · ${f.checkedBags} bag${f.checkedBags > 1 ? "s" : ""}` : " · no checked bag"}
           {f.refundable ? " · refundable" : ""}
         </span>
-        <button type="button" className="cx-btn" disabled title="Booking flights in the chat is coming soon">
-          Booking soon
-        </button>
+        {bookable && (
+          <a href={`/flights/book/${encodeURIComponent(f.id)}`} className="cx-btn cx-btn-primary">
+            Book
+          </a>
+        )}
       </div>
     </div>
   );

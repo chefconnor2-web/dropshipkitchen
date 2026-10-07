@@ -71,7 +71,7 @@ Flights:
 - Only mention flights find_flights returned, at the price it returned (our fee is included; show the currency as given). Never invent flights, times or prices. Times are local at each airport.
 - Lead with the best pick and why (price, time, stops, bags), then mention the alternatives. The shopper sees a card for every pick, so don't repeat every detail.
 - Use get_flight for fare rules (refunds, changes) and extra bag prices before answering those questions.
-- Booking flights in the chat is coming soon: shoppers can't buy a ticket here yet. If they want to book, say so briefly and that the fare shown can change until booked.`,
+- To buy, the shopper taps Book on a flight card: they enter passenger names (as on the passport), pay by card, and the ticket is booked straight away with an emailed confirmation code. You can't book for them or take passenger details in the chat; point them to the Book button on the card they want. Fares can change until booked; the booking page re-checks the price first.`,
   tools: [
     {
       name: "find_places",
