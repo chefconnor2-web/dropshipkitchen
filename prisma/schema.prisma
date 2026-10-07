@@ -610,3 +610,37 @@ model ShippingQuote {
 
   @@index([country, quotedAt])
 }
+
+/// A flight bought through the chat (Duffel). Created before payment with an immutable snapshot of the offer;
+/// the Duffel order is only created after Stripe confirms payment, and exactly once (status lock).
+model FlightBooking {
+  id                  String    @id @default(cuid())
+  number              String    @unique
+  /// PENDING_PAYMENT | BOOKING | BOOKED | FAILED_REFUNDED
+  status              String    @default("PENDING_PAYMENT")
+  offerId             String
+  /// The flight card the shopper saw (lib/flights-shared FlightCard)
+  cardJson            String
+  /// Duffel's own total for the offer when the shopper started checkout (what our balance pays)
+  duffelAmount        String
+  currency            String
+  /// What the shopper pays (Duffel total + our fee), in `currency` ×100
+  priceCents          Int
+  /// [{id, title, gender, given_name, family_name, born_on, passport?}] in the offer's passenger order
+  passengersJson      String
+  email               String
+  phone               String
+  customerId          String?
+  stripeSessionId     String?   @unique
+  stripePaymentIntent String?
+  stripeRefundId      String?
+  duffelOrderId       String?
+  bookingReference    String?
+  error               String?
+  paidAt              DateTime?
+  bookedAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+}

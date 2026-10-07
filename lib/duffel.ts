@@ -3,6 +3,7 @@
 //   GET  /places/suggestions?query=        airports and cities by name
 //   POST /air/offer_requests?return_offers  search: slices, passengers, cabin → offers
 //   GET  /air/offers/{id}                   one offer, re-priced, with fare conditions and extras
+//   POST /air/orders                        book it, paid from our Duffel balance (only after the shopper paid us)
 // DUFFEL_API_URL is for tests only (a local stand-in for Duffel).
 
 import { processSingleton } from "@/lib/singleton";
@@ -103,6 +104,8 @@ export interface DuffelOffer {
   owner: { name: string; iata_code?: string; logo_symbol_url?: string | null };
   slices: DuffelSlice[];
   passengers: Array<{ id: string; type?: string | null; age?: number | null }>;
+  /** True when the airline needs passport details for this trip. */
+  passenger_identity_documents_required?: boolean;
   conditions?: {
     refund_before_departure?: { allowed: boolean; penalty_amount?: string | null; penalty_currency?: string | null } | null;
     change_before_departure?: { allowed: boolean; penalty_amount?: string | null; penalty_currency?: string | null } | null;
@@ -129,4 +132,34 @@ export async function searchOffers(input: OfferRequestInput): Promise<DuffelOffe
 
 export function getOffer(id: string): Promise<DuffelOffer> {
   return call<DuffelOffer>("GET", `/air/offers/${encodeURIComponent(id)}?return_available_services=true`, undefined, 20_000);
+}
+
+export interface DuffelOrderPassenger {
+  id: string;
+  title: "mr" | "ms" | "mrs" | "miss" | "dr";
+  gender: "m" | "f";
+  given_name: string;
+  family_name: string;
+  born_on: string;
+  email: string;
+  phone_number: string;
+  infant_passenger_id?: string;
+  identity_documents?: Array<{ type: "passport"; unique_identifier: string; issuing_country_code: string; expires_on: string }>;
+}
+
+export interface DuffelOrder {
+  id: string;
+  booking_reference: string;
+  total_amount: string;
+  total_currency: string;
+}
+
+/** Books the offer, paid from our Duffel balance. Call only once the shopper's payment has cleared. */
+export function createOrder(offer: Pick<DuffelOffer, "id" | "total_amount" | "total_currency">, passengers: DuffelOrderPassenger[], metadata: Record<string, string>): Promise<DuffelOrder> {
+  return call<DuffelOrder>(
+    "POST",
+    "/air/orders",
+    { type: "instant", selected_offers: [offer.id], passengers, payments: [{ type: "balance", currency: offer.total_currency, amount: offer.total_amount }], metadata },
+    60_000,
+  );
 }
