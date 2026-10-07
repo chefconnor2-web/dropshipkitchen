@@ -19,6 +19,8 @@ import { bulkPricingLabel, priceOrder } from "@/lib/volume";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
+import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
+import type { ConnectorItem } from "@/lib/flights-shared";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -46,12 +48,14 @@ export interface ProductCard {
 export type UiEntry =
   /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
   | { role: "user"; text: string; images?: string[]; reaction?: string; at?: string }
-  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit; at?: string };
+  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit; items?: ConnectorItem[]; at?: string };
 
 /** Live events for the chat panel while a turn runs. */
 export type AssistantEvent =
   | { type: "progress"; note: string }
   | { type: "found"; group: string; cards: ProductCard[]; done: boolean }
+  /** Cards from a connector (flights…) as each search finishes. */
+  | { type: "items"; group: string; items: ConnectorItem[] }
   /** Streamed words of the answer as the model writes them. */
   | { type: "text"; delta: string }
   /** The model finished a burst of text and is about to use tools. */
@@ -80,7 +84,7 @@ How to work:
 - Sea shipping: if ships_to_shopper is NO for a shopper in Canada and the product isn't US-warehouse-only (usually a big lithium battery, which can't fly), it can still go to Canada by boat from China, about 4–7 weeks, priced per order. Tell them they can add it and tap "Get a sea-shipping price" in the cart; don't put it in a kit with fast-shipping items without saying so.
 - get_product says whether the product can ship to the shopper's country (ships_to_shopper). If it says NO, don't add it or put it in a kit: tell the shopper it can't ship to them and find an alternative that does (for a large lithium battery, try other packs; some ship from other warehouses). If a cart can't ship, view_cart and the cart page name the item that blocks it.
 - Some products are made with the shopper's own photo or text (print on demand). When they want something custom, personalized, printed with a photo, logo or name, or a personal gift, call show_personalized_products and point them to those cards. You can't add these to the cart yourself: tell them to tap Add on the card, which opens a designer where they upload a photo (any they already sent you is one tap away) or type text, see a preview, and add it. Personalized items can't be returned, so mention that they should check the preview.
-- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.`;
+- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.${connectorPrompt(new Date().toISOString().slice(0, 10))}`;
 }
 
 const VOICE_NOTE = `\n\nThe shopper is talking to you by voice and your reply is read aloud. Answer in two to four short spoken sentences with no lists, headings, markdown or prices with cents. Still use the tools as usual; the product and kit cards show the details on screen.`;
@@ -137,7 +141,7 @@ export async function generateTitle(text: string, hasImage: boolean): Promise<st
 }
 
 /** Tapbacks the assistant may use: warm, never mocking (no 😂 or 👎 on a customer's request). */
-export const REACTIONS = ["❤️", "👍", "‼️", "🔥", "👀", "🙌", "💯", "🤝", "😮", "🙏", "🎉", "⚡", "📦", "🛠️", "😍", "🫡"] as const;
+export const REACTIONS = ["❤️", "👍", "‼️", "🔥", "👀", "🙌", "💯", "🤝", "😮", "🙏", "🎉", "⚡", "📦", "🛠️", "😍", "🫡", "✈️", "🌴"] as const;
 const REACTION_SET = new Set<string>(REACTIONS);
 
 /** Normalizes a model's reply to one allowed emoji ("❤" and "❤️" are the same tapback), or null for none. */
@@ -159,7 +163,7 @@ export async function pickReaction(text: string, hasImage: boolean): Promise<{ e
     const r = await new Anthropic().messages.create({
       model: SCOUT_MODEL,
       max_tokens: 8,
-      system: `You are a friendly shopping assistant texting with a customer in iMessage. React to their latest message with ONE tapback emoji, the way a warm, upbeat person would. Pick from: ${REACTIONS.join(" ")}. Excited project or big order: 🔥 🙌 ⚡. Thanks or kind words: ❤️ 🙏. A clear request: 👍 🫡 🛠️ 📦. A photo: 👀 😍. Reply with the emoji only. Reply "none" if a reaction would feel wrong (a complaint, a problem with an order, or anything sad or sensitive).`,
+      system: `You are a friendly shopping assistant texting with a customer in iMessage. React to their latest message with ONE tapback emoji, the way a warm, upbeat person would. Pick from: ${REACTIONS.join(" ")}. Excited project or big order: 🔥 🙌 ⚡. Thanks or kind words: ❤️ 🙏. A clear request: 👍 🫡 🛠️ 📦. A photo: 👀 😍. A trip or flight: ✈️ 🌴. Reply with the emoji only. Reply "none" if a reaction would feel wrong (a complaint, a problem with an order, or anything sad or sensitive).`,
       messages: [{ role: "user", content: `${hasImage ? "[sent a photo] " : ""}${text.slice(0, 600)}` }],
     });
     const out = r.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
@@ -458,9 +462,20 @@ interface Ctx {
   emit: (e: AssistantEvent) => void;
   client: Anthropic;
   usage: { in: number; out: number; micros: number };
+  /** Connector cards shown this turn (flights…). */
+  items: ConnectorItem[];
 }
 
 async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<{ content: string; isError?: boolean }> {
+  const connector = connectorFor(name);
+  if (connector)
+    return connector.run(name, input, {
+      progress: (note) => ctx.emit({ type: "progress", note }),
+      show: (group, items) => {
+        ctx.items.push(...items);
+        ctx.emit({ type: "items", group, items });
+      },
+    });
   if (name === "find_products") {
     const parts = (Array.isArray(input.parts) ? input.parts : [])
       .slice(0, MAX_PARTS)
@@ -646,7 +661,7 @@ export async function chatTurn(
   const usage = { in: 0, out: 0, micros: 0 };
   const known = new Map<string, ProductCard>();
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
-  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage };
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [] };
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
   const texts: string[] = [];
@@ -658,7 +673,7 @@ export async function chatTurn(
       model: MODEL,
       max_tokens: 8000,
       system: systemPrompt() + (input.voice ? VOICE_NOTE : ""),
-      tools: PLANNER_TOOLS,
+      tools: [...PLANNER_TOOLS, ...connectorTools()],
       cache_control: { type: "ephemeral" },
       messages: await hydrateImages(messages),
       // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.
@@ -709,6 +724,7 @@ export async function chatTurn(
     cards: ctx.cards.slice(0, 30),
     added: ctx.added,
     ...(ctx.kit ? { kit: ctx.kit } : {}),
+    ...(ctx.items.length ? { items: ctx.items.slice(0, 18) } : {}),
     at: new Date().toISOString(),
   };
   ui.push(

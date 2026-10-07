@@ -20,6 +20,7 @@ import {
   PencilIcon,
   PlusIcon2,
   ProductCard,
+  ConnectorCards,
   RetryIcon,
   SpeakerIcon,
   Spinner,
@@ -254,9 +255,9 @@ export default function Chat({
     // The assistant's tapback (and the server's timestamp) land on the message just sent.
     const patchUser = (patch: Partial<Entry>) =>
       !me.detached && setEntries((en) => en.map((x, k) => (k === userIndex && x.role === "user" ? ({ ...x, ...patch } as Entry) : x)));
-    const t: Turn = { text: "", steps: [], groups: [] };
+    const t: Turn = { text: "", steps: [], groups: [], items: [] };
     setTurn({ ...t });
-    const update = () => !me.detached && setTurn({ text: t.text, steps: [...t.steps], groups: [...t.groups] });
+    const update = () => !me.detached && setTurn({ text: t.text, steps: [...t.steps], groups: [...t.groups], items: [...t.items] });
     let reply: string | null = null;
     try {
       const r = await fetch("/api/assistant", {
@@ -305,6 +306,9 @@ export default function Chat({
           const next = { group: e.group, cards, done: e.done };
           t.groups = prev ? t.groups.map((x) => (x.group === e.group ? next : x)) : [...t.groups, next];
           update();
+        } else if (e.type === "items") {
+          t.items = [...t.items, ...e.items.filter((x: { id: string }) => !t.items.some((y) => y.id === x.id))];
+          update();
         } else if (e.type === "react") {
           patchUser({ reaction: e.emoji });
         } else if (e.type === "error") throw new Error(e.error);
@@ -335,7 +339,7 @@ export default function Chat({
       if (me.detached) return null;
       if (me.ctrl.signal.aborted) {
         // Keep what was written so far, like stopping a reply in ChatGPT.
-        setEntries((en) => [...en, { role: "assistant", text: t.text, cards: [], added: [], steps: t.steps, groups: t.groups, stopped: true }]);
+        setEntries((en) => [...en, { role: "assistant", text: t.text, cards: [], added: [], items: t.items, steps: t.steps, groups: t.groups, stopped: true }]);
       } else {
         setError({ message: e instanceof Error ? e.message : "Something went wrong.", retryIndex: userIndex, limit: (e as { limit?: { subscriber: boolean; signedIn: boolean } }).limit });
       }
@@ -757,6 +761,7 @@ export default function Chat({
                       </div>
                     )}
                     {e.kit && <KitCard kit={e.kit} state={kitState[e.kit.id]} onAdd={() => addKit(e.kit!)} />}
+                    {e.items && <ConnectorCards items={e.items} />}
                     {groupCards(e.cards).map(([group, cards]) => (
                       <div key={group || "all"} className="cx-group">
                         {group && <div className="cx-group-label">{group}</div>}
@@ -799,6 +804,7 @@ export default function Chat({
               <div className="cx-msg cx-bot">
                 <div className="cx-bot-body">
                   {(turn.steps.length > 1 || turn.groups.length > 0) && <Steps steps={turn.steps} groups={turn.groups} live />}
+                  <ConnectorCards items={turn.items} />
                   {turn.text ? (
                     <div className="cx-bubble cx-bubble-bot cx-streaming">
                       <Markdown text={turn.text} />
