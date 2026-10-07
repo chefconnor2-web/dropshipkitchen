@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { timeAgo } from "@/components/admin";
-import { routeLabel, tripUrl, type PassengerInput } from "@/lib/flight-booking";
+import { confirmationEmailStatus, routeLabel, tripUrl, type PassengerInput } from "@/lib/flight-booking";
 import { duffelTestMode } from "@/lib/duffel";
 import { flightPrice, type FlightCard } from "@/lib/flights-shared";
 
@@ -21,6 +21,7 @@ export default async function FlightsAdminPage() {
   const fee = (r: (typeof rows)[number]) => r.priceCents - Math.round(Number(r.duffelAmount) * 100);
   const review = rows.filter((r) => r.status === "NEEDS_REVIEW").length;
   const links = new Map(await Promise.all(rows.map(async (r) => [r.id, await tripUrl(r)] as const)));
+  const emails = new Map(await Promise.all(rows.map(async (r) => [r.id, await confirmationEmailStatus(r)] as const)));
   return (
     <>
       <div className="a-head">
@@ -58,6 +59,7 @@ export default async function FlightsAdminPage() {
                 {r.bookingReference ? ` · PNR ${r.bookingReference}` : ""}
                 {r.duffelOrderId ? ` · Duffel ${r.duffelOrderId}` : ""}
                 {r.stripeRefundId ? ` · refund ${r.stripeRefundId}` : ""}
+                {r.status === "BOOKED" ? ` · confirmation email ${emails.get(r.id) ?? "pending"}` : ""}
               </p>
               {r.error && <p className="notice err small">{r.error}</p>}
               <p className="small">

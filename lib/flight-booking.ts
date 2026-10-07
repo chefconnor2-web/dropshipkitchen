@@ -302,3 +302,14 @@ async function merchantAlert(number: string, message: string) {
   const text = `Flight booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/flights`;
   await sendEmail({ to: config.email.storeEmail, kind: "flight_needs_review", subject: `Flight booking ${number} needs review`, text, html: `<pre>${esc(text)}</pre>` });
 }
+
+/** Whether the booking confirmation email went out: "sent", "failed" (or not set up), or null while it's on its way. */
+export async function confirmationEmailStatus(b: { email: string; bookingReference: string | null }): Promise<"sent" | "failed" | null> {
+  if (!b.bookingReference) return null;
+  const log = await prisma.emailLog.findFirst({
+    where: { kind: "flight_confirmation", to: b.email, subject: { contains: b.bookingReference } },
+    orderBy: { createdAt: "desc" },
+    select: { status: true },
+  });
+  return !log ? null : log.status === "sent" ? "sent" : "failed";
+}
