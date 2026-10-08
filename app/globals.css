@@ -1683,8 +1683,8 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .ship-from { white-space: nowrap; opacity: 0.85; }
 
 /* C1 mark: China, Canada and the US side by side */
-/* Bubble Guy (components/BrandMark.tsx). The drawings have a soft glow around the body; it's cropped a little
-   so the blob reads at avatar sizes, and faded out with a mask so no square edge shows. --blob-hue re-tints it.
+/* Bubble Guy (components/BrandMark.tsx): a peach "plant sphere" with eyes. The drawings have a soft glow around
+   the body; it's cropped a little so he reads at avatar sizes, and faded out with a mask so no square edge shows. --blob-hue re-tints it.
    Outer .brand-flag: pop in, then float. Inner .blob: squash and stretch in time with the float, a wiggle now
    and then, and eyelids (::after) that blink. */
 :root { --blob-hue: 0deg; }
@@ -1693,12 +1693,12 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .blob {
   --blob-img: url(/brand/blob.png);
   position: absolute; inset: 0;
-  background: var(--blob-img) center / 130% no-repeat;
+  background: var(--blob-img) center / 120% no-repeat;
   filter: hue-rotate(var(--blob-hue));
   transform-origin: 50% 72%;
   animation: blobIdle 7.2s ease-in-out 0.7s infinite;
-  -webkit-mask-image: radial-gradient(circle closest-side, #000 72%, transparent 100%);
-  mask-image: radial-gradient(circle closest-side, #000 72%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 90%, transparent 100%);
+  mask-image: radial-gradient(circle closest-side, #000 90%, transparent 100%);
 }
 .blob.green { --blob-img: url(/brand/blob-green.png); }
 .blob.amber { --blob-img: url(/brand/blob-amber.png); }
@@ -1707,14 +1707,14 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
    eye, seen through a soft oval around that eye, faded in for the instant of a blink. */
 .blob::before, .blob::after { content: ""; position: absolute; inset: 0; opacity: 0; animation: blobBlink 5.3s linear 1.2s infinite; }
 .blob::before {
-  background: var(--blob-img) 85.2% 50% / 130% no-repeat;
-  -webkit-mask-image: radial-gradient(6% 9.5% at 39.8% 47.2%, #000 70%, transparent 100%);
-  mask-image: radial-gradient(6% 9.5% at 39.8% 47.2%, #000 70%, transparent 100%);
+  background: var(--blob-img) 98.75% 50% / 120% no-repeat;
+  -webkit-mask-image: radial-gradient(6% 9.5% at 40.6% 47.4%, #000 70%, transparent 100%);
+  mask-image: radial-gradient(6% 9.5% at 40.6% 47.4%, #000 70%, transparent 100%);
 }
 .blob::after {
-  background: var(--blob-img) 14.8% 50% / 130% no-repeat;
-  -webkit-mask-image: radial-gradient(6% 9.5% at 60.2% 47.2%, #000 70%, transparent 100%);
-  mask-image: radial-gradient(6% 9.5% at 60.2% 47.2%, #000 70%, transparent 100%);
+  background: var(--blob-img) 1.25% 50% / 120% no-repeat;
+  -webkit-mask-image: radial-gradient(6% 9.5% at 59.4% 47.4%, #000 70%, transparent 100%);
+  mask-image: radial-gradient(6% 9.5% at 59.4% 47.4%, #000 70%, transparent 100%);
 }
 .blob.thinking { animation: blobThink 1.3s ease-in-out infinite; }
 .blob.nervous { animation: blobNervous 0.9s ease-in-out infinite; }

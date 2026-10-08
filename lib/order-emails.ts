@@ -103,7 +103,7 @@ function layout(title: string, intro: string, body: string, cta?: { label: strin
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:28px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden">
 <tr><td style="background:#15171A;padding:18px 24px;color:#EEEBE4;font-weight:700;letter-spacing:2px;text-transform:uppercase;font-size:15px">
-<span style="display:inline-block;background:#E8551C;color:#fff;border-radius:4px;padding:2px 8px;margin-right:8px">${esc(storeInitials())}</span>${esc(config.storeName)}</td></tr>
+${storeInitials() === config.storeName.toUpperCase() ? "" : `<span style="display:inline-block;background:#E8551C;color:#fff;border-radius:4px;padding:2px 8px;margin-right:8px">${esc(storeInitials())}</span>`}${esc(config.storeName)}</td></tr>
 <tr><td style="padding:28px 24px 8px"><h1 style="margin:0 0 10px;font-size:24px;line-height:1.2">${esc(title)}</h1>
 <p style="margin:0 0 18px;color:#4B4F55;font-size:15px;line-height:1.55">${intro}</p>${body}
 ${cta ? `<p style="margin:24px 0 8px"><a href="${esc(cta.href)}" style="display:inline-block;background:#E8551C;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:6px">${esc(cta.label)}</a></p>` : ""}
