@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import Link from "next/link";
 import DesignModal from "./DesignModal";
 import BrandMark from "@/components/BrandMark";
+import ShareButton from "@/components/ShareButton";
 import PlanPicker from "@/components/PlanPicker";
 import type { PlanOffer } from "@/lib/plan-offer";
 import type { ChatDesigner } from "@/lib/personalize";
@@ -635,6 +636,7 @@ export default function Chat({
               <BrandMark size={76} className="cx-avatar cx-avatar-lg" />
               <h1>{storeName}</h1>
               <p>Your personal POS · replies in seconds</p>
+              <ShareButton className="cx-share share-center" url="/" text={`${storeName}: your own personal POS system in a chat`} label={`Share ${storeName}`} />
             </div>
             <div className="cx-col cx-greeting" aria-label="How it works">
               <div className="cx-msg cx-bot">

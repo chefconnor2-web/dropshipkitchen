@@ -8,12 +8,21 @@ import { subscribeToBox } from "../../actions";
 import { getShipTo } from "@/lib/cart";
 import { countryLabel } from "@/lib/shipping";
 import { getPlan, planRules } from "@/lib/plan";
+import ShareButton from "@/components/ShareButton";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
-  const box = await prisma.mysteryBox.findFirst({ where: { slug: (await params).slug, status: "PUBLISHED" } });
-  return box ? { title: `${box.name} — ${config.storeName}`, description: box.tagline } : {};
+  const box = await prisma.mysteryBox.findFirst({
+    where: { slug: (await params).slug, status: "PUBLISHED" },
+    include: { pool: { take: 1, include: { variant: { include: { product: { include: { images: { take: 1, orderBy: { position: "asc" } } } } } } } } },
+  });
+  if (!box) return {};
+  const title = `${box.name} — ${config.storeName}`;
+  // A peek at one of the items is the preview card when the page is shared.
+  const img = box.pool[0]?.variant.product.images[0];
+  const images = img ? [{ url: `/media/${img.id}` }] : undefined;
+  return { title, description: box.tagline, openGraph: { title, description: box.tagline, url: `/boxes/${box.slug}`, siteName: config.storeName, type: "website", images } };
 }
 
 export default async function BoxPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ error?: string }> }) {
@@ -52,6 +61,7 @@ export default async function BoxPage({ params, searchParams }: { params: Promis
           <p className="eyebrow">Surplus mystery box · every month with Full</p>
           <h1 className="page-title">{box.name}</h1>
           <p className="box-tagline">{box.tagline}</p>
+          <ShareButton className="pdp-share" url={`/boxes/${box.slug}`} text={`${box.name}: a monthly mystery box from ${config.storeName}`} image={teasers[0] ? `/media/${teasers[0]}` : null} />
           <div className="price">
             {formatMoney(plan.priceCents)}/month
             <span className="box-value">plus shipping · includes Full: 2× the assistant usage of Lite</span>

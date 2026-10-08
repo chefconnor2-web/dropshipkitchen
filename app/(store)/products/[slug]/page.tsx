@@ -13,7 +13,11 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const p = await publishedProduct((await params).slug);
   if (!p) return {};
-  return { title: p.seoTitle || `${p.title} — ${config.storeName}`, description: p.seoDescription || p.description.slice(0, 160) };
+  const title = p.seoTitle || `${p.title} — ${config.storeName}`;
+  const description = p.seoDescription || p.description.slice(0, 160);
+  // The product photo is the preview card when the page is shared.
+  const images = p.images[0] ? [{ url: p.images[0].src, alt: p.images[0].alt }] : undefined;
+  return { title, description, openGraph: { title, description, url: `/products/${p.slug}`, siteName: config.storeName, type: "website", images }, twitter: { card: "summary_large_image", title, description, images } };
 }
 
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -42,7 +46,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         {" / "}
         <span>{p.title}</span>
       </nav>
-      <ProductView product={p} shipTo={{ country: shipTo.country, zip: shipTo.zip }} initialShip={initialShip} warehouse={warehouse} />
+      <ProductView product={p} shipTo={{ country: shipTo.country, zip: shipTo.zip }} initialShip={initialShip} warehouse={warehouse} storeName={config.storeName} />
       {p.description && (
         <section className="pdp-details">
           <h2 className="section-title">Details</h2>
