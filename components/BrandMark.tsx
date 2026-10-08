@@ -1,4 +1,4 @@
-// The Chit POS mark: Bubble Guy, a peach "plant sphere" (from a macro photo) with eyes. He pops in, floats
+// The Chit mark: Bubble Guy, a peach "plant sphere" (from a macro photo) with eyes. He pops in, floats
 // and breathes, blinks, wiggles now and then, jiggles when touched, bounces while thinking and shakes when
 // nervous. Colors are separate drawings (peach is the brand; green, amber and red for status) and --blob-hue
 // re-tints any of them. app/icon.png is the same peach drawing. Motion lives in globals.css.
