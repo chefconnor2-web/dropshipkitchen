@@ -4,12 +4,18 @@ import { toCard } from "@/lib/flights";
 import { passengerSlots } from "@/lib/flight-booking";
 import { FlightCard } from "@/components/chat/ui";
 import BookForm from "./BookForm";
+import { prisma } from "@/lib/db";
+import { tripTitle } from "@/lib/shared-trips";
+import type { FlightCard as Card } from "@/lib/flights-shared";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Book your flight", robots: { index: false } };
 
-export default async function BookFlightPage({ params }: { params: Promise<{ offerId: string }> }) {
+export default async function BookFlightPage({ params, searchParams }: { params: Promise<{ offerId: string }>; searchParams: Promise<{ trip?: string }> }) {
   const { offerId } = await params;
+  // Joining a friend's shared trip: say whose, and file the booking under it.
+  const tripSlug = (await searchParams).trip;
+  const trip = tripSlug ? await prisma.sharedTrip.findUnique({ where: { slug: tripSlug } }) : null;
   let offer: DuffelOffer | null = null;
   let problem: string | null = null;
   if (!duffelConfigured()) problem = "Flights aren't available right now.";
@@ -28,7 +34,7 @@ export default async function BookFlightPage({ params }: { params: Promise<{ off
         <h1 className="page-title">Book your flight</h1>
         <p className="notice err">{problem}</p>
         <p>
-          <Link href="/">← Ask the assistant to search again for current fares</Link>
+          {trip ? <Link href={`/trips/${trip.slug}`}>← Back to the trip for today’s fares</Link> : <Link href="/">← Ask the assistant to search again for current fares</Link>}
         </p>
       </div>
     );
@@ -39,6 +45,7 @@ export default async function BookFlightPage({ params }: { params: Promise<{ off
     <div className="wrap page narrow fl-book">
       <p className="eyebrow">{duffelTestMode() ? "Test mode · no real ticket is issued" : "Secure booking"}</p>
       <h1 className="page-title">Book your flight</h1>
+      {trip && <p className="trip-joining">✈ {tripTitle(JSON.parse(trip.cardJson) as Card, trip.hostName)}</p>}
       <div className="fl-summary">
         <FlightCard f={card} bookable={false} />
         <p className="muted small">
@@ -46,7 +53,7 @@ export default async function BookFlightPage({ params }: { params: Promise<{ off
           {card.changeable === true ? "Changes allowed (the airline may charge a fee)." : card.changeable === false ? "No changes allowed." : ""}
         </p>
       </div>
-      <BookForm offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} />
+      <BookForm offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} tripSlug={trip?.slug} />
     </div>
   );
 }

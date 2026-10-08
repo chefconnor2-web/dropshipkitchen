@@ -3,6 +3,7 @@
 
 import { Fragment, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
+import ShareButton from "@/components/ShareButton";
 import Link from "next/link";
 import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight } from "@/lib/flights-shared";
 
@@ -439,7 +440,7 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
         <div key={group || "all"} className="cx-group">
           {group && <div className="cx-group-label">{group}</div>}
           <div className="cx-cards cx-flights">
-            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} /> : null))}
+            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : null))}
           </div>
         </div>
       ))}
@@ -447,7 +448,36 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
   );
 }
 
-export function FlightCard({ f, bookable = true }: { f: Flight; bookable?: boolean }) {
+/** Share on a chat flight card: makes a trip link (/trips/…) so friends can book the same flights. */
+function ShareFlight({ f }: { f: Flight }) {
+  const s = f.slices[0];
+  const back = f.slices.length === 2 && f.slices[1].to === s?.from;
+  const text = s ? `Fly with me to ${back || f.slices.length === 1 ? s.toCity : s.toCity + " and more"}? ${shortDate(s.depart)}, ${f.airline}` : "Fly with me?";
+  async function resolve() {
+    const r = await fetch("/api/trips", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ offerId: f.id }) });
+    const d = (await r.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (!d.url) throw new Error(d.error || "Couldn't make a link. Try again.");
+    return d.url;
+  }
+  return <ShareButton resolve={resolve} text={text} label="Share" className="cx-flight-share" modal />;
+}
+
+export function FlightCard({
+  f,
+  bookable = true,
+  bookHref,
+  hidePrice = false,
+  share,
+}: {
+  f: Flight;
+  bookable?: boolean;
+  /** Where Book goes (a friend joining a shared trip books with ?trip=). */
+  bookHref?: string;
+  /** A shared trip's snapshot has no price: friends see today's price after a live search. */
+  hidePrice?: boolean;
+  /** Extra control in the footer, e.g. the Share button on chat cards. */
+  share?: ReactNode;
+}) {
   return (
     <div className="cx-flight">
       <div className="cx-flight-head">
@@ -455,7 +485,7 @@ export function FlightCard({ f, bookable = true }: { f: Flight; bookable?: boole
         <span className="cx-flight-airline" title={f.airline}>
           {f.airline}
         </span>
-        <span className="cx-flight-price">{flightPrice(f)}</span>
+        {!hidePrice && <span className="cx-flight-price">{flightPrice(f)}</span>}
       </div>
       {f.slices.map((s, i) => (
         <div key={i} className="cx-flight-slice">
@@ -484,10 +514,15 @@ export function FlightCard({ f, bookable = true }: { f: Flight; bookable?: boole
           {f.checkedBags > 0 ? ` · ${f.checkedBags} bag${f.checkedBags > 1 ? "s" : ""}` : " · no checked bag"}
           {f.refundable ? " · refundable" : ""}
         </span>
-        {bookable && (
-          <a href={`/flights/book/${encodeURIComponent(f.id)}`} className="cx-btn cx-btn-primary">
-            Book
-          </a>
+        {(share || bookable) && (
+          <span className="cx-flight-actions">
+            {share}
+            {bookable && (
+              <a href={bookHref ?? `/flights/book/${encodeURIComponent(f.id)}`} className="cx-btn cx-btn-primary">
+                Book
+              </a>
+            )}
+          </span>
         )}
       </div>
     </div>

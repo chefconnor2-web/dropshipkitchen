@@ -352,15 +352,15 @@ model Order {
   subscriptionId      String?
 
   /// Carrier tracking, kept fresh by lib/tracking.ts. Stage: label | in_transit | out_for_delivery | delivered | exception
-  trackingStage       String?
-  trackingStatus      String? // the carrier's own words, shown as the latest update
-  trackingEta         String? // CJ's delivery estimate, e.g. "7-12" (days)
-  lastMileCarrier     String?
-  lastMileNumber      String?
-  shippedAt           DateTime?
-  deliveredAt         DateTime?
-  trackingCheckedAt   DateTime?
-  trackingEvents      TrackingEvent[]
+  trackingStage     String?
+  trackingStatus    String? // the carrier's own words, shown as the latest update
+  trackingEta       String? // CJ's delivery estimate, e.g. "7-12" (days)
+  lastMileCarrier   String?
+  lastMileNumber    String?
+  shippedAt         DateTime?
+  deliveredAt       DateTime?
+  trackingCheckedAt DateTime?
+  trackingEvents    TrackingEvent[]
 
   @@index([stripeInvoiceId])
   @@index([status, deliveredAt])
@@ -614,10 +614,10 @@ model ShippingQuote {
 /// A flight bought through the chat (Duffel). Created before payment with an immutable snapshot of the offer;
 /// the Duffel order is only created after Stripe confirms payment, and exactly once (status lock).
 model FlightBooking {
-  id                  String    @id @default(cuid())
-  number              String    @unique
+  id                  String      @id @default(cuid())
+  number              String      @unique
   /// PENDING_PAYMENT | BOOKING | BOOKED | FAILED_REFUNDED
-  status              String    @default("PENDING_PAYMENT")
+  status              String      @default("PENDING_PAYMENT")
   offerId             String
   /// The flight card the shopper saw (lib/flights-shared FlightCard)
   cardJson            String
@@ -631,7 +631,7 @@ model FlightBooking {
   email               String
   phone               String
   customerId          String?
-  stripeSessionId     String?   @unique
+  stripeSessionId     String?     @unique
   stripePaymentIntent String?
   stripeRefundId      String?
   duffelOrderId       String?
@@ -639,8 +639,31 @@ model FlightBooking {
   error               String?
   paidAt              DateTime?
   bookedAt            DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  /// Booked through a friend's shared trip link (the same flights)
+  sharedTripId        String?
+  sharedTrip          SharedTrip? @relation(fields: [sharedTripId], references: [id])
 
   @@index([status])
+  @@index([sharedTripId])
+}
+
+/// A trip someone shared so friends can book the same flights: the flights themselves (airline, flight
+/// numbers, times), never a price or anyone's passenger details. Friends' bookings point back here.
+model SharedTrip {
+  id            String          @id @default(cuid())
+  /// Short public id in the link (/trips/<slug>)
+  slug          String          @unique
+  /// The flight card that was shared (lib/flights-shared FlightCard), as it was when shared
+  cardJson      String
+  /// economy | premium_economy | business | first
+  cabin         String          @default("economy")
+  /// First name shown as "Join Connor's trip"; null when shared from a search
+  hostName      String?
+  /// The booking it was shared from, if any (one link per booking)
+  hostBookingId String?         @unique
+  views         Int             @default(0)
+  createdAt     DateTime        @default(now())
+  bookings      FlightBooking[]
 }
