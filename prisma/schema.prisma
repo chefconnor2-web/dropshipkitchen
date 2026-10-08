@@ -667,3 +667,29 @@ model SharedTrip {
   createdAt     DateTime        @default(now())
   bookings      FlightBooking[]
 }
+
+/// A free branded item the merchant sends to someone they choose (e.g. a Chit water bottle to early users).
+/// The recipient gets a claim link, enters where to ship it, and that creates a $0 order with the design,
+/// which goes through normal CJ fulfilment (the merchant approves it; CJ is paid from the CJ balance).
+model Gift {
+  id                String    @id @default(cuid())
+  /// Secret in the claim link (/gift/<token>)
+  token             String    @unique
+  email             String
+  name              String?
+  /// The merchant's note shown on the claim page and in the email
+  message           String?
+  productVariantId  String
+  /// The design printed on it (shared by every gift in one send)
+  personalizationId String
+  /// SENT | CLAIMED | CANCELLED
+  status            String    @default("SENT")
+  orderId           String?   @unique
+  /// What the merchant was shown it would cost (product + estimated shipping), USD ×100
+  estimateCents     Int?
+  createdAt         DateTime  @default(now())
+  claimedAt         DateTime?
+
+  @@index([status])
+  @@index([personalizationId])
+}

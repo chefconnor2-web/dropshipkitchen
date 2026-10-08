@@ -74,6 +74,8 @@ export async function pruneAbandonedDesigns() {
   const ordered = new Set(
     (await prisma.orderItem.findMany({ where: { personalizationId: { in: old.map((o) => o.id) } }, select: { personalizationId: true } })).map((o) => o.personalizationId),
   );
+  // A gift's design waits for its recipients to claim it, however long that takes.
+  for (const g of await prisma.gift.findMany({ where: { personalizationId: { in: old.map((o) => o.id) } }, select: { personalizationId: true } })) ordered.add(g.personalizationId);
   const ids = old.map((o) => o.id).filter((id) => !ordered.has(id));
   return ids.length ? (await prisma.personalization.deleteMany({ where: { id: { in: ids } } })).count : 0;
 }
