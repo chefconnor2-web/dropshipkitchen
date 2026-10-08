@@ -8,6 +8,8 @@ import { completeFlightBooking, FLIGHT_STATUS, routeLabel, tripToken, type Passe
 import { FlightCard } from "@/components/chat/ui";
 import { flightPrice, type FlightCard as Card } from "@/lib/flights-shared";
 import { timingSafeEqual } from "node:crypto";
+import ShareButton from "@/components/ShareButton";
+import { destinationLabel, shareFromBooking, tripDates, whosGoing } from "@/lib/shared-trips";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Your trip", robots: { index: false } };
@@ -38,6 +40,10 @@ export default async function TripPage({ params, searchParams }: { params: Promi
   const names = (JSON.parse(b.passengersJson) as PassengerInput[]).map((p) => `${p.given_name} ${p.family_name}`);
   const price = flightPrice({ priceCents: b.priceCents, currency: b.currency });
   const working = status === FLIGHT_STATUS.BOOKING;
+  // Booked: a link friends can use to book the same flights, and who's already on them.
+  const shareSlug = status === FLIGHT_STATUS.BOOKED ? await shareFromBooking(b.id) : null;
+  const shared = shareSlug ? await prisma.sharedTrip.findUnique({ where: { slug: shareSlug } }) : null;
+  const going = shared ? await whosGoing(shared) : [];
   const head =
     status === FLIGHT_STATUS.BOOKED
       ? { title: "You're booked", sub: `Confirmation code ${b.bookingReference}. Use it to check in with ${card.airline}. We've emailed your e-ticket details to ${b.email}.`, tone: "is-done" }
@@ -67,6 +73,16 @@ export default async function TripPage({ params, searchParams }: { params: Promi
       <div className="fl-summary">
         <FlightCard f={card} bookable={false} />
       </div>
+      {shared && (
+        <section className="trip-invite">
+          <h2 className="section-title">Travel with friends</h2>
+          <p>
+            {going.length > 1 ? `${going.join(", ")} are booked on these flights. ` : ""}
+            Send friends this trip: they see the same flights at today’s price and book their own seats in a tap. Your details stay private.
+          </p>
+          <ShareButton url={`/trips/${shared.slug}`} text={`I'm flying to ${destinationLabel(card)} (${tripDates(card)}). Book the same flights and come with me!`} label="Invite friends" />
+        </section>
+      )}
       <dl className="fl-facts">
         <dt>Passengers</dt>
         <dd>{names.join(", ")}</dd>

@@ -168,6 +168,9 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
   if (!phone) return { error: "Enter a phone number with country code (airlines text about delays)." };
 
   const card = toCard(offer);
+  // Joining a friend's shared trip (from /trips/<slug>): the booking is listed on that trip.
+  const tripSlug = String(input.form.get("trip") ?? "");
+  const trip = tripSlug ? await prisma.sharedTrip.findUnique({ where: { slug: tripSlug }, select: { id: true, slug: true } }) : null;
   const booking = await prisma.flightBooking.create({
     data: {
       number: newOrderNumber().replace(/^([^-]+)-/, "$1-FL-"),
@@ -180,6 +183,7 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
       email,
       phone,
       customerId: input.customerId,
+      sharedTripId: trip?.id ?? null,
     },
   });
   const first = card.slices[0];
@@ -202,7 +206,7 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
     metadata: { flightBookingId: booking.id, bookingNumber: booking.number },
     payment_intent_data: { metadata: { flightBookingId: booking.id } },
     success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}`,
+    cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
   });
   await prisma.flightBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   return { url: session.url! };
@@ -284,11 +288,15 @@ async function sendFlightEmail(bookingId: string, kind: "confirmation" | "refund
   const lines = card.slices.map((s) => `${shortDate(s.depart)}: ${s.from} ${clock(s.depart)} → ${s.to} ${clock(s.arrive)} (${card.airline})`).join("\n");
   const names = (JSON.parse(b.passengersJson) as PassengerInput[]).map((p) => `${p.given_name} ${p.family_name}`).join(", ");
   const price = flightPrice({ priceCents: b.priceCents, currency: b.currency });
+  // Loaded here, not at the top, because shared-trips uses this module too.
+  const trips = await import("@/lib/shared-trips");
+  const inviteSlug = kind === "confirmation" ? await trips.shareFromBooking(b.id).catch(() => null) : null;
+  const invite = inviteSlug ? `\n\nTravelling with friends? Send them this link to book the same flights: ${trips.sharedTripUrl(inviteSlug)}` : "";
   const m =
     kind === "confirmation"
       ? {
           subject: `Booked: ${routeLabel(card)} · confirmation ${b.bookingReference}`,
-          text: `Your flight is booked.\n\nAirline confirmation (PNR): ${b.bookingReference}\nPassengers: ${names}\n\n${lines}\n\nPaid: ${price}\n\nYour trip: ${url}\n\nUse the confirmation code to check in with ${card.airline}.\n\n${config.storeName}`,
+          text: `Your flight is booked.\n\nAirline confirmation (PNR): ${b.bookingReference}\nPassengers: ${names}\n\n${lines}\n\nPaid: ${price}\n\nYour trip: ${url}\n\nUse the confirmation code to check in with ${card.airline}.${invite}\n\n${config.storeName}`,
         }
       : {
           subject: `We couldn't book your flight, refunded ${price}`,

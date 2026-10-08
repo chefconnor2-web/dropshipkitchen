@@ -1829,3 +1829,37 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .pdp-share { margin: 4px 0 14px; }
 .footer-share { margin-top: 14px; }
 .cx-share { margin-top: 10px; }
+
+/* Trips with friends: the shared trip page (/trips/…), the invite on a booked trip, Share on chat flight cards. */
+.cx-flight-actions { display: inline-flex; align-items: center; gap: 6px; }
+.cx-flight-share .share-btn { padding: 6px 10px; font-size: 12.5px; gap: 5px; }
+.cx-flight-share .share-btn svg { width: 15px; height: 15px; }
+.trip-sub { color: var(--muted); font-size: 1.05rem; margin: -6px 0 16px; }
+.trip-going { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin: 0 0 16px; border-radius: 999px; background: #fff; border: 1px solid var(--line); width: fit-content; }
+.trip-going-faces { display: inline-flex; }
+.trip-going-faces span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; margin-left: -8px; border: 2px solid #fff; background: #E8A48C; color: #fff; font-weight: 700; font-size: 13px; }
+.trip-going-faces span:first-child { margin-left: 0; }
+.trip-going-faces span:nth-child(2) { background: #7FB7A4; }
+.trip-going-faces span:nth-child(3) { background: #8EA2D8; }
+.trip-going-faces span:nth-child(4) { background: #D9B06A; }
+.trip-join { margin: 22px 0; }
+.trip-pax { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; margin-bottom: 16px; }
+.trip-pax label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); position: relative; }
+.trip-pax select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: #fff; font: inherit; color: var(--ink); min-width: 84px; }
+.trip-x { position: absolute; top: -2px; right: -6px; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; }
+.trip-results { display: grid; gap: 12px; }
+.trip-results .cx-flight { max-width: 520px; }
+.trip-ok { color: var(--ok); font-weight: 600; margin: 0; }
+.trip-warn { color: var(--warn); font-weight: 600; margin: 0; }
+.trip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-top: 26px; }
+.trip-ask { font-weight: 600; }
+.trip-joining { display: inline-block; margin: -4px 0 14px; padding: 6px 12px; border-radius: 999px; background: #FCEDE6; color: #8A3A22; font-weight: 600; }
+.trip-invite { margin: 20px 0; padding: 16px 18px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.trip-invite p { margin: 0 0 12px; color: var(--muted); }
+.share-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(20, 18, 16, 0.38); animation: shareFade 0.15s ease-out; }
+.share-modal .share-panel-modal { position: static; width: min(360px, 100%); }
+@keyframes shareFade { from { opacity: 0; } }
+@media (max-width: 640px) {
+  .share-modal { align-items: flex-end; padding: 0; }
+  .share-modal .share-panel-modal { width: 100%; border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); animation: shareSheet 0.22s ease-out; }
+}

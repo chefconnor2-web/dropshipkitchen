@@ -7,12 +7,28 @@ import type { PassengerSlot } from "@/lib/flight-booking";
 
 const KIND = { adult: "Adult", child: "Child", infant: "Infant (on lap)" } as const;
 
-export default function BookForm({ offerId, priceCents, currency, slots, needPassport }: { offerId: string; priceCents: number; currency: string; slots: PassengerSlot[]; needPassport: boolean }) {
+export default function BookForm({
+  offerId,
+  priceCents,
+  currency,
+  slots,
+  needPassport,
+  tripSlug,
+}: {
+  offerId: string;
+  priceCents: number;
+  currency: string;
+  slots: PassengerSlot[];
+  needPassport: boolean;
+  /** Joining a friend's shared trip. */
+  tripSlug?: string;
+}) {
   const [state, action, pending] = useActionState<BookState, FormData>(bookFlightAction, { shownCents: priceCents, n: 0 });
   const v = (k: string) => state.values?.[k] ?? "";
   return (
     <form action={action} className="fl-form" key={state.n}>
       <input type="hidden" name="offerId" value={offerId} />
+      {tripSlug && <input type="hidden" name="trip" value={tripSlug} />}
       {slots.map((s, i) => (
         <fieldset key={s.id} className="fl-pax">
           <legend>

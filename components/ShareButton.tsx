@@ -4,7 +4,8 @@
 // own share sheet for the apps with no web share page (Instagram, TikTok, Snapchat), and Copy link. Links
 // may be relative ("/products/x"); they're made absolute against the page's own address when the panel opens.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { shareTargets, taggedUrl, type ShareNetwork } from "@/lib/share";
 
 const GLYPH: Record<ShareNetwork, string> = {
@@ -34,36 +35,54 @@ function ShareIcon() {
 
 export default function ShareButton({
   url,
+  resolve,
   text,
   image,
   label = "Share",
   className = "",
+  modal = false,
 }: {
   /** What to share; relative paths are resolved against the current site. */
-  url: string;
+  url?: string;
+  /** Makes the link on first open instead (e.g. a trip link for a chat flight card); throws a message to show. */
+  resolve?: () => Promise<string>;
   /** The line that goes with the link ("Look what I found on Chit: …"). */
   text: string;
   /** A picture for Pinterest. */
   image?: string | null;
   label?: string;
   className?: string;
+  /** Open as a centred pop-up over the page (for buttons inside scrolling rows that would clip a dropdown). */
+  modal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [env, setEnv] = useState<{ abs: string; img: string | null; native: boolean; phone: boolean } | null>(null);
+  const [made, setMade] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const link = url ?? made;
+
+  useEffect(() => {
+    if (!open || link || !resolve) return;
+    setProblem(null);
+    resolve().then(setMade, (e: unknown) => setProblem(e instanceof Error ? e.message : "Couldn't make a link. Try again."));
+  }, [open, link, resolve]);
 
   useEffect(() => {
     if (!open) return;
     const abs = (u: string) => new URL(u, window.location.href).toString();
-    setEnv({
-      abs: abs(url),
-      img: image ? abs(image) : null,
-      native: typeof navigator.share === "function",
-      phone: window.matchMedia("(pointer: coarse)").matches,
-    });
+    if (link)
+      setEnv({
+        abs: abs(link),
+        img: image ? abs(image) : null,
+        native: typeof navigator.share === "function",
+        phone: window.matchMedia("(pointer: coarse)").matches,
+      });
     const onDown = (e: MouseEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!root.current?.contains(t) && !panel.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", onDown);
@@ -72,7 +91,7 @@ export default function ShareButton({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, url, image]);
+  }, [open, link, image]);
 
   async function nativeShare() {
     if (!env) return;
@@ -95,6 +114,9 @@ export default function ShareButton({
     }
   }
 
+  // A pop-up goes on the page body, with a dimmed backdrop, so no parent can clip it.
+  const place = (content: ReactNode) => (!open ? null : modal ? createPortal(<div className="share-modal">{content}</div>, document.body) : content);
+
   const targets = env ? shareTargets(env.abs, text, env.img).filter((t) => env.phone || !t.mobileOnly) : [];
 
   return (
@@ -103,45 +125,54 @@ export default function ShareButton({
         <ShareIcon />
         {label}
       </button>
-      {open && env && (
-        <div className="share-panel" role="dialog" aria-label="Share">
-          <div className="share-head">
-            <span>Share</span>
-            <button type="button" className="share-x" onClick={() => setOpen(false)} aria-label="Close">
-              ×
-            </button>
-          </div>
-          {env.native && (
-            <button type="button" className="share-native" onClick={nativeShare}>
-              <span className="share-native-dots" aria-hidden>
-                •••
-              </span>
-              <span>
-                <strong>Instagram, TikTok, Snapchat & more</strong>
-                <small>Opens your phone’s share menu</small>
-              </span>
-            </button>
+      {place(
+        <>
+          {open && !env && (
+            <div className={`share-panel${modal ? " share-panel-modal" : ""}`} role="dialog" aria-label="Share" ref={panel}>
+              <p className={problem ? "notice err" : "muted"}>{problem ?? "Making your link…"}</p>
+            </div>
           )}
-          <ul className="share-grid">
-            {targets.map((t) => {
-              const web = t.href.startsWith("https:");
-              return (
-                <li key={t.id}>
-                  <a href={t.href} target={web ? "_blank" : undefined} rel={web ? "noopener noreferrer" : undefined} onClick={() => setOpen(false)}>
-                    <span className="share-chip" style={{ background: t.color }} aria-hidden>
-                      {GLYPH[t.id]}
-                    </span>
-                    {t.label}
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-          {!env.native && <p className="share-note">Instagram, TikTok or Snapchat: copy the link and paste it into your story, bio or a message.</p>}
-          <button type="button" className="share-copy" onClick={copy}>
-            {copied ? "Link copied ✓" : "Copy link"}
-          </button>
-        </div>
+          {open && env && (
+            <div className={`share-panel${modal ? " share-panel-modal" : ""}`} role="dialog" aria-label="Share" ref={panel}>
+              <div className="share-head">
+                <span>Share</span>
+                <button type="button" className="share-x" onClick={() => setOpen(false)} aria-label="Close">
+                  ×
+                </button>
+              </div>
+              {env.native && (
+                <button type="button" className="share-native" onClick={nativeShare}>
+                  <span className="share-native-dots" aria-hidden>
+                    •••
+                  </span>
+                  <span>
+                    <strong>Instagram, TikTok, Snapchat & more</strong>
+                    <small>Opens your phone’s share menu</small>
+                  </span>
+                </button>
+              )}
+              <ul className="share-grid">
+                {targets.map((t) => {
+                  const web = t.href.startsWith("https:");
+                  return (
+                    <li key={t.id}>
+                      <a href={t.href} target={web ? "_blank" : undefined} rel={web ? "noopener noreferrer" : undefined} onClick={() => setOpen(false)}>
+                        <span className="share-chip" style={{ background: t.color }} aria-hidden>
+                          {GLYPH[t.id]}
+                        </span>
+                        {t.label}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+              {!env.native && <p className="share-note">Instagram, TikTok or Snapchat: copy the link and paste it into your story, bio or a message.</p>}
+              <button type="button" className="share-copy" onClick={copy}>
+                {copied ? "Link copied ✓" : "Copy link"}
+              </button>
+            </div>
+          )}
+        </>,
       )}
     </div>
   );
