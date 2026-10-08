@@ -16,7 +16,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
   const first = card.slices[0];
   const back = card.slices.length === 2 && card.slices[1]?.to === first?.from;
   const route = first ? `${first.from} ${back ? "⇄" : "→"} ${card.slices[card.slices.length - 1].to}` : "";
-  const blob = await readFile(path.join(process.cwd(), "public/brand/blob.png"));
+  const blob = await readFile(path.join(process.cwd(), "public/brand/agents/neon.png"));
   return new ImageResponse(
     (
       <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", gap: 50, padding: "0 80px", background: "#FAF6F1", fontFamily: "sans-serif" }}>

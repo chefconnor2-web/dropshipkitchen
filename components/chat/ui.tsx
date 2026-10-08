@@ -4,6 +4,7 @@
 import { Fragment, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
+import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
 import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight } from "@/lib/flights-shared";
 
@@ -273,7 +274,8 @@ export function Steps({ steps, groups, live }: { steps: string[]; groups: LiveGr
   return (
     <details className={`cx-steps${live ? " is-live" : ""}`} open={live || undefined}>
       <summary>
-        {live ? <Spinner /> : <span className="cx-step-dot" aria-hidden />}
+        {/* Aurora, the Chit agent that does the searching. */}
+        <BrandMark size={live ? 22 : 18} color="aurora" mood={live ? "thinking" : "idle"} label={live ? "Aurora is searching" : "Aurora"} />
         <span className="cx-steps-sum">{summary}</span>
       </summary>
       <div className="cx-steps-body">
