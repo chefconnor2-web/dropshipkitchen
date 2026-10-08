@@ -5,14 +5,17 @@ import type { PublicProduct, PublicVariant } from "@/lib/storefront";
 import Gallery from "./Gallery";
 import VariantPicker from "./VariantPicker";
 import type { ShipView } from "@/lib/ship-view";
+import ShareButton from "@/components/ShareButton";
 
 export default function ProductView({
   product: p,
   shipTo,
   initialShip,
   warehouse,
+  storeName,
 }: {
   product: PublicProduct;
+  storeName: string;
   /** Where it ships from and to, e.g. "US warehouse · ships to US addresses only". */
   warehouse?: string | null;
   shipTo: { country: string; zip: string };
@@ -28,6 +31,7 @@ export default function ProductView({
       <div className="pdp-info">
         {p.categories.length > 0 && <div className="overline">{p.categories.join(" · ")}</div>}
         <h1 className="pdp-title">{p.title}</h1>
+        <ShareButton className="pdp-share" url={`/products/${p.slug}`} text={`${p.title} on ${storeName}`} image={p.images[0]?.src} />
         <VariantPicker
           shipTo={shipTo}
           optionNames={p.optionNames}

@@ -8,6 +8,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 import Link from "next/link";
 import { config } from "@/lib/config";
 import BrandMark from "@/components/BrandMark";
+import ShareButton from "@/components/ShareButton";
 import { cartCount, getShipTo } from "@/lib/cart";
 import { countryLabel } from "@/lib/shipping";
 import { publishedCategories } from "@/lib/storefront";
@@ -72,6 +73,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
               <span className="brand-name">{config.storeName}</span>
             </div>
             <p className="footer-blurb">{config.storeTagline}. Text what you need: products from factories worldwide, flights and more, found, priced and paid for in one conversation.</p>
+            <ShareButton className="footer-share share-up" url="/" text={`${config.storeName}: ${config.storeTagline}`} label={`Share ${config.storeName}`} />
           </div>
           <div>
             <div className="footer-h">Shop</div>
