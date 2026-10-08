@@ -232,6 +232,10 @@ def neon_style(top, bottom, glow_top=None, glow_bottom=None, body=(30, 24, 40)):
     tube = np.array(top) * (1 - t) + np.array(bottom) * t
     g = np.array(glow_top or top) * (1 - t) + np.array(glow_bottom or bottom) * t
     out = base + g * 0.55 * glow
+    # A soft neon line along the inside of the outline, like the tube's edge catching the light.
+    rho = blob_rho()
+    rim = (np.clip((rho - 0.8) / 0.2, 0, 1) ** 2.2)[..., None]
+    out = out + g * 0.55 * rim
     return out * (1 - 0.85 * v) + tube * 0.85 * v
 
 NEON_FAMILY = {
@@ -250,16 +254,34 @@ NEON_FAMILY = {
 VIBES = {"neon": neon, "ultraviolet": ultraviolet, "obsidian": obsidian, "haze": haze, "peach": peach, "sky": sky, "sunset": sunset, "ocean": ocean, "matcha": matcha, "aurora": aurora, "candy": candy}
 LIGHT_EYES = set(NEON_FAMILY)
 
+def blob_rho():
+    """Distance from the centre in "blob units" (1 at the edge): a soft jelly shape, a little wider than tall,
+    flatter underneath like it's sitting down, with a gently wobbly outline."""
+    dx, dy = X * 2 - 1, Y * 2 - 1
+    th = np.arctan2(dy, dx)
+    sy = 0.95 - 0.1 * np.clip(dy / 0.6, 0, 1) ** 2
+    wob = 0.03 * np.sin(2 * th + 0.6) + 0.014 * np.sin(3 * th + 1.9)
+    return np.sqrt((dx / 1.07) ** 2 + (dy / sy) ** 2) / (0.87 * (1 + wob))
+
+RHO = blob_rho()
+# Anti-aliased blob outline as alpha (0-1), one pixel of soft edge at any size.
+BLOB = np.clip((1 - RHO) * D * 0.42 + 0.5, 0, 1)
+
+def blob_canvas(scale=1.0):
+    """The blob outline placed on the full S×S canvas (for the glow, print clipping and vein masks)."""
+    m = Image.new("L", (S, S), 0)
+    m.paste(Image.fromarray((BLOB * 255).astype(np.uint8)), (CX - R, CY - R))
+    return m
+
 def body(tex):
     t = Image.fromarray(np.clip(tex, 0, 255).astype(np.uint8))
     dx, dy = X * 2 - 1, Y * 2 - 1
-    d = np.sqrt(dx * dx + dy * dy); nz = np.sqrt(np.clip(1 - d * d, 0, 1))
+    d = np.clip(RHO, 0, 1); nz = np.sqrt(np.clip(1 - d * d, 0, 1))
     lam = np.clip(-0.45 * dx - 0.55 * dy + 0.7 * nz, 0, None)
     light = np.clip(190 + 65 * lam - 22 * d ** 4, 0, 255).astype(np.uint8)
     shaded = ImageChops.multiply(t, Image.merge("RGB", (Image.fromarray(light),) * 3))
     shaded = Image.blend(t, shaded, 0.32)
-    mask = Image.new("L", (D * 4, D * 4)); ImageDraw.Draw(mask).ellipse((0, 0, D * 4 - 1, D * 4 - 1), fill=255)
-    b = shaded.convert("RGBA"); b.putalpha(mask.resize((D, D), Image.LANCZOS)); return b, t
+    b = shaded.convert("RGBA"); b.putalpha(Image.fromarray((BLOB * 255).astype(np.uint8))); return b, t
 
 ONLY = sys.argv[4].split(",") if len(sys.argv) > 4 else None
 VIBES.update(NEON_FAMILY)
@@ -270,7 +292,10 @@ for name, fn in VIBES.items():
     canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     PRINT = os.environ.get("PRINT") == "1"
     glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    if not PRINT: ImageDraw.Draw(glow).ellipse((CX - R - 6 * K, CY - R - 2 * K, CX + R + 6 * K, CY + R + 10 * K), fill=(*[int(v * 0.6 + 255 * 0.4) for v in avg], 140))
+    if not PRINT:
+        halo = blob_canvas().filter(ImageFilter.MaxFilter(int(8 * K) | 1)).point(lambda a: int(a * 140 / 255))
+        tint = Image.new("RGBA", (S, S), (*[int(v * 0.6 + 255 * 0.4) for v in avg], 255)); tint.putalpha(halo)
+        glow = tint
     canvas = Image.alpha_composite(canvas, glow.filter(ImageFilter.GaussianBlur(16 * K)))
     canvas.alpha_composite(b, (CX - R, CY - R))
     hl = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -283,16 +308,14 @@ for name, fn in VIBES.items():
         dr.ellipse(((ex - 5) * q, (153 - 11) * q, (ex + 1) * q, (153 - 3) * q), fill=shine)
     canvas = Image.alpha_composite(canvas, eyes.resize((S, S), Image.LANCZOS))
     if PRINT:
-        edge = Image.new("L", (S * 4, S * 4)); ImageDraw.Draw(edge).ellipse(((CX - R) * 4, (CY - R) * 4, (CX + R) * 4 - 1, (CY + R) * 4 - 1), fill=255)
-        canvas.putalpha(ImageChops.multiply(canvas.getchannel("A"), edge.resize((S, S), Image.LANCZOS)))
+        canvas.putalpha(ImageChops.multiply(canvas.getchannel("A"), blob_canvas()))
     canvas.save(f"{out}/blob-{name}{'-print' if PRINT else ''}.png", optimize=True)
     if os.environ.get("MASK") == "1":
         # The veins alone, for animating light along them: white with the vein strength as alpha.
         vm = swirl(_veins(0.08, 0.7), *NEON_SWIRL) if name in NEON_FAMILY else _veins(0.1, 0.8)
         m = Image.new("L", (S, S), 0)
         m.paste(Image.fromarray((np.clip(vm, 0, 1) * 255).astype(np.uint8)), (CX - R, CY - R))
-        circle = Image.new("L", (S * 4, S * 4)); ImageDraw.Draw(circle).ellipse(((CX - R) * 4, (CY - R) * 4, (CX + R) * 4 - 1, (CY + R) * 4 - 1), fill=255)
-        m = ImageChops.multiply(m, circle.resize((S, S), Image.LANCZOS))
+        m = ImageChops.multiply(m, blob_canvas())
         eyes_off = Image.new("L", (S, S), 255); de = ImageDraw.Draw(eyes_off)
         for ex in (135, 185):
             de.ellipse(((ex - 15) * K, (153 - 21) * K, (ex + 15) * K, (153 + 21) * K), fill=0)

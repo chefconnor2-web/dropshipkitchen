@@ -24,9 +24,10 @@ export const GIFT_STATUS = { SENT: "SENT", CLAIMED: "CLAIMED", CANCELLED: "CANCE
 
 /** The print-ready art in public/brand/print (2000×2000 transparent PNGs). */
 export const GIFT_DESIGNS = {
-  dark: { label: "Logo, dark lettering (for light items)", file: "chit-logo-dark.png" },
-  light: { label: "Logo, light lettering (for dark items)", file: "chit-logo-light.png" },
-  mascot: { label: "Bubble Guy only", file: "bubble-guy.png" },
+  dark: { label: "Neon + CHIT, dark lettering (for light items)", file: "chit-logo-dark.png" },
+  light: { label: "Neon + CHIT, light lettering (for dark items)", file: "chit-logo-light.png" },
+  mascot: { label: "Neon only", file: "bubble-guy.png" },
+  aurora: { label: "Aurora only", file: "aurora.png" },
 } as const;
 export type GiftDesign = keyof typeof GIFT_DESIGNS;
 

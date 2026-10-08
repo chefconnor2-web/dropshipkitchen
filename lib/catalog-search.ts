@@ -49,6 +49,13 @@ export async function searchCatalog(q: string, page: number, from?: string): Pro
   return out;
 }
 
+/** Lets /media/s/<pid> serve an image for a product found through another CJ search (e.g. the admin bottle finder). */
+export function rememberImage(pid: string, url: string | null | undefined) {
+  if (!url) return;
+  if (imageByPid.size >= MAX_IMAGES) imageByPid.delete(imageByPid.keys().next().value!);
+  imageByPid.set(pid, url);
+}
+
 /** The image for a PID this server has shown in search results (no open proxy). */
 export function searchImage(pid: string): string | undefined {
   return imageByPid.get(pid);
