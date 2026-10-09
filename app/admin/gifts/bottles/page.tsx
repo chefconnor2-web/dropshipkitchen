@@ -1,5 +1,5 @@
-// Admin › Gifts › Find a bottle: real drinkware from CJ's live catalog, by style, each photo with your logo laid
-// over it (a placement preview; CJ prints in its own print area). Import adds it to the store; turn on photo
+// Admin › Gifts › Find a bottle: real drinkware from CJ's live catalog, by style, each shown as CJ's own product
+// photo with your logo printed on the bottle (only listings where that works are shown). Import adds it to the store; turn on photo
 // personalization on the product and it shows up in Gifts.
 
 import Link from "next/link";
@@ -39,7 +39,7 @@ export default async function BottleFinder({ searchParams }: { searchParams: Pro
         <div>
           <h1>Find a bottle on CJ</h1>
           <div className="a-sub">
-            Real products from CJ’s live catalog, with your logo laid over each photo. Import one, turn on photo personalization on it, and it appears in{" "}
+            Real products from CJ’s live catalog, each shown with your logo printed on the bottle in CJ’s own photo. Import one, turn on photo personalization on it, and it appears in{" "}
             <Link href="/admin/gifts">Gifts</Link>.
           </div>
         </div>
@@ -64,11 +64,11 @@ export default async function BottleFinder({ searchParams }: { searchParams: Pro
       {problem ? (
         <p className="notice err">{problem}</p>
       ) : items.length === 0 ? (
-        <p className="muted">CJ returned no drinkware for this style right now.</p>
+        <p className="muted">No CJ listing in this style has a photo your logo can be previewed on right now. Try another style.</p>
       ) : (
         <>
           <p className="small muted">
-            {items.length} products · live from CJ (refreshed every 30 minutes) · the logo is a placement preview; CJ prints within the product’s own print area.
+            {items.length} products · live from CJ (refreshed every 30 minutes) · listings whose photos can’t show your logo on the bottle are left out · CJ confirms the exact print area when you order.
           </p>
           <div className="bf-grid">
             {items.map((b) => {
@@ -76,8 +76,7 @@ export default async function BottleFinder({ searchParams }: { searchParams: Pro
               return (
                 <div key={b.pid} className="bf-card">
                   <div className="bf-photo">
-                    <img src={`/media/s/${encodeURIComponent(b.pid)}`} alt={b.name} loading="lazy" />
-                    <img src={`/brand/print/${GIFT_DESIGNS[design].file}`} alt="" className={`bf-logo bf-logo-${design}`} aria-hidden />
+                    <img src={`/admin/gifts/bottles/mock/${encodeURIComponent(b.pid)}?design=${design}`} alt={`${b.name} with your logo`} loading="lazy" />
                     {b.printable && <span className="bf-badge">Custom print listing</span>}
                   </div>
                   <div className="bf-name" title={b.name}>

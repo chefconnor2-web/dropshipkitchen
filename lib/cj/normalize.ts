@@ -14,6 +14,13 @@ export interface SearchResult {
   deliveryCycle: string | null;
   category: string | null;
   listedNum: number | null;
+  /** The row carries one of CJ's print-on-demand / customization markers. */
+  pod?: boolean;
+}
+
+/** CJ marks print-on-demand listings in fields whose names have varied (isPod, customization…); any truthy one counts. */
+export function podMarked(row: Record<string, unknown>): boolean {
+  return Object.entries(row).some(([k, v]) => /pod|customi[sz]/i.test(k) && v !== null && v !== undefined && v !== false && v !== 0 && v !== "0" && v !== "" && v !== "false" && !(Array.isArray(v) && !v.length));
 }
 
 export function parseListV2(data: CjListV2Data | null | undefined): { items: SearchResult[]; total: number | null } {
@@ -41,6 +48,7 @@ export function parseListV2(data: CjListV2Data | null | undefined): { items: Sea
           | string
           | null,
         listedNum: typeof p.listedNum === "number" ? p.listedNum : null,
+        pod: podMarked(p),
       };
     });
   return { items, total: data.totalRecords ?? data.total ?? null };
