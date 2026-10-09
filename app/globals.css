@@ -1978,8 +1978,9 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 /* ---------- Hotels in the chat (HotelCard in components/chat/ui.tsx) ---------- */
 .cx-hotels { align-items: stretch; }
 .cx-hotel { flex: 0 0 272px; scroll-snap-align: start; background: #fff; border: 1px solid var(--im-line, var(--line)); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; font-family: var(--im-font, inherit); }
-.cx-hotel-photo { aspect-ratio: 16 / 9; background: #f2f1ee; display: grid; place-items: center; font-size: 28px; }
-.cx-hotel-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* A fixed-height frame: the photo is cropped to fit, whatever its size, so it never pushes the card's text around. */
+.cx-hotel-photo { position: relative; flex: none; height: 148px; overflow: hidden; background: #f2f1ee; display: grid; place-items: center; font-size: 28px; }
+.cx-hotel-photo img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; display: block; }
 .cx-hotel-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .cx-hotel-name { font-weight: 600; font-size: 15px; line-height: 1.25; }
 .cx-hotel-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--im-sub, var(--muted)); }

@@ -4,7 +4,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { pickHotels, stayWithFee, toCards } from "../lib/hotels";
+import { cardId, liteOfferId, pickHotels, stayWithFee, toCards } from "../lib/hotels";
 import { parseHotelSearch } from "../lib/connectors/liteapi";
 import { bookRate, LiteapiError, prebook } from "../lib/liteapi";
 import { uberLink } from "../lib/flights-shared";
@@ -30,12 +30,21 @@ test("toCards keeps each hotel's cheapest room, cheapest hotel first, with names
       { id: "h2", name: "Shinjuku Inn", stars: 3 },
     ],
   );
-  assert.deepEqual(cards.map((c) => c.id), ["o2", "o1b"]);
+  assert.deepEqual(cards.map((c) => c.offerId), ["o2", "o1b"]);
   assert.equal(cards[1].name, "Park Hyatt");
   assert.equal(cards[1].refundable, false);
   assert.equal(cards[0].refundable, true);
   assert.equal(cards[0].nights, 3);
   assert.equal(cards[0].priceCents, stayWithFee(300));
+});
+
+test("cards get a short link-safe id for LiteAPI's very long offer ids", () => {
+  const long = "GE5ESNBSGI2TCLJQGMYTKLJRGIZTCLJZGI3S2MRVGQ4DQMRXHA2DSMBSGYYC2NJUGI4TMMBYGIZDSNBSGAWTEMBSGYWTCMBNGE3CYMJNGE2CYMRNGEZDMXZQGYYTIMBVGMZDAMBQGEZDAMRTGU3DCMZRHE".repeat(8) + "/+==";
+  const [card] = toCards(q, [{ hotelId: "h1", roomTypes: [room(long, 300)] }], [{ id: "h1", name: "Long Offer Hotel" }]);
+  assert.match(card.id, /^ht_[A-Za-z0-9_-]{16}$/);
+  assert.equal(card.id, cardId(long));
+  assert.equal(liteOfferId(card), long);
+  assert.equal(liteOfferId({ ...card, offerId: undefined, id: "old-long-id" }), "old-long-id"); // cards saved before the short id
 });
 
 test("pickHotels mixes cheapest and best rated, and applies budget and stars", () => {
@@ -46,9 +55,9 @@ test("pickHotels mixes cheapest and best rated, and applies budget and stars", (
   );
   const picks = pickHotels(cards);
   assert.equal(picks.length, 6);
-  assert.equal(picks[0].id, "o1");
-  assert.ok(picks.some((p) => p.id === "o8"), "best rated is included");
-  assert.deepEqual(pickHotels(cards, 6, 50_00).map((p) => p.id), ["o1"]); // ≤ $50/night over 3 nights
+  assert.equal(picks[0].offerId, "o1");
+  assert.ok(picks.some((p) => p.offerId === "o8"), "best rated is included");
+  assert.deepEqual(pickHotels(cards, 6, 50_00).map((p) => p.offerId), ["o1"]); // ≤ $50/night over 3 nights
   assert.ok(pickHotels(cards, 6, undefined, 5).every((p) => (p.stars ?? 0) >= 5));
 });
 
