@@ -640,7 +640,7 @@ export default function Chat({
             </div>
             <div className="cx-col cx-greeting" aria-label="How it works">
               <div className="cx-msg cx-bot">
-                <div className="cx-bubble cx-bubble-bot cx-no-tail">Hey! 👋 I’m your personal POS. Tell me what you need, parts, supplies or a flight, like you’d text a friend.</div>
+                <div className="cx-bubble cx-bubble-bot cx-no-tail">Hey! 👋 I’m Neon, your personal POS. Tell me what you need, parts, supplies or a flight, like you’d text a friend.</div>
               </div>
               <div className="cx-msg cx-bot">
                 <div className="cx-bubble cx-bubble-bot cx-no-tail">I’ll find it, compare the best options and check you out right here. You see the full price before you pay.</div>
@@ -782,20 +782,23 @@ export default function Chat({
                         </div>
                       </div>
                     ))}
-                    <div className="cx-actions">
-                      <button type="button" className="cx-icon-btn" onClick={() => copy(i, e.text)} aria-label="Copy reply" title="Copy">
-                        {copied === i ? <span className="cx-check">✓</span> : <CopyIcon />}
-                      </button>
-                      {canSpeak && e.text && (
-                        <button type="button" className={`cx-icon-btn${speakingIdx === i ? " is-on" : ""}`} onClick={() => readAloud(i, e.text)} aria-label={speakingIdx === i ? "Stop reading" : "Read aloud"} title={speakingIdx === i ? "Stop" : "Read aloud"}>
-                          {speakingIdx === i ? <StopIcon /> : <SpeakerIcon />}
+                    <div className="cx-foot">
+                      {i === entries.length - 1 && !busy && <BrandMark size={26} color="neon" className="cx-agent-mark" label="Neon" />}
+                      <div className="cx-actions">
+                        <button type="button" className="cx-icon-btn" onClick={() => copy(i, e.text)} aria-label="Copy reply" title="Copy">
+                          {copied === i ? <span className="cx-check">✓</span> : <CopyIcon />}
                         </button>
-                      )}
-                      {i === entries.length - 1 && lastUserIndex === i - 1 && !busy && (
-                        <button type="button" className="cx-icon-btn" onClick={() => regenerate(lastUserIndex)} aria-label="Regenerate" title="Regenerate">
-                          <RetryIcon />
-                        </button>
-                      )}
+                        {canSpeak && e.text && (
+                          <button type="button" className={`cx-icon-btn${speakingIdx === i ? " is-on" : ""}`} onClick={() => readAloud(i, e.text)} aria-label={speakingIdx === i ? "Stop reading" : "Read aloud"} title={speakingIdx === i ? "Stop" : "Read aloud"}>
+                            {speakingIdx === i ? <StopIcon /> : <SpeakerIcon />}
+                          </button>
+                        )}
+                        {i === entries.length - 1 && lastUserIndex === i - 1 && !busy && (
+                          <button type="button" className="cx-icon-btn" onClick={() => regenerate(lastUserIndex)} aria-label="Regenerate" title="Regenerate">
+                            <RetryIcon />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -812,13 +815,13 @@ export default function Chat({
                       <Markdown text={turn.text} />
                     </div>
                   ) : (
-                    <div className="cx-thinking-row">
-                      <BrandMark size={30} mood="thinking" />
-                      <div className="cx-bubble cx-bubble-bot cx-typing" aria-label="The assistant is typing">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
+                    <div className="cx-agent" aria-live="polite">
+                      <BrandMark size={34} color="neon" mood="thinking" label="Neon is thinking" />
+                    </div>
+                  )}
+                  {turn.text && (
+                    <div className="cx-agent">
+                      <BrandMark size={26} color="neon" mood="thinking" label="Neon is writing" />
                     </div>
                   )}
                 </div>

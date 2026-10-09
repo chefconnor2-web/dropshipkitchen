@@ -2,7 +2,6 @@
 // The assistant as a full-screen app, laid out like ChatGPT: chat history in a sidebar, the conversation
 // on the right. It lives in the layout, so switching chats (/ ↔ /c/<id>) never remounts it.
 
-import BrandMark from "@/components/BrandMark";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -160,7 +159,6 @@ export default function ChatApp(props: { storeName: string; initials: string; co
       <aside className="sb" aria-label="Chat history">
         <div className="sb-top">
           <Link href="/" className="sb-brand" onClick={() => setDrawer(false)} aria-label={`${props.storeName} home`}>
-            <BrandMark size={28} />
             <span className="sb-brand-name">{props.storeName}</span>
           </Link>
           <button type="button" className="sb-icon hide-mobile" onClick={toggleCollapsed} aria-label="Close sidebar" title="Close sidebar (Ctrl+Shift+S)">
@@ -300,7 +298,6 @@ export default function ChatApp(props: { storeName: string; initials: string; co
           )}
           {/* Like the contact at the top of an iMessage thread. */}
           <div className="topbar-title topbar-contact">
-            <BrandMark size={34} className="cx-avatar" />
             <span className="topbar-name">
               {props.storeName}
               <span className="topbar-sub">{active ? active.title : "Your personal POS"}</span>

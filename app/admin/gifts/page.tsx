@@ -62,13 +62,16 @@ export default async function GiftsPage({ searchParams }: { searchParams: Promis
         <section className="a-card">
           <h2 className="a-h2">2. The item</h2>
           <p>
-            No print-on-demand items yet. Find a printable water bottle or tumbler in the <Link href="/admin/suppliers/cj">CJ catalog</Link>, import it, then turn on
-            personalization (photo) on the product. It shows up here once it can carry a logo.
+            No print-on-demand items yet. <Link href="/admin/gifts/bottles">Find a bottle on CJ</Link>: real tumblers, bottles and mugs with your logo previewed on
+            each. Import one, then turn on personalization (photo) on the product. It shows up here once it can carry a logo.
           </p>
         </section>
       ) : (
         <form action={sendGiftsAction} className="a-card gift-form">
           <h2 className="a-h2">2. The item</h2>
+          <p className="small">
+            <Link href="/admin/gifts/bottles">Find more bottles on CJ →</Link>
+          </p>
           <div className="gift-items">
             {variants.map((v, i) => {
               const e = estimates[i];

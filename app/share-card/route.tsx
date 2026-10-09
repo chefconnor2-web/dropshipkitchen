@@ -10,7 +10,7 @@ import { config } from "@/lib/config";
 const size = { width: 1200, height: 630 };
 
 export async function GET() {
-  const blob = await readFile(path.join(process.cwd(), "public/brand/blob.png"));
+  const blob = await readFile(path.join(process.cwd(), "public/brand/agents/neon.png"));
   return new ImageResponse(
     (
       <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", gap: 56, padding: "0 90px", background: "#FAF6F1", fontFamily: "sans-serif" }}>

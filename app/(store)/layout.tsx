@@ -21,7 +21,6 @@ export default async function StoreLayout({ children }: { children: React.ReactN
       <header className="store-header">
         <div className="wrap header-row">
           <Link href="/" className="brand" aria-label={`${config.storeName} home`}>
-            <BrandMark />
             <span className="brand-name">{config.storeName}</span>
           </Link>
           <nav className="header-nav" aria-label="Main">
