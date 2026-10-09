@@ -4,7 +4,8 @@ import { after } from "next/server";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { getMemberId } from "@/lib/session";
-import { completeFlightBooking, FLIGHT_STATUS, routeLabel, tripToken, type PassengerInput } from "@/lib/flight-booking";
+import { canCancelFlight, completeFlightBooking, FLIGHT_STATUS, routeLabel, tripToken, type PassengerInput } from "@/lib/flight-booking";
+import CancelFlight from "./CancelFlight";
 import { FlightCard } from "@/components/chat/ui";
 import { flightPrice, type FlightCard as Card } from "@/lib/flights-shared";
 import { timingSafeEqual } from "node:crypto";
@@ -44,8 +45,13 @@ export default async function TripPage({ params, searchParams }: { params: Promi
   const shareSlug = status === FLIGHT_STATUS.BOOKED ? await shareFromBooking(b.id) : null;
   const shared = shareSlug ? await prisma.sharedTrip.findUnique({ where: { slug: shareSlug } }) : null;
   const going = shared ? await whosGoing(shared) : [];
+  const refunded = flightPrice({ priceCents: b.refundCents ?? 0, currency: b.currency });
   const head =
-    status === FLIGHT_STATUS.BOOKED
+    status === "CANCELLED"
+      ? { title: "Cancelled", sub: (b.refundCents ?? 0) > 0 ? `${refunded} is being refunded to your card (what the airline refunded; our service fee isn't refundable).` : `${card.airline} didn't refund money for this fare.`, tone: "is-off" }
+      : status === "CANCELLING"
+        ? { title: "Cancelling…", sub: "We're cancelling with the airline.", tone: "" }
+        : status === FLIGHT_STATUS.BOOKED
       ? { title: "You're booked", sub: `Confirmation code ${b.bookingReference}. Use it to check in with ${card.airline}. We've emailed your e-ticket details to ${b.email}.`, tone: "is-done" }
       : working
         ? { title: "Booking your ticket…", sub: "Payment received. We're confirming your seat with the airline; this usually takes a few seconds.", tone: "" }
@@ -83,11 +89,12 @@ export default async function TripPage({ params, searchParams }: { params: Promi
           <ShareButton url={`/trips/${shared.slug}`} text={`I'm flying to ${destinationLabel(card)} (${tripDates(card)}). Book the same flights and come with me!`} label="Invite friends" />
         </section>
       )}
+      {canCancelFlight({ status, duffelOrderId: b.duffelOrderId }, card) && <CancelFlight number={b.number} token={await tripToken(b.id)} currency={b.currency} airline={card.airline} />}
       <dl className="fl-facts">
         <dt>Passengers</dt>
         <dd>{names.join(", ")}</dd>
         <dt>Paid</dt>
-        <dd>{status === FLIGHT_STATUS.PENDING_PAYMENT ? "Not charged" : status === FLIGHT_STATUS.FAILED_REFUNDED ? `${price}, refunded` : price}</dd>
+        <dd>{status === FLIGHT_STATUS.PENDING_PAYMENT ? "Not charged" : status === FLIGHT_STATUS.FAILED_REFUNDED ? `${price}, refunded` : status === "CANCELLED" ? `${price}, ${refunded} refunded` : price}</dd>
         <dt>E-ticket email</dt>
         <dd>{b.email}</dd>
       </dl>

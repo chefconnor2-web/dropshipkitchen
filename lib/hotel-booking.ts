@@ -14,7 +14,7 @@ import { stripe } from "@/lib/stripe";
 import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
-import { bookRate, LiteapiError, prebook } from "@/lib/liteapi";
+import { bookRate, cancelBooking, LiteapiError, prebook } from "@/lib/liteapi";
 import { liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
 import { shortDate, stayPrice, type HotelCard } from "@/lib/flights-shared";
 import { normalizePhone } from "@/lib/flight-booking";
@@ -184,4 +184,64 @@ async function merchantAlert(number: string, message: string) {
   if (!config.email.storeEmail) return;
   const text = `Hotel booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/hotels`;
   await sendEmail({ to: config.email.storeEmail, kind: "hotel_needs_review", subject: `Hotel booking ${number} needs review`, text, html: `<pre>${esc(text)}</pre>` });
+}
+
+// ---------- cancelling ----------
+// The shopper cancels from their stay page. LiteAPI applies the hotel's policy (non-refundable rates and late
+// cancellations are refused) and tells us what it refunds to our card; the shopper gets exactly that back, never
+// more than LiteAPI's price for the stay, so our fee is kept and a cancellation never costs us money.
+
+/** Whether the stay page offers Cancel (LiteAPI makes the final call on the deadline). */
+export function canCancelStay(b: { status: string }, card: Pick<HotelCard, "checkin" | "refundable">, today = new Date().toISOString().slice(0, 10)): boolean {
+  return b.status === HOTEL_STATUS.BOOKED && card.refundable !== false && card.checkin > today;
+}
+
+export async function cancelStay(bookingId: string): Promise<{ ok: true; refundCents: number } | { error: string }> {
+  const b = await prisma.hotelBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  const card = JSON.parse(b.cardJson) as HotelCard;
+  if (!canCancelStay(b, card) || !b.liteBookingId) return { error: card.refundable === false ? "This rate is non-refundable, so it can't be cancelled." : "This booking can't be cancelled online any more." };
+  const locked = await prisma.hotelBooking.updateMany({ where: { id: b.id, status: HOTEL_STATUS.BOOKED }, data: { status: "CANCELLING" } });
+  if (!locked.count) return { error: "This booking is already being changed. Refresh the page." };
+  let r;
+  try {
+    r = await cancelBooking(b.liteBookingId);
+  } catch (e) {
+    // The hotel said no (4xx): still booked. Anything else: we can't tell, so a person checks.
+    if (e instanceof LiteapiError && e.status && e.status >= 400 && e.status < 500) {
+      await prisma.hotelBooking.update({ where: { id: b.id }, data: { status: HOTEL_STATUS.BOOKED } });
+      return { error: `The hotel didn't accept the cancellation: ${e.message.replace(/^LiteAPI: /, "")}` };
+    }
+    const message = `Cancelling ${b.number} with LiteAPI didn't get a clear answer (${e instanceof Error ? e.message : e}). Check booking ${b.liteBookingId} in the LiteAPI dashboard, then refund the guest what LiteAPI refunded.`;
+    await prisma.hotelBooking.update({ where: { id: b.id }, data: { status: HOTEL_STATUS.NEEDS_REVIEW, error: message } });
+    await merchantAlert(b.number, message);
+    return { error: "We've asked the hotel to cancel and are confirming it. We'll email you shortly." };
+  }
+  const liteCents = Math.round(Number(b.liteAmount) * 100);
+  const sameCurrency = !r.currency || r.currency.toUpperCase() === b.currency.toUpperCase();
+  const back = sameCurrency ? Math.max(0, Math.min(Math.round(Number(r.refund_amount ?? 0) * 100), liteCents)) : 0;
+  let refundError = "";
+  let refundId: string | null = null;
+  if (back > 0 && b.stripePaymentIntent) {
+    try {
+      refundId = (await stripe().refunds.create({ payment_intent: b.stripePaymentIntent, amount: back, reason: "requested_by_customer", metadata: { hotelBookingId: b.id, cancellation: "1" } })).id;
+    } catch (e) {
+      refundError = `The refund of ${stayPrice({ priceCents: back, currency: b.currency })} failed (${e instanceof Error ? e.message : e}): refund it in Stripe.`;
+    }
+  }
+  if (!sameCurrency) refundError = `LiteAPI refunded ${r.currency} ${r.refund_amount}, not in ${b.currency}: refund the guest by hand.`;
+  await prisma.hotelBooking.update({
+    where: { id: b.id },
+    data: { status: "CANCELLED", cancelledAt: new Date(), refundCents: back, stripeRefundId: refundId ?? b.stripeRefundId, error: refundError || null },
+  });
+  if (refundError) await merchantAlert(b.number, `The guest cancelled. ${refundError}`);
+  await sendCancelEmail(b.id);
+  return { ok: true, refundCents: back };
+}
+
+async function sendCancelEmail(bookingId: string) {
+  const b = await prisma.hotelBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  const card = JSON.parse(b.cardJson) as HotelCard;
+  const back = stayPrice({ priceCents: b.refundCents ?? 0, currency: b.currency });
+  const text = `Your booking at ${card.name} (${shortDate(card.checkin)} – ${shortDate(card.checkout)}) is cancelled.\n\n${(b.refundCents ?? 0) > 0 ? `We're refunding ${back} to your card, what the hotel refunded under its cancellation policy (our service fee isn't refundable). It can take 5-10 days to appear.` : "The hotel didn't refund anything under its cancellation policy, so there's no refund."}\n\nCancellation for booking ${b.number}${b.confirmationCode ? ` (confirmation ${b.confirmationCode})` : ""}.\n\n${config.storeName}`;
+  await sendEmail({ to: b.email, kind: "hotel_cancelled", subject: `Cancelled: ${card.name} · ${shortDate(card.checkin)}`, text, html: `<pre style="font:15px/1.5 -apple-system,Segoe UI,sans-serif;white-space:pre-wrap">${esc(text)}</pre>` });
 }

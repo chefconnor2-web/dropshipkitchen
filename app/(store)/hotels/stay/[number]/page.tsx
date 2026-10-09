@@ -5,7 +5,8 @@ import { timingSafeEqual } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { getMemberId } from "@/lib/session";
-import { completeHotelBooking, HOTEL_STATUS, stayToken } from "@/lib/hotel-booking";
+import { canCancelStay, completeHotelBooking, HOTEL_STATUS, stayToken } from "@/lib/hotel-booking";
+import CancelStay from "./CancelStay";
 import { HotelCard } from "@/components/chat/ui";
 import { stayPrice, uberLink, type HotelCard as Card } from "@/lib/flights-shared";
 
@@ -35,8 +36,13 @@ export default async function StayPage({ params, searchParams }: { params: Promi
   const card = JSON.parse(b.cardJson) as Card;
   const price = stayPrice({ priceCents: b.priceCents, currency: b.currency });
   const working = status === HOTEL_STATUS.BOOKING;
+  const refunded = stayPrice({ priceCents: b.refundCents ?? 0, currency: b.currency });
   const head =
-    status === HOTEL_STATUS.BOOKED
+    status === "CANCELLED"
+      ? { title: "Cancelled", sub: (b.refundCents ?? 0) > 0 ? `${refunded} is being refunded to your card (what the hotel refunded; our service fee isn't refundable).` : "The hotel didn't refund anything under its cancellation policy.", tone: "is-off" }
+      : status === "CANCELLING"
+        ? { title: "Cancelling…", sub: "We're cancelling with the hotel.", tone: "" }
+        : status === HOTEL_STATUS.BOOKED
       ? { title: "You're booked", sub: `Show confirmation ${b.confirmationCode} and your ID at the front desk. We've emailed the details to ${b.email}.`, tone: "is-done" }
       : working
         ? { title: "Booking your room…", sub: "Payment received. We're confirming with the hotel; this usually takes a few seconds.", tone: "" }
@@ -70,6 +76,11 @@ export default async function StayPage({ params, searchParams }: { params: Promi
           </a>
         </p>
       )}
+      {canCancelStay({ status }, card) ? (
+        <CancelStay number={b.number} token={await stayToken(b.id)} currency={b.currency} feeCents={b.priceCents - Math.round(Number(b.liteAmount) * 100)} />
+      ) : status === HOTEL_STATUS.BOOKED && card.refundable === false ? (
+        <p className="muted small">This rate is non-refundable, so it can’t be cancelled for a refund.</p>
+      ) : null}
       <dl className="fl-facts">
         <dt>Lead guest</dt>
         <dd>
@@ -80,7 +91,7 @@ export default async function StayPage({ params, searchParams }: { params: Promi
           {card.checkin} to {card.checkout} ({card.nights} night{card.nights === 1 ? "" : "s"})
         </dd>
         <dt>Paid</dt>
-        <dd>{status === HOTEL_STATUS.PENDING_PAYMENT ? "Not charged" : status === HOTEL_STATUS.FAILED_REFUNDED ? `${price}, refunded` : price}</dd>
+        <dd>{status === HOTEL_STATUS.PENDING_PAYMENT ? "Not charged" : status === HOTEL_STATUS.FAILED_REFUNDED ? `${price}, refunded` : status === "CANCELLED" ? `${price}, ${refunded} refunded` : price}</dd>
         <dt>Confirmation email</dt>
         <dd>{b.email}</dd>
       </dl>

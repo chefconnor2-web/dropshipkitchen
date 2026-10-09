@@ -14,7 +14,7 @@ import { stripe } from "@/lib/stripe";
 import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
-import { createOrder, DuffelError, getOffer, type DuffelOffer, type DuffelOrderPassenger } from "@/lib/duffel";
+import { confirmOrderCancellation, createOrder, DuffelError, getOffer, quoteOrderCancellation, type DuffelOffer, type DuffelOrderCancellation, type DuffelOrderPassenger } from "@/lib/duffel";
 import { priceWithFee, toCard } from "@/lib/flights";
 import { clock, flightPrice, shortDate, type FlightCard } from "@/lib/flights-shared";
 import type Stripe from "stripe";
@@ -309,4 +309,95 @@ async function merchantAlert(number: string, message: string) {
   if (!config.email.storeEmail) return;
   const text = `Flight booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/flights`;
   await sendEmail({ to: config.email.storeEmail, kind: "flight_needs_review", subject: `Flight booking ${number} needs review`, text, html: `<pre>${esc(text)}</pre>` });
+}
+
+// ---------- cancelling ----------
+// The shopper cancels from their trip page in two steps: we ask the airline for a quote (what it refunds, and
+// whether as money or only airline credit), show it, and cancel only when they confirm. They get back exactly what
+// the airline refunds to our Duffel balance, never more than Duffel's price, so our fee is kept and a cancellation
+// never costs us money. Airline credit stays with the passenger at the airline; nothing comes back to us to refund.
+
+export interface CancelQuote {
+  quoteId: string;
+  /** What the shopper would get back to their card, ×100 (0 for airline credit or nothing). */
+  refundCents: number;
+  /** The airline refunds a credit for a future flight instead of money. */
+  creditOnly: boolean;
+  expiresAt: string;
+}
+
+const MONEY_BACK = new Set(["balance", "original_form_of_payment", "card"]);
+
+export function canCancelFlight(b: { status: string; duffelOrderId: string | null }, card: Pick<FlightCard, "slices">, now = new Date()): boolean {
+  const first = card.slices[0]?.depart;
+  return b.status === FLIGHT_STATUS.BOOKED && !!b.duffelOrderId && !!first && Date.parse(`${first.slice(0, 16)}:00Z`) > now.getTime() + 3 * 3600_000;
+}
+
+/** What the shopper gets back from an airline cancellation, ×100: money refunded to us, capped at Duffel's price. */
+export function moneyBack(c: Pick<DuffelOrderCancellation, "refund_to" | "refund_amount" | "refund_currency">, b: { currency: string; duffelAmount: string }): number {
+  if (!MONEY_BACK.has(c.refund_to) || !c.refund_amount) return 0;
+  if (c.refund_currency && c.refund_currency.toUpperCase() !== b.currency.toUpperCase()) return 0;
+  return Math.max(0, Math.min(Math.round(Number(c.refund_amount) * 100), Math.round(Number(b.duffelAmount) * 100)));
+}
+
+export async function quoteFlightCancel(bookingId: string): Promise<CancelQuote | { error: string }> {
+  const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  if (!canCancelFlight(b, JSON.parse(b.cardJson) as FlightCard)) return { error: "This flight can't be cancelled online any more." };
+  try {
+    const q = await quoteOrderCancellation(b.duffelOrderId!);
+    return { quoteId: q.id, refundCents: moneyBack(q, b), creditOnly: !MONEY_BACK.has(q.refund_to), expiresAt: q.expires_at };
+  } catch (e) {
+    return { error: e instanceof DuffelError && e.status < 500 ? `The airline won't cancel this booking online: ${e.message}` : "We couldn't reach the airline just now. Try again in a minute." };
+  }
+}
+
+export async function confirmFlightCancel(bookingId: string, quoteId: string): Promise<{ ok: true; refundCents: number } | { error: string }> {
+  const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  if (!canCancelFlight(b, JSON.parse(b.cardJson) as FlightCard)) return { error: "This flight can't be cancelled online any more." };
+  if (!/^ore_[A-Za-z0-9]+$/.test(quoteId)) return { error: "Get a new cancellation quote and try again." };
+  const locked = await prisma.flightBooking.updateMany({ where: { id: b.id, status: FLIGHT_STATUS.BOOKED }, data: { status: "CANCELLING" } });
+  if (!locked.count) return { error: "This booking is already being changed. Refresh the page." };
+  let c: DuffelOrderCancellation;
+  try {
+    c = await confirmOrderCancellation(quoteId);
+  } catch (e) {
+    if (e instanceof DuffelError && e.status >= 400 && e.status < 500) {
+      await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.BOOKED } });
+      return { error: `The airline didn't accept the cancellation (${e.message}). The quote may have expired: try again.` };
+    }
+    const message = `Cancelling ${b.number} with Duffel didn't get a clear answer (${e instanceof Error ? e.message : e}). Check order ${b.duffelOrderId} in the Duffel dashboard, then refund what the airline refunded.`;
+    await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.NEEDS_REVIEW, error: message } });
+    await merchantAlert(b.number, message);
+    return { error: "We've asked the airline to cancel and are confirming it. We'll email you shortly." };
+  }
+  const back = moneyBack(c, b);
+  let refundId: string | null = null;
+  let refundError = "";
+  if (back > 0 && b.stripePaymentIntent) {
+    try {
+      refundId = (await stripe().refunds.create({ payment_intent: b.stripePaymentIntent, amount: back, reason: "requested_by_customer", metadata: { flightBookingId: b.id, cancellation: "1" } })).id;
+    } catch (e) {
+      refundError = `The refund of ${flightPrice({ priceCents: back, currency: b.currency })} failed (${e instanceof Error ? e.message : e}): refund it in Stripe.`;
+    }
+  }
+  await prisma.flightBooking.update({
+    where: { id: b.id },
+    data: { status: "CANCELLED", cancelledAt: new Date(), refundCents: back, stripeRefundId: refundId ?? b.stripeRefundId, error: refundError || null },
+  });
+  if (refundError) await merchantAlert(b.number, `The passenger cancelled. ${refundError}`);
+  await sendCancelEmail(b.id, !MONEY_BACK.has(c.refund_to));
+  return { ok: true, refundCents: back };
+}
+
+async function sendCancelEmail(bookingId: string, creditOnly: boolean) {
+  const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  const card = JSON.parse(b.cardJson) as FlightCard;
+  const back = flightPrice({ priceCents: b.refundCents ?? 0, currency: b.currency });
+  const money = (b.refundCents ?? 0) > 0
+    ? `We're refunding ${back} to your card, what ${card.airline} refunded under its fare rules (our service fee isn't refundable). It can take 5-10 days to appear.`
+    : creditOnly
+      ? `${card.airline} gives a credit for a future flight instead of a refund; contact ${card.airline} with confirmation ${b.bookingReference} to use it.`
+      : `${card.airline} didn't refund anything under this fare's rules, so there's no refund.`;
+  const text = `Your flight ${routeLabel(card)} (confirmation ${b.bookingReference}) is cancelled.\n\n${money}\n\n${config.storeName}`;
+  await sendEmail({ to: b.email, kind: "flight_cancelled", subject: `Cancelled: ${routeLabel(card)} · ${b.bookingReference}`, text, html: `<pre style="font:15px/1.5 -apple-system,Segoe UI,sans-serif;white-space:pre-wrap">${esc(text)}</pre>` });
 }

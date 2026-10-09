@@ -616,7 +616,7 @@ model ShippingQuote {
 model FlightBooking {
   id                  String      @id @default(cuid())
   number              String      @unique
-  /// PENDING_PAYMENT | BOOKING | BOOKED | FAILED_REFUNDED
+  /// PENDING_PAYMENT | BOOKING | BOOKED | CANCELLING | CANCELLED | FAILED_REFUNDED | NEEDS_REVIEW
   status              String      @default("PENDING_PAYMENT")
   offerId             String
   /// The flight card the shopper saw (lib/flights-shared FlightCard)
@@ -639,6 +639,9 @@ model FlightBooking {
   error               String?
   paidAt              DateTime?
   bookedAt            DateTime?
+  /// Cancelled by the shopper: the airline's refund passed on to them (our fee is kept), ×100
+  refundCents         Int?
+  cancelledAt         DateTime?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   /// Booked through a friend's shared trip link (the same flights)
@@ -707,7 +710,7 @@ model HotelOffer {
 model HotelBooking {
   id                  String    @id @default(cuid())
   number              String    @unique
-  /// PENDING_PAYMENT | BOOKING | BOOKED | FAILED_REFUNDED | NEEDS_REVIEW
+  /// PENDING_PAYMENT | BOOKING | BOOKED | CANCELLING | CANCELLED | FAILED_REFUNDED | NEEDS_REVIEW
   status              String    @default("PENDING_PAYMENT")
   offerId             String
   /// LiteAPI's price lock for this rate (taken just before payment)
@@ -732,6 +735,9 @@ model HotelBooking {
   error               String?
   paidAt              DateTime?
   bookedAt            DateTime?
+  /// Cancelled by the shopper: the hotel's refund passed on to them (our fee is kept), ×100
+  refundCents         Int?
+  cancelledAt         DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 

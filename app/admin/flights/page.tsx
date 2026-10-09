@@ -12,6 +12,8 @@ const STATUS: Record<string, { label: string; tone: string }> = {
   BOOKED: { label: "Booked", tone: "tone-good" },
   FAILED_REFUNDED: { label: "Refunded", tone: "tone-bad" },
   NEEDS_REVIEW: { label: "Needs review", tone: "tone-warn" },
+  CANCELLING: { label: "Cancelling…", tone: "tone-busy" },
+  CANCELLED: { label: "Cancelled", tone: "tone-muted" },
 };
 
 export default async function FlightsAdminPage() {
@@ -57,6 +59,7 @@ export default async function FlightsAdminPage() {
                 {card.airline} · airline {r.currency} {r.duffelAmount} · our fee {flightPrice({ priceCents: fee(r), currency: r.currency })}
                 {r.bookingReference ? ` · PNR ${r.bookingReference}` : ""}
                 {r.duffelOrderId ? ` · Duffel ${r.duffelOrderId}` : ""}
+                {r.cancelledAt ? ` · cancelled by passenger, ${flightPrice({ priceCents: r.refundCents ?? 0, currency: r.currency })} refunded` : ""}
                 {r.stripeRefundId ? ` · refund ${r.stripeRefundId}` : ""}
               </p>
               {r.error && <p className="notice err small">{r.error}</p>}
