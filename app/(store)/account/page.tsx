@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { saveTravellerDetails } from "../actions";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { activeSessionCount, getMember, safeNext } from "@/lib/session";
@@ -32,8 +33,8 @@ function allowanceWord(remaining: number, limit: number): string {
 
 const fmtDate = (d: Date) => d.toLocaleDateString("en-CA", { month: "long", day: "numeric" });
 
-export default async function AccountPage({ searchParams }: { searchParams: Promise<{ welcome?: string; error?: string; next?: string; why?: string; signedout?: string }> }) {
-  const { welcome, error, next, why, signedout } = await searchParams;
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ welcome?: string; error?: string; next?: string; why?: string; signedout?: string; saved?: string }> }) {
+  const { welcome, error, next, why, signedout, saved } = await searchParams;
   const member = await getMember();
   if (!member) {
     return (
@@ -69,6 +70,25 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       <p className="muted">
         Signed in as <strong>{member.email}</strong>
       </p>
+
+      <section className="account-card">
+        <h2 className="section-title">Your details</h2>
+        <p className="muted small">Filled in for you when you book flights and hotels. Use your name as it appears on your passport or ID.</p>
+        {saved === "details" && <p className="notice ok">Saved.</p>}
+        <form action={saveTravellerDetails} className="fl-form">
+          <div className="fl-row">
+            <label>
+              Full name
+              <input name="name" defaultValue={member.name ?? ""} autoComplete="name" maxLength={80} />
+            </label>
+            <label>
+              Mobile phone
+              <input name="phone" type="tel" defaultValue={member.phone ?? ""} autoComplete="tel" placeholder="+1 604 555 0100" />
+            </label>
+          </div>
+          <button className="btn">Save details</button>
+        </form>
+      </section>
 
       <section className="account-card">
         <h2 className="section-title">Your plan</h2>

@@ -18,6 +18,7 @@ import { bookRate, cancelBooking, LiteapiError, prebook } from "@/lib/liteapi";
 import { liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
 import { shortDate, stayPrice, type HotelCard } from "@/lib/flights-shared";
 import { normalizePhone } from "@/lib/flight-booking";
+import { rememberTraveller } from "@/lib/traveller";
 
 export const HOTEL_STATUS = {
   PENDING_PAYMENT: "PENDING_PAYMENT",
@@ -106,6 +107,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
     cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(card.id)}`,
   });
   await prisma.hotelBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
+  await rememberTraveller(input.customerId, { firstName, lastName, phone, email });
   return { url: session.url! };
 }
 
