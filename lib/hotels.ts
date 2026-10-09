@@ -1,6 +1,7 @@
 // Hotel search for the chat: LiteAPI rates turned into hotel cards (one per hotel, its cheapest room), priced
 // with our fee. Searches are plain API calls ranked in code, so they cost nothing in AI.
 
+import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { searchRates, type LiteHotel, type LiteRoomType, type RatesQuery } from "@/lib/liteapi";
 import type { HotelCard } from "@/lib/flights-shared";
@@ -16,6 +17,16 @@ export function hotelFee(): { fixedCents: number; pct: number } {
 export function stayWithFee(total: number, fee = hotelFee()): number {
   const cents = Math.round(total * 100);
   return Math.ceil((cents * (1 + fee.pct / 100) + fee.fixedCents) / 100) * 100;
+}
+
+/** A short, stable id for a LiteAPI offer (used in the booking link). */
+export function cardId(offerId: string): string {
+  return `ht_${createHash("sha256").update(offerId).digest("base64url").slice(0, 16)}`;
+}
+
+/** The LiteAPI offer behind a card. */
+export function liteOfferId(c: HotelCard): string {
+  return c.offerId ?? c.id;
 }
 
 export function nightsBetween(checkin: string, checkout: string): number {
@@ -49,7 +60,8 @@ export function toCards(q: RatesQuery, data: Array<{ hotelId: string; roomTypes?
     const rating = Number(meta?.rating);
     cards.push({
       kind: "hotel",
-      id: best.rt.offerId,
+      id: cardId(best.rt.offerId),
+      offerId: best.rt.offerId,
       hotelId: h.hotelId,
       name: meta?.name?.trim() || "Hotel",
       photo: meta?.main_photo || meta?.thumbnail || null,
@@ -85,10 +97,14 @@ export function pickHotels(cards: HotelCard[], n = 6, maxPerNightCents?: number,
 
 export async function searchHotels(q: RatesQuery): Promise<HotelCard[]> {
   const r = await searchRates(q);
-  return toCards(q, r.data ?? [], r.hotels ?? []);
+  const cards = toCards(q, r.data ?? [], r.hotels ?? []);
+  console.log(`[hotels] ${q.cityName}, ${q.countryCode} ${q.checkin}→${q.checkout}: ${r.data?.length ?? 0} hotels with rates, ${r.hotels?.length ?? 0} with details, ${cards.length} cards`);
+  // Rates came back but none could be read: log one so the response shape can be checked.
+  if ((r.data?.length ?? 0) > 0 && cards.length === 0) console.warn("[hotels] unreadable rates sample:", JSON.stringify(r.data?.[0]).slice(0, 1500));
+  return cards;
 }
 
-/** Remembered so the booking page can show the hotel the shopper picked. */
+/** Remembered (by our short card id) so the booking page can show the hotel the shopper picked. */
 export async function rememberOffers(cards: HotelCard[]) {
   for (const c of cards)
     await prisma.hotelOffer.upsert({ where: { offerId: c.id }, create: { offerId: c.id, cardJson: JSON.stringify(c) }, update: { cardJson: JSON.stringify(c) } }).catch(() => {});

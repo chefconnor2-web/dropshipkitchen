@@ -106,6 +106,7 @@ Hotels:
       }
       return { content: JSON.stringify({ hotels_with_rooms: all.length, matching: picks.length, picks: picks.map(describeHotel) }) };
     } catch (e) {
+      console.error("[hotels] search failed:", e instanceof Error ? e.message : e);
       return { content: `Hotel search failed: ${e instanceof LiteapiError || e instanceof Error ? e.message : String(e)}`, isError: true };
     }
   },

@@ -15,7 +15,7 @@ import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
 import { bookRate, LiteapiError, prebook } from "@/lib/liteapi";
-import { offerCard, stayWithFee } from "@/lib/hotels";
+import { liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
 import { shortDate, stayPrice, type HotelCard } from "@/lib/flights-shared";
 import { normalizePhone } from "@/lib/flight-booking";
 
@@ -47,7 +47,7 @@ export interface StartResult {
   newPriceCents?: number;
 }
 
-/** Holds the rate, saves the booking and opens Stripe Checkout. */
+/** Holds the rate, saves the booking and opens Stripe Checkout. `offerId` is our card id from the booking link. */
 export async function startHotelCheckout(input: { offerId: string; shownCents: number; form: FormData; customerId: string | null }): Promise<StartResult> {
   const card = await offerCard(input.offerId);
   if (!card) return { error: "We couldn't find this room any more. Go back to the chat and search again." };
@@ -61,8 +61,9 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
 
   let held;
   try {
-    held = await prebook(input.offerId);
+    held = await prebook(liteOfferId(card));
   } catch (e) {
+    console.error("[hotels] prebook failed:", e instanceof Error ? e.message : e);
     return { error: e instanceof LiteapiError && e.status && e.status < 500 ? "This room is no longer available at that price. Go back to the chat and search again." : "We couldn't reach the hotel just now. Please try again in a minute." };
   }
   if (held.currency && held.currency !== card.currency) return { error: "The hotel changed the price currency. Go back to the chat and search again." };
@@ -73,7 +74,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
   const booking = await prisma.hotelBooking.create({
     data: {
       number: newOrderNumber().replace(/^([^-]+)-/, "$1-HT-"),
-      offerId: input.offerId,
+      offerId: liteOfferId(card),
       prebookId: held.prebookId,
       cardJson: JSON.stringify(card),
       liteAmount: String(held.price),
@@ -102,7 +103,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
     metadata: { hotelBookingId: booking.id, bookingNumber: booking.number },
     payment_intent_data: { metadata: { hotelBookingId: booking.id } },
     success_url: `${config.siteUrl}/hotels/stay/${booking.number}?s={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(input.offerId)}`,
+    cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(card.id)}`,
   });
   await prisma.hotelBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   return { url: session.url! };

@@ -48,8 +48,10 @@ export interface FlightCard {
 /** One hotel's best room for the dates, from LiteAPI. Booking re-checks the price first. */
 export interface HotelCard {
   kind: "hotel";
-  /** LiteAPI offer id: what the booking page prebooks. */
+  /** Our short id for the card and the booking link (LiteAPI's offer ids run to hundreds of characters). */
   id: string;
+  /** LiteAPI's offer id: what the booking page prebooks. Missing on cards saved before it was added (id was it). */
+  offerId?: string;
   hotelId: string;
   name: string;
   photo: string | null;

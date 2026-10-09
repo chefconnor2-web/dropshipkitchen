@@ -9,7 +9,8 @@ export const metadata = { title: "Book your hotel", robots: { index: false } };
 
 export default async function BookHotelPage({ params }: { params: Promise<{ offerId: string }> }) {
   const { offerId } = await params;
-  const card = liteapiConfigured() && offerId.length <= 400 ? await offerCard(decodeURIComponent(offerId)) : null;
+  // Our short card id; old links carried LiteAPI's long offer id, which is also the card's key for old cards.
+  const card = liteapiConfigured() && offerId.length <= 2000 ? await offerCard(decodeURIComponent(offerId)) : null;
   const stale = card && card.checkin < new Date().toISOString().slice(0, 10);
   if (!card || stale)
     return (
