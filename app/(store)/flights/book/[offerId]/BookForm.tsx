@@ -14,6 +14,7 @@ export default function BookForm({
   slots,
   needPassport,
   tripSlug,
+  prefill,
 }: {
   offerId: string;
   priceCents: number;
@@ -22,9 +23,11 @@ export default function BookForm({
   needPassport: boolean;
   /** Joining a friend's shared trip. */
   tripSlug?: string;
+  /** From the signed-in shopper's account: fills the first passenger and the contact. */
+  prefill?: Record<string, string>;
 }) {
   const [state, action, pending] = useActionState<BookState, FormData>(bookFlightAction, { shownCents: priceCents, n: 0 });
-  const v = (k: string) => state.values?.[k] ?? "";
+  const v = (k: string) => state.values?.[k] ?? prefill?.[k] ?? "";
   return (
     <form action={action} className="fl-form" key={state.n}>
       <input type="hidden" name="offerId" value={offerId} />

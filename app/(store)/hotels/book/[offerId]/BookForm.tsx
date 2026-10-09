@@ -4,9 +4,9 @@ import { useActionState } from "react";
 import { bookHotelAction, type HotelBookState } from "../../actions";
 import { stayPrice } from "@/lib/flights-shared";
 
-export default function BookForm({ offerId, priceCents, currency }: { offerId: string; priceCents: number; currency: string }) {
+export default function BookForm({ offerId, priceCents, currency, prefill }: { offerId: string; priceCents: number; currency: string; prefill?: Record<string, string> }) {
   const [state, action, pending] = useActionState<HotelBookState, FormData>(bookHotelAction, { shownCents: priceCents, n: 0 });
-  const v = (k: string) => state.values?.[k] ?? "";
+  const v = (k: string) => state.values?.[k] ?? prefill?.[k] ?? "";
   return (
     <form action={action} className="fl-form" key={state.n}>
       <input type="hidden" name="offerId" value={offerId} />

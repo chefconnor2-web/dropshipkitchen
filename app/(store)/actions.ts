@@ -441,3 +441,17 @@ export async function openBillingPortal() {
   }
   redirect(url);
 }
+
+/** Account page: the name and phone that fill in flight and hotel bookings. */
+export async function saveTravellerDetails(form: FormData) {
+  const { getMemberId } = await import("@/lib/session");
+  const { normalizePhone } = await import("@/lib/flight-booking");
+  const id = await getMemberId();
+  if (!id) redirect("/account");
+  const name = String(form.get("name") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const rawPhone = String(form.get("phone") ?? "").trim();
+  const phone = rawPhone ? normalizePhone(rawPhone) : null;
+  if (rawPhone && !phone) redirect(`/account?error=${encodeURIComponent("Enter the phone with its country code, e.g. +1 604 555 0100.")}`);
+  await prisma.customer.update({ where: { id }, data: { name: name || null, phone } });
+  redirect("/account?saved=details");
+}

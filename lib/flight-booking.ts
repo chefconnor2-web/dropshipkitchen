@@ -18,6 +18,7 @@ import { confirmOrderCancellation, createOrder, DuffelError, getOffer, quoteOrde
 import { priceWithFee, toCard } from "@/lib/flights";
 import { clock, flightPrice, shortDate, type FlightCard } from "@/lib/flights-shared";
 import type Stripe from "stripe";
+import { rememberTraveller } from "@/lib/traveller";
 
 export const FLIGHT_STATUS = {
   PENDING_PAYMENT: "PENDING_PAYMENT",
@@ -209,6 +210,7 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
     cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
   });
   await prisma.flightBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
+  await rememberTraveller(input.customerId, { firstName: passengers[0]?.given_name ?? "", lastName: passengers[0]?.family_name ?? "", phone, email });
   return { url: session.url! };
 }
 
