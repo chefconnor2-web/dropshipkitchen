@@ -3,10 +3,10 @@
 import { headers } from "next/headers";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
-import { getOrCreateCartId, cartCount } from "@/lib/cart";
+import { getOrCreateCartId, cartCount, getShipTo } from "@/lib/cart";
 import { AssistantLimitError, assistantConfigured, chatTurn, generateTitle, type UiEntry } from "@/lib/assistant";
 import { ensureVisitorId, findOwnChat, getVisitorId, ownedBy } from "@/lib/chat-session";
-import { getMemberId } from "@/lib/session";
+import { getMemberId, isTester } from "@/lib/session";
 import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
 import { planOffer } from "@/lib/plan-offer";
 import { formatMoney } from "@/lib/money";
@@ -74,6 +74,8 @@ export async function POST(req: Request) {
   const editIndex = typeof body.editIndex === "number" && Number.isInteger(body.editIndex) ? body.editIndex : undefined;
   const cartId = await getOrCreateCartId();
   const chatRow = chat;
+  // Some connectors are only for testers (before launch) or certain countries.
+  const who = { tester: await isTester(), country: (await getShipTo()).country };
 
   // NDJSON stream: progress notes while tools run (keeps the connection alive on slow turns), then the result.
   const enc = new TextEncoder();
@@ -100,7 +102,7 @@ export async function POST(req: Request) {
             })
           : null;
       try {
-        const { entry, costMicros, reaction } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
+        const { entry, costMicros, reaction } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex, who }, (ev) => send(ev));
         await recordAiUse({ customerId: memberId, visitorId, chatId: chatRow.id, costMicros });
         await Promise.race([titling, new Promise((r) => setTimeout(r, 4000))]);
         const after = await aiAllowance({ customerId: memberId, visitorId });

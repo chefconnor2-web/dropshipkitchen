@@ -45,8 +45,21 @@ export interface FlightCard {
   group?: string;
 }
 
+/** A grocery list or recipe Neon built, opened and paid for on Instacart. */
+export interface GroceryList {
+  kind: "grocery";
+  /** Our own id for the card (Instacart gives back only a link). */
+  id: string;
+  title: string;
+  /** The Instacart page: the shopper picks a store and checks out there. */
+  url: string;
+  recipe: boolean;
+  items: Array<{ name: string; quantity: number; unit: string }>;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard;
+export type ConnectorItem = FlightCard | GroceryList;
 
 /** "11h 30m". */
 export function durationLabel(min: number): string {
