@@ -6,7 +6,7 @@ import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -466,11 +466,31 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
         <div key={group || "all"} className="cx-group">
           {group && <div className="cx-group-label">{group}</div>}
           <div className={`cx-cards ${list[0]?.kind === "hotel" ? "cx-hotels" : "cx-flights"}`}>
-            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : <HotelCard key={it.id} h={it} />))}
+            {list.map((it) =>
+              it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : it.kind === "hotel" ? <HotelCard key={it.id} h={it} /> : <CarCard key={it.id} c={it} />,
+            )}
           </div>
         </div>
       ))}
     </>
+  );
+}
+
+/** A rental car search to run on Discover Cars: where and when, and the button there. */
+function CarCard({ c }: { c: CarRentalCard }) {
+  const days = Math.max(1, Math.round((Date.parse(c.dropoff) - Date.parse(c.pickup)) / 86400_000));
+  return (
+    <div className="cx-car">
+      <div className="cx-car-kind">Rental car</div>
+      <div className="cx-car-where">{c.location}</div>
+      <div className="cx-muted">
+        {shortDate(c.pickup)} – {shortDate(c.dropoff)} · {days} day{days === 1 ? "" : "s"}
+      </div>
+      <a className="cx-btn cx-btn-primary" href={c.url} target="_blank" rel="noopener noreferrer sponsored">
+        Find a car
+      </a>
+      <div className="cx-car-note">Compares cars from rental companies on Discover Cars. You book and pay there.</div>
+    </div>
   );
 }
 

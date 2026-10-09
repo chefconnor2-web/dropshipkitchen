@@ -74,8 +74,20 @@ export interface HotelCard {
   group?: string;
 }
 
+/** Rental cars: a link to Discover Cars (our affiliate link) for the place and dates; the shopper books there. */
+export interface CarRentalCard {
+  kind: "car";
+  id: string;
+  /** Where they pick up, as the shopper would type it into the search ("Vancouver Airport (YVR)"). */
+  location: string;
+  pickup: string;
+  dropoff: string;
+  url: string;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard | HotelCard;
+export type ConnectorItem = FlightCard | HotelCard | CarRentalCard;
 
 /** "$1,240" for a stay, in its own currency. */
 export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {
