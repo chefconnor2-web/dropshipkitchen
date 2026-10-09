@@ -1992,3 +1992,10 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-hotel-actions .cx-btn { flex: 1; text-align: center; text-decoration: none; }
 .fl-summary .cx-hotel { max-width: 420px; }
 @media (max-width: 520px) { .cx-hotel { flex-basis: 248px; } }
+
+/* ---------- Rental cars in the chat (CarCard in components/chat/ui.tsx) ---------- */
+.cx-car { flex: 0 0 272px; background: #fff; border: 1px solid var(--im-line, var(--line)); border-radius: 14px; padding: 12px 14px; display: grid; gap: 6px; font-family: var(--im-font, inherit); font-size: 14px; }
+.cx-car-kind { font: 600 11px/1.2 var(--im-font, inherit); letter-spacing: 0.06em; text-transform: uppercase; color: var(--im-sub, var(--muted)); }
+.cx-car-where { font-weight: 600; font-size: 15.5px; }
+.cx-car .cx-btn { margin-top: 4px; text-decoration: none; }
+.cx-car-note { font-size: 12px; color: var(--im-sub, var(--muted)); }

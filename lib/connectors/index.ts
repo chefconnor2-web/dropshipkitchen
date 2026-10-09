@@ -3,8 +3,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Connector } from "./types";
 import { duffelConnector } from "./duffel";
 import { liteapiConnector } from "./liteapi";
+import { discoverCarsConnector } from "./discovercars";
 
-export const CONNECTORS: Connector[] = [duffelConnector, liteapiConnector];
+export const CONNECTORS: Connector[] = [duffelConnector, liteapiConnector, discoverCarsConnector];
 
 export function enabledConnectors(): Connector[] {
   return CONNECTORS.filter((c) => c.enabled());
