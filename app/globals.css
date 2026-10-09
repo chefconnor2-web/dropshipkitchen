@@ -1974,3 +1974,21 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
   .agent-blob, .agent-blob.is-attentive { transform: none; transition: none; }
   .agent-blob.is-cheer::after, .cx-trace-lines li, .cx-trace-status { animation: none; }
 }
+
+/* ---------- Hotels in the chat (HotelCard in components/chat/ui.tsx) ---------- */
+.cx-hotels { align-items: stretch; }
+.cx-hotel { flex: 0 0 272px; scroll-snap-align: start; background: #fff; border: 1px solid var(--im-line, var(--line)); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; font-family: var(--im-font, inherit); }
+.cx-hotel-photo { aspect-ratio: 16 / 9; background: #f2f1ee; display: grid; place-items: center; font-size: 28px; }
+.cx-hotel-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cx-hotel-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.cx-hotel-name { font-weight: 600; font-size: 15px; line-height: 1.25; }
+.cx-hotel-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--im-sub, var(--muted)); }
+.cx-hotel-meta span:first-child { color: #c9900c; }
+.cx-hotel-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.cx-hotel-room { font-size: 13px; }
+.cx-hotel-foot { margin-top: auto; display: grid; gap: 8px; font-size: 13px; }
+.cx-hotel-foot strong { font-size: 16px; }
+.cx-hotel-actions { display: flex; gap: 6px; }
+.cx-hotel-actions .cx-btn { flex: 1; text-align: center; text-decoration: none; }
+.fl-summary .cx-hotel { max-width: 420px; }
+@media (max-width: 520px) { .cx-hotel { flex-basis: 248px; } }

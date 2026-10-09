@@ -2,8 +2,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Connector } from "./types";
 import { duffelConnector } from "./duffel";
+import { liteapiConnector } from "./liteapi";
 
-export const CONNECTORS: Connector[] = [duffelConnector];
+export const CONNECTORS: Connector[] = [duffelConnector, liteapiConnector];
 
 export function enabledConnectors(): Connector[] {
   return CONNECTORS.filter((c) => c.enabled());

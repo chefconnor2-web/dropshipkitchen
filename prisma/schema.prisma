@@ -693,3 +693,47 @@ model Gift {
   @@index([status])
   @@index([personalizationId])
 }
+
+/// A hotel offer shown in the chat (LiteAPI can't look an offer up again by id), kept so the booking page can
+/// show what the shopper picked. Old rows are harmless: prices are re-checked with LiteAPI before payment.
+model HotelOffer {
+  offerId   String   @id
+  /// lib/flights-shared HotelCard
+  cardJson  String
+  createdAt DateTime @default(now())
+}
+
+/// A hotel stay bought through the chat: the shopper pays us with Stripe, then we book with LiteAPI.
+model HotelBooking {
+  id                  String    @id @default(cuid())
+  number              String    @unique
+  /// PENDING_PAYMENT | BOOKING | BOOKED | FAILED_REFUNDED | NEEDS_REVIEW
+  status              String    @default("PENDING_PAYMENT")
+  offerId             String
+  /// LiteAPI's price lock for this rate (taken just before payment)
+  prebookId           String
+  /// The hotel card the shopper saw (lib/flights-shared HotelCard)
+  cardJson            String
+  /// LiteAPI's total for the stay at prebook (what our account pays)
+  liteAmount          String
+  currency            String
+  /// What the shopper pays (LiteAPI total + our fee), in `currency` ×100
+  priceCents          Int
+  firstName           String
+  lastName            String
+  email               String
+  phone               String
+  customerId          String?
+  stripeSessionId     String?   @unique
+  stripePaymentIntent String?
+  stripeRefundId      String?
+  liteBookingId       String?
+  confirmationCode    String?
+  error               String?
+  paidAt              DateTime?
+  bookedAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+}

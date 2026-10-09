@@ -45,8 +45,53 @@ export interface FlightCard {
   group?: string;
 }
 
+/** One hotel's best room for the dates, from LiteAPI. Booking re-checks the price first. */
+export interface HotelCard {
+  kind: "hotel";
+  /** LiteAPI offer id: what the booking page prebooks. */
+  id: string;
+  hotelId: string;
+  name: string;
+  photo: string | null;
+  stars: number | null;
+  /** Guest rating out of 10, when LiteAPI has one. */
+  rating: number | null;
+  address: string;
+  city: string;
+  latitude: number | null;
+  longitude: number | null;
+  room: string;
+  board: string;
+  refundable: boolean | null;
+  checkin: string;
+  checkout: string;
+  nights: number;
+  adults: number;
+  childAges: number[];
+  /** What the shopper pays for the whole stay, our fee included, in `currency` ×100. */
+  priceCents: number;
+  currency: string;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard;
+export type ConnectorItem = FlightCard | HotelCard;
+
+/** "$1,240" for a stay, in its own currency. */
+export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {
+  return flightPrice({ priceCents: c.priceCents, currency: c.currency });
+}
+
+/** Uber with the destination filled in (pickup is wherever the rider is). Opens the app on phones. */
+export function uberLink(to: { name: string; address: string; latitude?: number | null; longitude?: number | null }): string {
+  const q = new URLSearchParams({ action: "setPickup", pickup: "my_location", "dropoff[nickname]": to.name, "dropoff[formatted_address]": to.address });
+  if (to.latitude != null && to.longitude != null) {
+    q.set("dropoff[latitude]", String(to.latitude));
+    q.set("dropoff[longitude]", String(to.longitude));
+  }
+  if (process.env.NEXT_PUBLIC_UBER_CLIENT_ID) q.set("client_id", process.env.NEXT_PUBLIC_UBER_CLIENT_ID);
+  return `https://m.uber.com/ul/?${q}`;
+}
 
 /** "11h 30m". */
 export function durationLabel(min: number): string {
