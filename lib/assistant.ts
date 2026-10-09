@@ -20,6 +20,7 @@ import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
+import type { Audience } from "@/lib/connectors/types";
 import type { ConnectorItem } from "@/lib/flights-shared";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
@@ -84,7 +85,7 @@ export type AssistantEvent =
   /** The assistant's emoji tapback on the shopper's message (arrives before the answer, like a friend reacting). */
   | { type: "react"; emoji: string };
 
-function systemPrompt(): string {
+function systemPrompt(who?: Audience): string {
   return `You are Neon, the lead agent of ${config.storeName}, the shopper's own personal point-of-sale system in a chat (Aurora, the other ${config.storeName} agent, runs the product searches you start; if asked, say so): they text what they need and you find it, price it and get it checked out. Products come from Chinese factories (businesses and makers order almost anything). Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
 
 How to work:
@@ -105,7 +106,7 @@ How to work:
 - Sea shipping: if ships_to_shopper is NO for a shopper in Canada and the product isn't US-warehouse-only (usually a big lithium battery, which can't fly), it can still go to Canada by boat from China, about 4–7 weeks, priced per order. Tell them they can add it and tap "Get a sea-shipping price" in the cart; don't put it in a kit with fast-shipping items without saying so.
 - get_product says whether the product can ship to the shopper's country (ships_to_shopper). If it says NO, don't add it or put it in a kit: tell the shopper it can't ship to them and find an alternative that does (for a large lithium battery, try other packs; some ship from other warehouses). If a cart can't ship, view_cart and the cart page name the item that blocks it.
 - Some products are made with the shopper's own photo or text (print on demand). When they want something custom, personalized, printed with a photo, logo or name, or a personal gift, call show_personalized_products and point them to those cards. You can't add these to the cart yourself: tell them to tap Add on the card, which opens a designer where they upload a photo (any they already sent you is one tap away) or type text, see a preview, and add it. Personalized items can't be returned, so mention that they should check the preview.
-- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.${connectorPrompt(new Date().toISOString().slice(0, 10))}`;
+- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.${connectorPrompt(new Date().toISOString().slice(0, 10), who)}`;
 }
 
 const VOICE_NOTE = `\n\nThe shopper is talking to you by voice and your reply is read aloud. Answer in two to four short spoken sentences with no lists, headings, markdown or prices with cents. Still use the tools as usual; the product and kit cards show the details on screen.`;
@@ -485,10 +486,12 @@ interface Ctx {
   usage: { in: number; out: number; micros: number };
   /** Connector cards shown this turn (flights…). */
   items: ConnectorItem[];
+  /** Who is chatting: decides which connectors they get. */
+  who?: Audience;
 }
 
 async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<{ content: string; isError?: boolean }> {
-  const connector = connectorFor(name);
+  const connector = connectorFor(name, ctx.who);
   if (connector)
     return connector.run(name, input, {
       progress: (note) => ctx.emit({ type: "progress", note }),
@@ -640,6 +643,8 @@ export interface TurnInput {
   voice?: boolean;
   /** Replace the conversation from this transcript entry (a user message) on: edit or regenerate. */
   editIndex?: number;
+  /** Who is chatting (test rollouts, ship-to country), for connectors not offered to everyone. */
+  who?: Audience;
 }
 
 export async function chatTurn(
@@ -700,7 +705,7 @@ export async function chatTurn(
   const usage = { in: 0, out: 0, micros: 0 };
   const known = new Map<string, ProductCard>();
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
-  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [] };
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], who: input.who };
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
   const texts: string[] = [];
@@ -711,8 +716,8 @@ export async function chatTurn(
     const stream = client.beta.messages.stream({
       model: MODEL,
       max_tokens: 8000,
-      system: systemPrompt() + (input.voice ? VOICE_NOTE : ""),
-      tools: [...PLANNER_TOOLS, ...connectorTools()],
+      system: systemPrompt(input.who) + (input.voice ? VOICE_NOTE : ""),
+      tools: [...PLANNER_TOOLS, ...connectorTools(input.who)],
       cache_control: { type: "ephemeral" },
       messages: await hydrateImages(messages),
       // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.

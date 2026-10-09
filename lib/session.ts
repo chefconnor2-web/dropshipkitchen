@@ -243,3 +243,17 @@ export async function verifyLoginCode(email: string, rawCode: string): Promise<C
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
+
+// ---------- testers ----------
+// A browser the owner turned on at /admin/instacart (behind the admin login) gets features still in testing,
+// like the Instacart connector before it launches. The cookie is signed, so it can't be made up.
+export const TESTER_COOKIE = "cs_tester";
+
+export async function testerCookieValue(): Promise<string> {
+  return signValue("tester", await signingKey());
+}
+
+export async function isTester(): Promise<boolean> {
+  const raw = (await cookies()).get(TESTER_COOKIE)?.value;
+  return !!raw && verifyValue(raw, await signingKey()) === "tester";
+}

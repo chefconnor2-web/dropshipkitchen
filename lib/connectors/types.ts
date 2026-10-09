@@ -16,12 +16,22 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/** Who is chatting, for connectors that aren't offered to everyone (a test rollout, a country). */
+export interface Audience {
+  /** This browser was turned on for features still in testing (/admin/instacart). */
+  tester: boolean;
+  /** Ship-to country code. */
+  country: string;
+}
+
 export interface Connector {
   id: string;
   /** Shown in admin and logs. */
   label: string;
   /** Off until its API key is set, so a missing key never breaks the chat. */
   enabled(): boolean;
+  /** Offered only to some shoppers; everyone when left out. */
+  available?(who: Audience): boolean;
   /** Extra instructions for the planner, added to its system prompt when enabled. */
   prompt(today: string): string;
   tools: Anthropic.Beta.BetaTool[];

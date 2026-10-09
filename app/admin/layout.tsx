@@ -24,6 +24,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/customers", label: "Customers", icon: "M16 19v-1a4 4 0 0 0-8 0v1M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7 8v-1a3 3 0 0 0-2-2.8M17 5.2a3 3 0 0 1 0 5.6" },
     { href: "/admin/members", label: "Members", icon: "M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z" },
     { href: "/admin/gifts", label: "Gifts", icon: "M4 11h16v9H4zM3 7h18v4H3zm9 0v13M12 7c-1.5-3-5-3-5-1s3 1 5 1zm0 0c1.5-3 5-3 5-1s-3 1-5 1z" },
+    { href: "/admin/instacart", label: "Instacart", icon: "M5 7h14l-1.5 10h-11zM9 7V5a3 3 0 0 1 6 0v2" },
     { href: "/admin/products", label: "Products", icon: "M4 8l8-4 8 4-8 4-8-4zm0 0v8l8 4 8-4V8" },
     { href: "/admin/suppliers/cj", label: "CJ", icon: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm9 16-4.5-4.5" },
     { href: "/admin", label: "Home", icon: "M4 13h6V4H4zm10 7h6V4h-6zM4 20h6v-4H4z" },

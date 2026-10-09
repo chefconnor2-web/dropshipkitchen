@@ -6,7 +6,7 @@ import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type GroceryList } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -465,12 +465,44 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
       {groupItems(items).map(([group, list]) => (
         <div key={group || "all"} className="cx-group">
           {group && <div className="cx-group-label">{group}</div>}
-          <div className="cx-cards cx-flights">
-            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : null))}
+          <div className={`cx-cards ${list[0]?.kind === "grocery" ? "cx-groceries" : "cx-flights"}`}>
+            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : <GroceryCard key={it.id} g={it} />))}
           </div>
         </div>
       ))}
     </>
+  );
+}
+
+/** A grocery list or recipe on Instacart: what's on it, and one button to open it there. */
+function GroceryCard({ g }: { g: GroceryList }) {
+  const shown = g.items.slice(0, 8);
+  const more = g.items.length - shown.length;
+  const qty = (i: GroceryList["items"][number]) => `${Number.isInteger(i.quantity) ? i.quantity : Math.round(i.quantity * 100) / 100}${i.unit && i.unit !== "each" ? ` ${i.unit}` : ""}`;
+  return (
+    <div className="cx-grocery">
+      <div className="cx-grocery-head">
+        <span className="cx-grocery-kind">{g.recipe ? "Recipe" : "Shopping list"}</span>
+        <strong className="cx-grocery-title">{g.title}</strong>
+        <span className="cx-muted">
+          {g.items.length} item{g.items.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <ul className="cx-grocery-items">
+        {shown.map((i, k) => (
+          <li key={k}>
+            <span className="cx-grocery-qty">{qty(i)}</span>
+            <span>{i.name}</span>
+          </li>
+        ))}
+        {more > 0 && <li className="cx-muted">+ {more} more</li>}
+      </ul>
+      <a className="cx-grocery-open" href={g.url} target="_blank" rel="noopener noreferrer">
+        {/* Instacart's CTA rules allow only these two labels. */}
+        {g.recipe ? "Shop ingredients" : "Shop on Instacart"}
+      </a>
+      <div className="cx-grocery-note">Pick a store, then check out and get delivery on Instacart.</div>
+    </div>
   );
 }
 

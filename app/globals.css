@@ -1974,3 +1974,21 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
   .agent-blob, .agent-blob.is-attentive { transform: none; transition: none; }
   .agent-blob.is-cheer::after, .cx-trace-lines li, .cx-trace-status { animation: none; }
 }
+
+/* ---------- Instacart lists in the chat (GroceryCard in components/chat/ui.tsx) ---------- */
+.cx-groceries { display: block; }
+.cx-grocery { max-width: 380px; border: 1px solid var(--im-line, var(--line)); border-radius: 16px; background: #fff; padding: 14px 16px; display: grid; gap: 10px; font-size: 14.5px; }
+.cx-grocery-head { display: grid; gap: 2px; }
+.cx-grocery-kind { font: 600 11px/1.2 var(--im-font, inherit); letter-spacing: 0.06em; text-transform: uppercase; color: #108910; }
+.cx-grocery-title { font-size: 16px; }
+.cx-grocery-items { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+.cx-grocery-items li { display: contents; overflow-wrap: anywhere; }
+.cx-grocery-items li.cx-muted { display: list-item; grid-column: 1 / -1; list-style: none; }
+.cx-grocery-qty { color: var(--im-sub, var(--muted)); font-variant-numeric: tabular-nums; }
+.cx-grocery-open { display: block; text-align: center; padding: 11px 14px; border-radius: 999px; background: #108910; color: #fff; font-weight: 600; text-decoration: none; }
+.cx-grocery-open:hover { background: #0c720c; }
+.cx-grocery-note { font-size: 12px; color: var(--im-sub, var(--muted)); text-align: center; }
+.ic-status dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 14px; }
+.ic-status dt { color: var(--a-muted, var(--muted)); }
+.ic-status dd { margin: 0; }
+.ic-status .err { color: #c0392b; }
