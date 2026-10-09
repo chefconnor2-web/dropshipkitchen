@@ -498,7 +498,8 @@ function GroceryCard({ g }: { g: GroceryList }) {
         {more > 0 && <li className="cx-muted">+ {more} more</li>}
       </ul>
       <a className="cx-grocery-open" href={g.url} target="_blank" rel="noopener noreferrer">
-        Open in Instacart
+        {/* Instacart's CTA rules allow only these two labels. */}
+        {g.recipe ? "Shop ingredients" : "Shop on Instacart"}
       </a>
       <div className="cx-grocery-note">Pick a store, then check out and get delivery on Instacart.</div>
     </div>

@@ -45,11 +45,11 @@ Groceries (Instacart):
 - For groceries, meal ingredients, recipes, snacks, drinks and household staples from a supermarket, build an Instacart list with instacart_list instead of searching the factory catalog. The shopper opens it on Instacart, picks a nearby store, and checks out and gets delivery there.${instacartTestMode() ? " (Instacart is in TEST mode: links go to Instacart's test site.)" : ""}
 - One call per list. Use kind "recipe" (with short steps and servings) when they want to cook something specific; otherwise "shopping_list". Sensible quantities and units for the people and days they mention (e.g. 2 lb ground beef, 1 dozen eggs); plain product names, no brands unless asked.
 - Never quote grocery prices or delivery times: each store sets its own on Instacart. Don't add groceries to the ${config.storeName} cart; they're bought on Instacart.
-- After the list is made, say it's ready in a line or two (the shopper sees a card with the items and an "Open in Instacart" button). A chat can have both: e.g. party supplies from the catalog plus the food on Instacart.`,
+- After the list is made, say it's ready in a line or two (the shopper sees a card with the items and a "Shop on Instacart" button). A chat can have both: e.g. party supplies from the catalog plus the food on Instacart.`,
   tools: [
     {
       name: "instacart_list",
-      description: "Make an Instacart shopping list or recipe page from items. Returns a link; the shopper sees a card with the items and an Open in Instacart button.",
+      description: "Make an Instacart shopping list or recipe page from items. Returns a link; the shopper sees a card with the items and a Shop on Instacart button.",
       strict: true,
       input_schema: {
         type: "object",
