@@ -12,6 +12,8 @@ const STATUS: Record<string, { label: string; tone: string }> = {
   BOOKED: { label: "Booked", tone: "tone-good" },
   FAILED_REFUNDED: { label: "Refunded", tone: "tone-bad" },
   NEEDS_REVIEW: { label: "Needs review", tone: "tone-warn" },
+  CANCELLING: { label: "Cancelling…", tone: "tone-busy" },
+  CANCELLED: { label: "Cancelled", tone: "tone-muted" },
 };
 
 export default async function HotelsAdminPage() {
@@ -56,6 +58,7 @@ export default async function HotelsAdminPage() {
                 LiteAPI {r.currency} {r.liteAmount} · our fee {stayPrice({ priceCents: fee, currency: r.currency })}
                 {r.confirmationCode ? ` · confirmation ${r.confirmationCode}` : ""}
                 {r.liteBookingId ? ` · LiteAPI ${r.liteBookingId}` : ""}
+                {r.cancelledAt ? ` · cancelled by guest, ${stayPrice({ priceCents: r.refundCents ?? 0, currency: r.currency })} refunded` : ""}
                 {r.stripeRefundId ? ` · refund ${r.stripeRefundId}` : ""}
               </p>
               {r.error && <p className="notice err small">{r.error}</p>}

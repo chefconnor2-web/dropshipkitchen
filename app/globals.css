@@ -2000,3 +2000,10 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-car-where { font-weight: 600; font-size: 15.5px; }
 .cx-car .cx-btn { margin-top: 4px; text-decoration: none; }
 .cx-car-note { font-size: 12px; color: var(--im-sub, var(--muted)); }
+
+/* ---------- Cancelling a stay or a flight (CancelStay / CancelFlight) ---------- */
+.trip-cancel { margin: 18px 0; display: grid; gap: 8px; }
+.trip-cancel p { margin: 0 0 8px; }
+.trip-cancel-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn.danger { background: #b42318; border-color: #b42318; color: #fff; }
+.btn.danger:hover:not(:disabled) { background: #912018; }

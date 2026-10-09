@@ -26,13 +26,13 @@ export class LiteapiError extends Error {
   }
 }
 
-async function call<T>(base: string, path: string, body: unknown, timeoutMs: number): Promise<T> {
+async function call<T>(base: string, path: string, body: unknown, timeoutMs: number, method: "POST" | "PUT" = "POST"): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
-      method: "POST",
+      method,
       headers: { "X-API-Key": process.env.LITEAPI_KEY?.trim() ?? "", "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
@@ -148,4 +148,19 @@ export async function bookRate(prebookId: string, guest: { firstName: string; la
   );
   if (!r.data?.bookingId) throw new LiteapiError("LiteAPI: no booking id in the answer");
   return r.data;
+}
+
+export interface LiteCancellation {
+  bookingId?: string;
+  status?: string;
+  cancellation_fee?: number;
+  /** What LiteAPI gives back to our account card. */
+  refund_amount?: number;
+  currency?: string;
+}
+
+/** Cancels a booking under its cancellation policy (refused for non-refundable rates or past the deadline). */
+export async function cancelBooking(bookingId: string): Promise<LiteCancellation> {
+  const r = await call<{ data?: LiteCancellation }>(bookUrl(), `/bookings/${encodeURIComponent(bookingId)}`, undefined, 60_000, "PUT");
+  return r.data ?? {};
 }

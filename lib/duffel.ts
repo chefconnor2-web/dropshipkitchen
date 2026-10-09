@@ -4,6 +4,7 @@
 //   POST /air/offer_requests?return_offers  search: slices, passengers, cabin → offers
 //   GET  /air/offers/{id}                   one offer, re-priced, with fare conditions and extras
 //   POST /air/orders                        book it, paid from our Duffel balance (only after the shopper paid us)
+//   POST /air/order_cancellations (+ /actions/confirm)  cancel a booked order for the airline refund
 // DUFFEL_API_URL is for tests only (a local stand-in for Duffel).
 
 import { processSingleton } from "@/lib/singleton";
@@ -162,4 +163,28 @@ export function createOrder(offer: Pick<DuffelOffer, "id" | "total_amount" | "to
     { type: "instant", selected_offers: [offer.id], passengers, payments: [{ type: "balance", currency: offer.total_currency, amount: offer.total_amount }], metadata },
     60_000,
   );
+}
+
+// ---------- cancellations ----------
+//   POST /air/order_cancellations                       a quote: what the airline refunds, and to where
+//   POST /air/order_cancellations/{id}/actions/confirm  cancel the order (the quote expires, usually in minutes)
+
+export interface DuffelOrderCancellation {
+  id: string;
+  order_id: string;
+  /** What the airline gives back; may be "0.00". */
+  refund_amount: string | null;
+  refund_currency: string | null;
+  /** Where the money goes: back to our Duffel balance / card, or airline credits only. */
+  refund_to: "balance" | "original_form_of_payment" | "airline_credits" | "voucher" | "card" | string;
+  expires_at: string;
+  confirmed_at: string | null;
+}
+
+export function quoteOrderCancellation(orderId: string): Promise<DuffelOrderCancellation> {
+  return call<DuffelOrderCancellation>("POST", "/air/order_cancellations", { order_id: orderId });
+}
+
+export function confirmOrderCancellation(id: string): Promise<DuffelOrderCancellation> {
+  return call<DuffelOrderCancellation>("POST", `/air/order_cancellations/${encodeURIComponent(id)}/actions/confirm`, undefined, 60_000);
 }
