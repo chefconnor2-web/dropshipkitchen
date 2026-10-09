@@ -40,7 +40,26 @@ export interface Kit {
   items: KitItem[];
 }
 /** `steps` and `groups` are only kept in the browser, to show how the answer was found. */
-export type BotEntry = { role: "assistant"; text: string; cards: Card[]; added: string[]; kit?: Kit; items?: ConnectorItem[]; steps?: string[]; groups?: LiveGroup[]; stopped?: boolean; at?: string };
+/** One line of the agent's visible work: a summary of its reasoning, or a step it took. */
+export interface TraceItem {
+  kind: "think" | "step";
+  text: string;
+}
+export type BotEntry = {
+  role: "assistant";
+  text: string;
+  cards: Card[];
+  added: string[];
+  kit?: Kit;
+  items?: ConnectorItem[];
+  steps?: string[];
+  groups?: LiveGroup[];
+  stopped?: boolean;
+  at?: string;
+  /** Saved with the reply: what the agent thought and did, and for how long. */
+  trace?: TraceItem[];
+  thoughtMs?: number;
+};
 /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
 export type UserEntry = { role: "user"; text: string; images?: string[]; reaction?: string; at?: string };
 export type Entry = UserEntry | BotEntry;
@@ -50,6 +69,11 @@ export interface Turn {
   groups: LiveGroup[];
   /** Connector cards (flights…) as they arrive. */
   items: ConnectorItem[];
+  /** The agent's reasoning and steps as they happen. */
+  trace: TraceItem[];
+  /** When the turn started, and roughly how much the agent has written (for "12s · ↓ 1.2k tokens"). */
+  started: number;
+  chars: number;
 }
 export interface KitState {
   busy: boolean;

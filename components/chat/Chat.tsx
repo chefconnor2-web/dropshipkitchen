@@ -5,7 +5,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import DesignModal from "./DesignModal";
-import BrandMark from "@/components/BrandMark";
+import AgentBlob from "./AgentBlob";
+import { LiveTrace, SavedTrace } from "./AgentTrace";
 import ShareButton from "@/components/ShareButton";
 import PlanPicker from "@/components/PlanPicker";
 import type { PlanOffer } from "@/lib/plan-offer";
@@ -81,6 +82,10 @@ export default function Chat({
   const [loading, setLoading] = useState(chatId !== null);
   const [input, setInput] = useState("");
   const [turn, setTurn] = useState<Turn | null>(null);
+  // Neon's little reactions: a nod per keystroke or burst of words, a hop when something lands in the cart.
+  const [nudge, setNudge] = useState(0);
+  const [cheer, setCheer] = useState(0);
+  const [typing, setTyping] = useState(false);
   const [error, setError] = useState<{ message: string; retryIndex: number; limit?: { subscriber: boolean; signedIn: boolean } } | null>(null);
   const [allowance, setAllowance] = useState<{ remaining: number; limit: number; subscriber: boolean } | null>(null);
   // The plans offered to this shopper (null for subscribers), and whether the plan sheet is open.
@@ -256,9 +261,10 @@ export default function Chat({
     // The assistant's tapback (and the server's timestamp) land on the message just sent.
     const patchUser = (patch: Partial<Entry>) =>
       !me.detached && setEntries((en) => en.map((x, k) => (k === userIndex && x.role === "user" ? ({ ...x, ...patch } as Entry) : x)));
-    const t: Turn = { text: "", steps: [], groups: [], items: [] };
+    const t: Turn = { text: "", steps: [], groups: [], items: [], trace: [], started: Date.now(), chars: 0 };
     setTurn({ ...t });
-    const update = () => !me.detached && setTurn({ text: t.text, steps: [...t.steps], groups: [...t.groups], items: [...t.items] });
+    const update = () =>
+      !me.detached && setTurn({ ...t, steps: [...t.steps], groups: [...t.groups], items: [...t.items], trace: t.trace.map((x) => ({ ...x })) });
     let reply: string | null = null;
     try {
       const r = await fetch("/api/assistant", {
@@ -291,9 +297,19 @@ export default function Chat({
         } else if (e.type === "title") ev.current.onTitle(e.id, e.title);
         else if (e.type === "progress") {
           if (t.steps[t.steps.length - 1] !== e.note) t.steps.push(e.note);
+          if (e.note !== "Thinking…" && t.trace[t.trace.length - 1]?.text !== e.note) t.trace.push({ kind: "step", text: e.note });
+          update();
+        } else if (e.type === "thinking") {
+          const last = t.trace[t.trace.length - 1];
+          if (last?.kind === "think") last.text += e.delta;
+          else t.trace.push({ kind: "think", text: e.delta });
+          t.chars += e.delta.length;
+          setNudge((n) => n + 1);
           update();
         } else if (e.type === "text") {
           t.text += e.delta;
+          t.chars += e.delta.length;
+          setNudge((n) => n + 1);
           update();
         } else if (e.type === "break") {
           if (t.text && !t.text.endsWith("\n\n")) t.text += "\n\n";
@@ -317,6 +333,7 @@ export default function Chat({
           reply = e.entry.text;
           if (e.reaction) patchUser({ reaction: e.reaction });
           if (!me.detached) setEntries((en) => [...en, { ...e.entry, steps: t.steps, groups: t.groups }]);
+          if (e.entry.added?.length) setCheer((c) => c + 1);
           else if (id) cache.current.delete(id);
           ev.current.onCart(e.cartCount ?? 0);
         }
@@ -340,7 +357,10 @@ export default function Chat({
       if (me.detached) return null;
       if (me.ctrl.signal.aborted) {
         // Keep what was written so far, like stopping a reply in ChatGPT.
-        setEntries((en) => [...en, { role: "assistant", text: t.text, cards: [], added: [], items: t.items, steps: t.steps, groups: t.groups, stopped: true }]);
+        setEntries((en) => [
+          ...en,
+          { role: "assistant", text: t.text, cards: [], added: [], items: t.items, steps: t.steps, groups: t.groups, stopped: true, trace: t.trace, thoughtMs: Date.now() - t.started },
+        ]);
       } else {
         setError({ message: e instanceof Error ? e.message : "Something went wrong.", retryIndex: userIndex, limit: (e as { limit?: { subscriber: boolean; signedIn: boolean } }).limit });
       }
@@ -438,6 +458,7 @@ export default function Chat({
         });
         if (typeof d.cartCount === "number") setCart(d.cartCount);
         flash("Added to cart", true);
+        setCheer((c) => c + 1);
       } else {
         if (pick) setPicking((p) => ({ ...p, [card.pid]: pick }));
         flash(d.message ?? "Couldn’t add that");
@@ -461,6 +482,7 @@ export default function Chat({
         if (e.type === "item") setKitState((k) => ({ ...k, [kit.id]: { ...k[kit.id], done: e.done, total: e.total } }));
         else if (e.type === "done") {
           setKitState((k) => ({ ...k, [kit.id]: { busy: false, done: e.results.length, total: e.results.length, results: e.results } }));
+          if (e.results.some((x: { ok: boolean }) => x.ok)) setCheer((c) => c + 1);
           ev.current.onCart(e.cartCount ?? 0);
           const ok = e.results.filter((x: { ok: boolean }) => x.ok).length;
           flash(`Added ${ok} of ${e.results.length} items`, ok > 0);
@@ -538,7 +560,12 @@ export default function Chat({
             value={input}
             enterKeyHint="send"
             placeholder={dictating ? "Listening…" : "Message"}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setNudge((n) => n + 1);
+            }}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
             onPaste={(e) => {
               const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
               if (files.length) {
@@ -633,7 +660,7 @@ export default function Chat({
         {empty ? (
           <div className="cx-empty">
             <div className="cx-contact">
-              <BrandMark size={76} className="cx-avatar cx-avatar-lg" />
+              <AgentBlob size={76} className="cx-avatar cx-avatar-lg" attentive={typing && !!input.trim()} nudge={typing ? nudge : 0} />
               <h1>{storeName}</h1>
               <p>Your personal POS · replies in seconds</p>
               <ShareButton className="cx-share share-center" url="/" text={`${storeName}: your own personal POS system in a chat`} label={`Share ${storeName}`} />
@@ -738,6 +765,7 @@ export default function Chat({
                 <div key={i} className="cx-msg cx-bot">
                   {stamp(i)}
                   <div className="cx-bot-body">
+                    <SavedTrace trace={e.trace} ms={e.thoughtMs} />
                     {(e.groups?.length ?? 0) > 0 && <Steps steps={e.steps ?? []} groups={e.groups ?? []} live={false} />}
                     {e.text ? (
                       <div className="cx-bubble cx-bubble-bot">
@@ -783,7 +811,9 @@ export default function Chat({
                       </div>
                     ))}
                     <div className="cx-foot">
-                      {i === entries.length - 1 && !busy && <BrandMark size={26} color="neon" className="cx-agent-mark" label="Neon" />}
+                      {i === entries.length - 1 && !busy && (
+                        <AgentBlob size={26} className="cx-agent-mark" label="Neon" attentive={typing && !!input.trim()} nudge={typing ? nudge : 0} cheer={cheer} />
+                      )}
                       <div className="cx-actions">
                         <button type="button" className="cx-icon-btn" onClick={() => copy(i, e.text)} aria-label="Copy reply" title="Copy">
                           {copied === i ? <span className="cx-check">✓</span> : <CopyIcon />}
@@ -808,20 +838,17 @@ export default function Chat({
             {turn && (
               <div className="cx-msg cx-bot">
                 <div className="cx-bot-body">
-                  {(turn.steps.length > 1 || turn.groups.length > 0) && <Steps steps={turn.steps} groups={turn.groups} live />}
+                  <LiveTrace trace={turn.trace} started={turn.started} chars={turn.chars} writing={!!turn.text} nudge={nudge} />
+                  {turn.groups.length > 0 && <Steps steps={turn.steps} groups={turn.groups} live />}
                   <ConnectorCards items={turn.items} />
-                  {turn.text ? (
+                  {turn.text && (
                     <div className="cx-bubble cx-bubble-bot cx-streaming">
                       <Markdown text={turn.text} />
-                    </div>
-                  ) : (
-                    <div className="cx-agent" aria-live="polite">
-                      <BrandMark size={34} color="neon" mood="thinking" label="Neon is thinking" />
                     </div>
                   )}
                   {turn.text && (
                     <div className="cx-agent">
-                      <BrandMark size={26} color="neon" mood="thinking" label="Neon is writing" />
+                      <AgentBlob size={26} mood="thinking" label="Neon is writing" nudge={nudge} />
                     </div>
                   )}
                 </div>

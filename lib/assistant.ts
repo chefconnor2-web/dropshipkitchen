@@ -48,7 +48,26 @@ export interface ProductCard {
 export type UiEntry =
   /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
   | { role: "user"; text: string; images?: string[]; reaction?: string; at?: string }
-  | { role: "assistant"; text: string; cards: ProductCard[]; added: string[]; kit?: Kit; items?: ConnectorItem[]; at?: string };
+  | {
+      role: "assistant";
+      text: string;
+      cards: ProductCard[];
+      added: string[];
+      kit?: Kit;
+      items?: ConnectorItem[];
+      at?: string;
+      /** What the agent thought and did on the way to this reply, and how long it took (the chat's "Thought for 6s"). */
+      trace?: TraceItem[];
+      thoughtMs?: number;
+    };
+
+/** One line of the agent's visible work: a summary of its reasoning, or a step it took. */
+export interface TraceItem {
+  kind: "think" | "step";
+  text: string;
+}
+const MAX_TRACE_ITEMS = 40;
+const MAX_TRACE_CHARS = 6000;
 
 /** Live events for the chat panel while a turn runs. */
 export type AssistantEvent =
@@ -58,6 +77,8 @@ export type AssistantEvent =
   | { type: "items"; group: string; items: ConnectorItem[] }
   /** Streamed words of the answer as the model writes them. */
   | { type: "text"; delta: string }
+  /** A summary of the planner's reasoning, streamed as it thinks. */
+  | { type: "thinking"; delta: string }
   /** The model finished a burst of text and is about to use tools. */
   | { type: "break" }
   /** The assistant's emoji tapback on the shopper's message (arrives before the answer, like a friend reacting). */
@@ -657,6 +678,24 @@ export async function chatTurn(
         ]
       : text,
   });
+  // Keep a copy of what the shopper watches the agent think and do, so the reply can show it again later.
+  const startedAt = Date.now();
+  const trace: TraceItem[] = [];
+  let traceChars = 0;
+  const shown = emit;
+  emit = (e) => {
+    const room = traceChars < MAX_TRACE_CHARS;
+    if (e.type === "thinking" && room) {
+      const last = trace[trace.length - 1];
+      if (last?.kind === "think") last.text += e.delta;
+      else if (trace.length < MAX_TRACE_ITEMS) trace.push({ kind: "think", text: e.delta });
+      traceChars += e.delta.length;
+    } else if (e.type === "progress" && room && e.note !== "Thinking…" && trace.length < MAX_TRACE_ITEMS && trace[trace.length - 1]?.text !== e.note) {
+      trace.push({ kind: "step", text: e.note });
+      traceChars += e.note.length;
+    }
+    shown(e);
+  };
   const client = new Anthropic();
   const usage = { in: 0, out: 0, micros: 0 };
   const known = new Map<string, ProductCard>();
@@ -677,9 +716,18 @@ export async function chatTurn(
       cache_control: { type: "ephemeral" },
       messages: await hydrateImages(messages),
       // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.
-      ...(haikuPlanner ? {} : { output_config: { effort: EFFORT }, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
+      // "summarized" only makes the reasoning readable for the chat's thinking view; it's billed the same as hidden.
+      ...(haikuPlanner
+        ? {}
+        : {
+            thinking: { type: "adaptive" as const, display: "summarized" as const },
+            output_config: { effort: EFFORT },
+            betas: ["server-side-fallback-2026-07-01"],
+            fallbacks: "default" as const,
+          }),
     });
     stream.on("text", (delta) => emit({ type: "text", delta }));
+    stream.on("thinking", (delta) => emit({ type: "thinking", delta }));
     const response = await stream.finalMessage();
     usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
     usage.out += response.usage.output_tokens;
@@ -725,6 +773,8 @@ export async function chatTurn(
     added: ctx.added,
     ...(ctx.kit ? { kit: ctx.kit } : {}),
     ...(ctx.items.length ? { items: ctx.items.slice(0, 18) } : {}),
+    ...(trace.length ? { trace: trace.map((t) => ({ kind: t.kind, text: t.text.trim() })).filter((t) => t.text) } : {}),
+    thoughtMs: Date.now() - startedAt,
     at: new Date().toISOString(),
   };
   ui.push(
