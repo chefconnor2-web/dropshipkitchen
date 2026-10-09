@@ -1,5 +1,6 @@
 import "@fontsource/ibm-plex-sans/400.css";
 import { duffelConfigured, duffelTestMode } from "@/lib/duffel";
+import { liteapiConfigured } from "@/lib/liteapi";
 import "@fontsource/ibm-plex-sans/500.css";
 import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
@@ -29,6 +30,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin", label: "Home", icon: "M4 13h6V4H4zm10 7h6V4h-6zM4 20h6v-4H4z" },
   ];
   if (duffelConfigured()) tabs.splice(tabs.length - 1, 0, { href: "/admin/flights", label: "Flights", icon: "M2 16l20-6-20-6 3 6-3 6zm3-6h9" });
+  if (liteapiConfigured()) tabs.splice(tabs.length - 1, 0, { href: "/admin/hotels", label: "Hotels", icon: "M3 20V6h8v4h10v10M3 14h18M7 10h.01" });
   return (
     <div className="admin">
       <header className="admin-top">

@@ -6,7 +6,7 @@ import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -465,12 +465,55 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
       {groupItems(items).map(([group, list]) => (
         <div key={group || "all"} className="cx-group">
           {group && <div className="cx-group-label">{group}</div>}
-          <div className="cx-cards cx-flights">
-            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : null))}
+          <div className={`cx-cards ${list[0]?.kind === "hotel" ? "cx-hotels" : "cx-flights"}`}>
+            {list.map((it) => (it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : <HotelCard key={it.id} h={it} />))}
           </div>
         </div>
       ))}
     </>
+  );
+}
+
+/** A hotel's best room for the dates: photo, rating, the room and what the whole stay costs, and Book. */
+export function HotelCard({ h, bookable = true }: { h: Hotel; bookable?: boolean }) {
+  const perNight = stayPrice({ priceCents: Math.round(h.priceCents / Math.max(1, h.nights)), currency: h.currency });
+  return (
+    <div className="cx-hotel">
+      <div className="cx-hotel-photo">{h.photo ? <img src={h.photo} alt="" loading="lazy" /> : <span aria-hidden>🏨</span>}</div>
+      <div className="cx-hotel-body">
+        <div className="cx-hotel-name">{h.name}</div>
+        <div className="cx-hotel-meta">
+          {h.stars ? <span aria-label={`${h.stars} stars`}>{"★".repeat(Math.round(h.stars))}</span> : null}
+          {h.rating ? <span>{h.rating.toFixed(1)}/10</span> : null}
+          {h.address ? <span className="cx-hotel-addr">{h.address}</span> : null}
+        </div>
+        <div className="cx-hotel-room">
+          {h.room} · {h.board}
+          {h.refundable === true ? " · Free cancellation" : h.refundable === false ? " · Non-refundable" : ""}
+        </div>
+        <div className="cx-hotel-foot">
+          <div>
+            <strong>{stayPrice(h)}</strong>
+            <span className="cx-muted">
+              {" "}
+              total · {h.nights} night{h.nights === 1 ? "" : "s"} · {perNight}/night
+            </span>
+          </div>
+          <div className="cx-hotel-actions">
+            {(h.address || h.latitude != null) && (
+              <a className="cx-btn" href={uberLink({ name: h.name, address: h.address || h.city, latitude: h.latitude, longitude: h.longitude })} target="_blank" rel="noopener noreferrer">
+                Ride there
+              </a>
+            )}
+            {bookable && (
+              <Link className="cx-btn cx-btn-primary" href={`/hotels/book/${encodeURIComponent(h.id)}`}>
+                Book
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

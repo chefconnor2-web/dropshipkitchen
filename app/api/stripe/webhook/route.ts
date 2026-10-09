@@ -2,6 +2,7 @@ import { config } from "@/lib/config";
 import { stripe } from "@/lib/stripe";
 import { markOrderPaidFromSession } from "@/lib/orders";
 import { completeFlightBooking } from "@/lib/flight-booking";
+import { completeHotelBooking } from "@/lib/hotel-booking";
 import { after } from "next/server";
 import { completeSubscriptionCheckout, orderForInvoice, updateSubscriptionFromStripe } from "@/lib/subscriptions";
 import type Stripe from "stripe";
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
     if (session.mode === "subscription") await completeSubscriptionCheckout(session);
     // Flights book with the airline after we answer Stripe (it can take a while); the status lock stops a retry double-booking.
     else if (session.metadata?.flightBookingId) after(() => completeFlightBooking(session).catch((e) => console.error("[flights] booking failed:", e)));
+    else if (session.metadata?.hotelBookingId) after(() => completeHotelBooking(session).catch((e) => console.error("[hotels] booking failed:", e)));
     else await markOrderPaidFromSession(session);
   }
   // Every paid month of a mystery box subscription becomes a box order (once per invoice).
