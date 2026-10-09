@@ -1,13 +1,18 @@
 # Usage: python3 scripts/make-blob.py design/plant-sphere.jpg public/brand  (needs Pillow), then copy
 # public/brand/blob.png to app/icon.png and app/apple-icon.png.
+# Print size: python3 scripts/make-blob.py design/plant-sphere.jpg <dir> 5 print  writes blob-print.png,
+# 5x larger, without the glow and clipped to the sphere (both print as smudges). public/brand/print holds
+# the print logos laid out from it (Bubble Guy over CHIT in Barlow Condensed, tagline in IBM Plex Mono).
 # Builds Bubble Guy from the peach "plant sphere" photo: same canvas layout as the old drawings (eyes in
 # the same place, so the blink lids still line up), at 2x (320px).
 import sys, math
 from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageEnhance
 
 src, out_dir = sys.argv[1], sys.argv[2]
-S = 320
-CX, CY, R = 160, 160, 118
+K = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
+PRINT = len(sys.argv) > 4 and sys.argv[4] == "print"
+S = round(320 * K)
+CX, CY, R = round(160 * K), round(160 * K), round(118 * K)
 im = Image.open(src).convert("RGB")
 # The sphere in the photo: centre (104,182), radius ~66. Crop just inside the edge to avoid the white rim.
 c, r = (104, 182), 63
@@ -48,25 +53,35 @@ def make(name, hue_shift=0, sat=1.0):
     body, t = shade(tex, hue_shift, sat)
     avg = t.resize((1, 1), Image.LANCZOS).getpixel((0, 0))
     canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    # Glow in the sphere's own colour.
-    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse((CX-R-6, CY-R-2, CX+R+6, CY+R+10), fill=(*[int(v*0.6+255*0.4) for v in avg], 140))
-    canvas = Image.alpha_composite(canvas, glow.filter(ImageFilter.GaussianBlur(16)))
+    # Glow in the sphere's own colour (not for print).
+    if not PRINT:
+        glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        ImageDraw.Draw(glow).ellipse((CX-R-6*K, CY-R-2*K, CX+R+6*K, CY+R+10*K), fill=(*[int(v*0.6+255*0.4) for v in avg], 140))
+        canvas = Image.alpha_composite(canvas, glow.filter(ImageFilter.GaussianBlur(16*K)))
     canvas.alpha_composite(body, (CX-R, CY-R))
     # Glossy highlight, top left.
     hl = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    ImageDraw.Draw(hl).ellipse((CX-82, CY-96, CX-18, CY-52), fill=(255, 255, 255, 85))
-    canvas = Image.alpha_composite(canvas, hl.filter(ImageFilter.GaussianBlur(9)))
+    ImageDraw.Draw(hl).ellipse((CX-82*K, CY-96*K, CX-18*K, CY-52*K), fill=(255, 255, 255, 85))
+    canvas = Image.alpha_composite(canvas, hl.filter(ImageFilter.GaussianBlur(9*K)))
     # Eyes: warm dark brown with a catchlight (white would vanish on peach). Same place as before.
     eyes = Image.new("RGBA", (S*4, S*4), (0, 0, 0, 0))
     d = ImageDraw.Draw(eyes)
+    q = 4 * K
     for ex in (135, 185):
-        d.ellipse(((ex-10)*4, (153-16)*4, (ex+10)*4, (153+16)*4), fill=(74, 40, 34, 255))
-        d.ellipse(((ex-5)*4, (153-11)*4, (ex+1)*4, (153-3)*4), fill=(255, 255, 255, 235))
+        d.ellipse(((ex-10)*q, (153-16)*q, (ex+10)*q, (153+16)*q), fill=(74, 40, 34, 255))
+        d.ellipse(((ex-5)*q, (153-11)*q, (ex+1)*q, (153-3)*q), fill=(255, 255, 255, 235))
     canvas = Image.alpha_composite(canvas, eyes.resize((S, S), Image.LANCZOS))
+    if PRINT:
+        # Nothing outside the sphere: the blurred highlight would print as a faint smudge past the edge.
+        edge = Image.new("L", (S*4, S*4))
+        ImageDraw.Draw(edge).ellipse(((CX-R)*4, (CY-R)*4, (CX+R)*4-1, (CY+R)*4-1), fill=255)
+        canvas.putalpha(ImageChops.multiply(canvas.getchannel("A"), edge.resize((S, S), Image.LANCZOS)))
     canvas.save(f"{out_dir}/{name}.png", optimize=True)
 
-make("blob")
-make("blob-green", hue_shift=78, sat=1.1)
-make("blob-amber", hue_shift=16, sat=1.25)
-make("blob-red", hue_shift=-12, sat=1.35)
+if PRINT:
+    make("blob-print")
+else:
+    make("blob")
+    make("blob-green", hue_shift=78, sat=1.1)
+    make("blob-amber", hue_shift=16, sat=1.25)
+    make("blob-red", hue_shift=-12, sat=1.35)

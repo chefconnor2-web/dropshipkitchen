@@ -122,6 +122,12 @@ export async function declineAndRefund(orderId: string, note?: string) {
   const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
   if (order.status !== ORDER_STATUS.AWAITING_MERCHANT_APPROVAL)
     throw new Error(`Order is ${order.status}; only AWAITING_MERCHANT_APPROVAL orders can be declined.`);
+  // A gift (nothing was charged): declining just cancels it, there's nothing to refund.
+  if (!order.stripePaymentIntent && order.subtotalCents === 0 && order.shippingCents === 0)
+    return prisma.order.update({
+      where: { id: order.id },
+      data: { status: ORDER_STATUS.DECLINED_REFUNDED, decidedAt: new Date(), decisionNote: note || "Gift cancelled by merchant: nothing was charged, so nothing to refund." },
+    });
   if (!order.stripePaymentIntent) throw new Error("No Stripe payment intent recorded for this order.");
   const refund = await stripe().refunds.create({ payment_intent: order.stripePaymentIntent });
   const updated = await prisma.order.update({
