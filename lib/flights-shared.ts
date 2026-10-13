@@ -109,8 +109,11 @@ export interface BrowserCard {
   kind: "browser";
   /** "br_" + the browser session id; the same card is updated in place. */
   id: string;
-  /** wss:// address of the live view, with its view token. */
-  live: string;
+  /** The browser service session id. The live-view address (with a short-lived token) comes from
+   *  GET /api/assistant/browser?chat=…&session=…, only for the chat's owner; it's never saved in the chat. */
+  session: string;
+  /** Old cards (before tokens were minted on demand) carried the address itself; ignored now. */
+  live?: string;
   site: string;
   /** Set when Neon hands over: why the shopper should take over (captcha, sign in, check out). */
   handoff?: string;

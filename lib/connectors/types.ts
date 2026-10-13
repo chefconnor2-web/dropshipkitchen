@@ -4,6 +4,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ConnectorItem } from "@/lib/flights-shared";
+import type { PendingKind } from "@/lib/run-shared";
 
 export interface ConnectorContext {
   /** Live updates for the chat panel while a turn runs (progress notes, cards as they arrive). */
@@ -12,6 +13,19 @@ export interface ConnectorContext {
   show: (group: string, items: ConnectorItem[]) => void;
   /** The chat this turn belongs to (e.g. to keep one browser per chat). */
   chatId: string;
+  /** Aborted when the shopper stops the run: stop work, don't start new browser steps. */
+  signal: AbortSignal;
+  /**
+   * Pauses the run on a step only the shopper can do (solve a captcha, sign in, check out) and waits until
+   * they resume it (POST /api/assistant/runs/:id/resume with this step's id), the run is cancelled, or it
+   * expires. The chat expands the live browser full size while it waits. One pending step at a time.
+   * See docs/frontier-port/CONTRACTS.md §7.
+   */
+  waitForShopper: (step: {
+    kind: PendingKind;
+    message: string;
+    browser: { sessionId: string; cardId: string } | null;
+  }) => Promise<{ outcome: "resumed" | "cancelled" | "expired"; stepId: string }>;
 }
 
 export interface ToolResult {
