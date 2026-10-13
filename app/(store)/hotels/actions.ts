@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { startHotelCheckout } from "@/lib/hotel-booking";
 import { getMemberId } from "@/lib/session";
+import { saveFromForm } from "@/lib/traveller";
 
 export interface HotelBookState {
   error?: string;
@@ -21,6 +22,7 @@ export async function bookHotelAction(prev: HotelBookState, form: FormData): Pro
     const r = await startHotelCheckout({ offerId, shownCents: prev.shownCents, form, customerId: await getMemberId() });
     if (r.url) url = r.url;
     else return { error: r.error, shownCents: r.newPriceCents ?? prev.shownCents, values, n: prev.n + 1 };
+    await saveFromForm(form, "hotel");
   } catch (e) {
     console.error("[hotels] checkout failed:", e);
     return { error: "Something went wrong starting the payment. Please try again.", shownCents: prev.shownCents, values, n: prev.n + 1 };

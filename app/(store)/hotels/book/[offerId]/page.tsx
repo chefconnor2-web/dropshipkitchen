@@ -3,7 +3,7 @@ import { liteapiConfigured, liteapiTestMode } from "@/lib/liteapi";
 import { offerCard } from "@/lib/hotels";
 import { HotelCard } from "@/components/chat/ui";
 import BookForm from "./BookForm";
-import { travellerPrefill } from "@/lib/traveller";
+import { hotelPrefill } from "@/lib/traveller";
 import { PrefillNote } from "@/components/PrefillNote";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export default async function BookHotelPage({ params }: { params: Promise<{ offe
       </div>
     );
   const guests = card.adults + card.childAges.length;
-  const me = await travellerPrefill();
+  const { values: prefill, from } = await hotelPrefill();
   return (
     <div className="wrap page narrow fl-book">
       <p className="eyebrow">{liteapiTestMode() ? "Test mode · no real room is booked" : "Secure booking"}</p>
@@ -36,8 +36,8 @@ export default async function BookHotelPage({ params }: { params: Promise<{ offe
           {guests} guest{guests > 1 ? "s" : ""} · check-in {card.checkin} · check-out {card.checkout}. {card.refundable === false ? "This rate is non-refundable." : card.refundable ? "Free cancellation on this rate (see the hotel's policy in your confirmation)." : ""}
         </p>
       </div>
-      <PrefillNote signedIn={!!me} next={`/hotels/book/${encodeURIComponent(card.id)}`} />
-      <BookForm prefill={me ? { ...me } : undefined} offerId={card.id} priceCents={card.priceCents} currency={card.currency} />
+      <PrefillNote from={from} next={`/hotels/book/${encodeURIComponent(card.id)}`} />
+      <BookForm prefill={prefill} offerId={card.id} priceCents={card.priceCents} currency={card.currency} />
     </div>
   );
 }
