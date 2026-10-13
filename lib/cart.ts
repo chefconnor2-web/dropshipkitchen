@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { getMemberId } from "@/lib/session";
+import { currentProfileOwner, getProfile } from "@/lib/traveller";
 
 const COOKIE = "cs_cart";
 
@@ -80,7 +81,11 @@ export async function getShipTo(): Promise<ShipTo> {
   const fallback: ShipTo = { country: "CA", zip: "", tier: "standard" };
   try {
     const v = JSON.parse((await cookies()).get(SHIP_COOKIE)?.value ?? "null") as Partial<ShipTo> | null;
-    if (!v) return fallback;
+    if (!v) {
+      // Nothing chosen on this browser: the address in their saved details (My details), if any.
+      const p = await getProfile(await currentProfileOwner()).catch(() => null);
+      return p?.country && /^[A-Z]{2}$/.test(p.country) ? { country: p.country, zip: (p.postalCode ?? "").slice(0, 12), tier: "standard" } : fallback;
+    }
     return {
       country: typeof v.country === "string" && /^[A-Z]{2}$/.test(v.country) ? v.country : "CA",
       zip: typeof v.zip === "string" ? v.zip.slice(0, 12) : "",

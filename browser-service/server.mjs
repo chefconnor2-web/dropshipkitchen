@@ -542,6 +542,69 @@ async function amazonCart(s, domain) {
   return snapshot(s, data);
 }
 
+/**
+ * Sets Amazon's "Deliver to" location to a postal code, so prices, availability and delivery estimates are for
+ * where the shopper's order goes (their home, or their hotel). Guest browsers can do this. First Amazon's own
+ * location call (what the Deliver to box sends), made from the page so it uses the page's cookies; then, if that
+ * didn't take, the Deliver to box itself. Returns what the header shows afterwards.
+ */
+async function amazonLocation(s, domain, postal) {
+  const zip = String(postal ?? "").toUpperCase().replace(/[^A-Z0-9 -]/g, "").replace(/\s+/g, " ").trim().slice(0, 10);
+  if (zip.length < 3) throw Object.assign(new Error("Give a postal code."), { status: 400 });
+  const base = `https://www.${domainOf(domain)}`;
+  if (!s.page.url().startsWith(base)) await goto(s, `${base}/`);
+  if (await isCaptcha(s.page)) return snapshot(s, { located: false, deliverTo: "" });
+  const compact = zip.replace(/[\s-]/g, "");
+  const deliverTo = () => s.page.$eval("#glow-ingress-line2, #nav-global-location-slot", (el) => (el.textContent || "").replace(/\s+/g, " ").trim()).catch(() => "");
+  const shows = (t) => t.toUpperCase().replace(/[\s-]/g, "").includes(compact.slice(0, 3));
+  const viaApi = await s.page
+    .evaluate(async (zipCode) => {
+      try {
+        const modal = await fetch("/portal-migration/hz/glow/get-rendered-address-selections?deviceType=desktop&pageType=Gateway&storeContext=NoStoreName&actionSource=desktop-modal", { credentials: "include" }).then((r) => r.text());
+        const token = (modal.match(/CSRF_TOKEN\s*:\s*"([^"]+)"/) || [])[1];
+        if (!token) return false;
+        const r = await fetch("/portal-migration/hz/glow/address-change?actionSource=glow", {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json", "anti-csrftoken-a2z": token },
+          body: JSON.stringify({ locationType: "LOCATION_INPUT", zipCode, deviceType: "web", storeContext: "generic", pageType: "Gateway", actionSource: "glow" }),
+        });
+        const j = await r.json().catch(() => null);
+        return !!j && (j.isValidAddress === 1 || j.isValidAddress === true || j.successful === 1);
+      } catch {
+        return false;
+      }
+    }, zip)
+    .catch(() => false);
+  await s.page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+  let shown = await deliverTo();
+  if (!shows(shown)) {
+    // The Deliver to box: Canada's has two postal-code fields, the US one has one.
+    try {
+      await s.page.click("#nav-global-location-popover-link, #glow-ingress-block", { delay: 30 });
+      await s.page.waitForSelector("#GLUXZipUpdateInput, #GLUXZipUpdateInput_0", { timeout: 6000 });
+      if (await s.page.$("#GLUXZipUpdateInput_0")) {
+        const [a, b] = [compact.slice(0, 3), compact.slice(3, 6)];
+        await s.page.type("#GLUXZipUpdateInput_0", a, { delay: 25 });
+        await s.page.type("#GLUXZipUpdateInput_1", b, { delay: 25 });
+      } else {
+        await s.page.click("#GLUXZipUpdateInput", { clickCount: 3 });
+        await s.page.type("#GLUXZipUpdateInput", zip, { delay: 25 });
+      }
+      await s.page.click("#GLUXZipUpdate input, #GLUXZipUpdate");
+      await pause(1500);
+      const done = await s.page.$("#GLUXConfirmClose, .a-popover-footer input.a-button-input, button[name='glowDoneButton']");
+      if (done) await done.click().catch(() => {});
+      await pause(800);
+      await s.page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      shown = await deliverTo();
+    } catch {
+      /* the box didn't open: leave Amazon's own location */
+    }
+  }
+  return snapshot(s, { located: viaApi || shows(shown), deliverTo: shown });
+}
+
 // ---------- HTTP ----------
 
 function send(res, code, body) {
@@ -620,6 +683,7 @@ const server = http.createServer(async (req, res) => {
       if (rest === "/amazon/search") return send(res, 200, await withSession(id, (s) => amazonSearch(s, body.domain, body.query ?? "")));
       if (rest === "/amazon/add") return send(res, 200, await withSession(id, (s) => amazonAdd(s, body.domain, body.asin, body.quantity)));
       if (rest === "/amazon/cart") return send(res, 200, await withSession(id, (s) => amazonCart(s, body.domain)));
+      if (rest === "/amazon/location") return send(res, 200, await withSession(id, (s) => amazonLocation(s, body.domain, body.postal)));
       if (rest === "/amazon/search-many") {
         const queries = (Array.isArray(body.queries) ? body.queries : []).map((q) => String(q ?? "").trim().slice(0, 200)).filter(Boolean).slice(0, 8);
         if (!queries.length) return send(res, 400, { error: "No searches given." });

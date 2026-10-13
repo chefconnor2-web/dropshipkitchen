@@ -181,6 +181,9 @@ export const browserApi = {
         items?: Array<{ asin: string; added: boolean; title?: string; price?: string | null; delivery?: string | null; quantity?: number; requestedQuantity: number; reason?: string; captcha?: boolean; signIn?: boolean; error?: string }>;
       }
     >(`/sessions/${id}/amazon/add-many`, { domain, items }, "POST", signal, BATCH_MS),
+  /** Amazon's "Deliver to": prices and delivery estimates for this postal code. */
+  location: (id: string, domain: string, postal: string, signal?: AbortSignal) =>
+    call<PageState & { located?: boolean; deliverTo?: string }>(`/sessions/${id}/amazon/location`, { domain, postal }, "POST", signal),
   cart: (id: string, domain: string, signal?: AbortSignal) =>
     call<PageState & { items?: Array<{ asin: string; title: string; quantity: number | null; price: string | null }>; subtotal?: string | null }>(
       `/sessions/${id}/amazon/cart`,
