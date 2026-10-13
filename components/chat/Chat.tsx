@@ -392,6 +392,8 @@ export default function Chat({
   }
 
   /** Stop: the server stops the run and saves what was written; the stream then ends it here. */
+  const stopRef = useRef<() => Promise<void>>(async () => {});
+  stopRef.current = () => stop();
   async function stop() {
     const r = run.current;
     if (!r) {
@@ -488,11 +490,20 @@ export default function Chat({
   }, []);
 
   // Back from a booking page (/c/<id>?booked=flight:FL-123): tell Neon once, so it carries on with the next step.
+  // A run still waiting on the shopper from before they left to pay is stale: stop it first, then send.
+  const stoppedForBooking = useRef(false);
   useEffect(() => {
-    if (!chatId || loading || busy || !configured) return;
+    if (!chatId || loading || !configured) return;
     const params = new URLSearchParams(window.location.search);
     const booked = params.get("booked");
     if (!booked) return;
+    if (busy) {
+      if (live?.status === "waiting" && !stoppedForBooking.current) {
+        stoppedForBooking.current = true;
+        void stopRef.current();
+      }
+      return;
+    }
     params.delete("booked");
     const q = params.toString();
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${q ? `?${q}` : ""}`);
@@ -503,8 +514,9 @@ export default function Chat({
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
     } catch {}
+    stoppedForBooking.current = false;
     void sendRef.current(`✅ I booked the ${m[1] === "flight" ? "flight" : "hotel"} (${m[2]}). Carry on with the next step.`);
-  }, [chatId, loading, busy, configured]);
+  }, [chatId, loading, busy, configured, live?.status]);
 
   /** Sends one message; resolves with the reply text (for voice mode), or null if it didn't finish. */
   async function send(text: string, opts: { voice?: boolean; editIndex?: number; images?: string[] } = {}): Promise<string | null> {
