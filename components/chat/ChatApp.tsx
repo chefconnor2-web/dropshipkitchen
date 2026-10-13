@@ -8,7 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Chat, { type ChatEvents } from "./Chat";
 import TripsPanel from "./TripsPanel";
 import DetailsPanel from "./DetailsPanel";
-import { BagIcon, DotsIcon, GiftIcon, GridIcon, MenuIcon, NewChatIcon, PencilIcon, SearchIcon, SidebarIcon, XIcon } from "./ui";
+import { BagIcon, DotsIcon, MenuIcon, NewChatIcon, PencilIcon, SearchIcon, SidebarIcon, XIcon } from "./ui";
 
 export interface ChatSummary {
   id: string;
@@ -207,18 +207,6 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             <IdIcon />
             <span>My details</span>
           </button>
-          <Link href="/search" className="sb-row">
-            <GridIcon />
-            <span>Browse catalog</span>
-          </Link>
-          <Link href="/search?from=CA" className="sb-row">
-            <span aria-hidden style={{ width: 17, textAlign: "center" }}>🇨🇦</span>
-            <span>Ships from Canada</span>
-          </Link>
-          <Link href="/boxes" className="sb-row">
-            <GiftIcon />
-            <span>Mystery boxes</span>
-          </Link>
           <Link href="/account" className="sb-row">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
               <circle cx="12" cy="8" r="3.5" />

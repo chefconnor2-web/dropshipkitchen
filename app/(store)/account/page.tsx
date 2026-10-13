@@ -46,7 +46,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <p>Sign in to see your subscription, your orders, your AI chats on any device and your AI allowance. No password: we email you a 6-digit code.</p>
         <SignInForm next={safeNext(next)} />
         <div className="account-cta">
-          <strong>New here?</strong> Full gives you twice the assistant usage and a surplus mystery box every month.{" "}
+          <strong>New here?</strong> Full gives you twice the assistant usage.{" "}
           <Link href="/plans">See plans →</Link>
         </div>
       </div>
@@ -94,7 +94,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         <h2 className="section-title">Your plan</h2>
         {subs.length === 0 ? (
           <p>
-            No subscription yet. <Link href="/plans">See plans</Link>: Lite for the assistant, or Full for twice the usage and a surplus mystery box every month.
+            No subscription yet. <Link href="/plans">See plans</Link>: Lite for the assistant, or Full for twice the usage.
           </p>
         ) : (
           <ul className="sub-list">
@@ -136,7 +136,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         {allowance.basis === "full" && <p className="muted small">Full gives you twice Lite’s usage, and it refills over the month.</p>}
         {allowance.basis === "lite" && (
           <p className="muted small">
-            Quick questions use less than big shopping searches. <Link href="/plans">Upgrade to Full</Link> for twice the usage and a surplus mystery box every month.
+            Quick questions use less than big shopping searches. <Link href="/plans">Upgrade to Full</Link> for twice the usage.
           </p>
         )}
         {!allowance.subscriber && (

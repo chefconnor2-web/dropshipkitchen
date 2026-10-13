@@ -2,10 +2,19 @@
 
 import Link from "next/link";
 import { useFormStatus } from "react-dom";
-import { subscribeLite } from "@/app/(store)/actions";
+import { subscribeFull, subscribeLite } from "@/app/(store)/actions";
 import type { PlanOffer } from "@/lib/plan-offer";
 
 const money = (cents: number) => `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`;
+
+function FullButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button className="pp-btn pp-btn-main" disabled={pending}>
+      {pending ? "Opening checkout…" : "Start Full"}
+    </button>
+  );
+}
 
 function LiteButton() {
   const { pending } = useFormStatus();
@@ -32,15 +41,16 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
             <strong>{money(offer.full.priceCents)}</strong>
             <span>/month</span>
           </div>
-          <div className="pp-sub">About {money(Math.round(perDay))} a day, plus your box’s shipping</div>
+          <div className="pp-sub">About {money(Math.round(perDay))} a day</div>
           <ul className="pp-list">
             <li>2× the assistant usage of Lite</li>
-            <li>A surplus mystery box every month</li>
+            <li>Flights, hotels, cars and Amazon, booked from the chat</li>
             <li>It finds, compares and fills your cart for you</li>
           </ul>
-          <Link href="/boxes" className="pp-btn pp-btn-main">
-            Choose your box
-          </Link>
+          <form action={subscribeFull}>
+            <input type="hidden" name="next" value={next} />
+            <FullButton />
+          </form>
         </div>
         {offer.lite.enabled && (
           <div className="pp-card">
@@ -62,9 +72,9 @@ export default function PlanPicker({ offer, next = "/plans", compact = false }: 
           </div>
         )}
       </div>
-      <Link href="/search" className="pp-free">
+      <Link href="/" className="pp-free">
         <span>
-          <strong>Free</strong> · Search the catalog and shop it yourself
+          <strong>Free</strong> · Try the assistant with a few messages
         </span>
         <span aria-hidden>→</span>
       </Link>
