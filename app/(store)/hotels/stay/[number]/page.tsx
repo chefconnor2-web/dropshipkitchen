@@ -7,6 +7,8 @@ import { stripe } from "@/lib/stripe";
 import { getMemberId } from "@/lib/session";
 import { canCancelStay, completeHotelBooking, HOTEL_STATUS, stayToken } from "@/lib/hotel-booking";
 import CancelStay from "./CancelStay";
+import BackToChat from "@/components/BackToChat";
+import { chatForCard } from "@/lib/chat-session";
 import { HotelCard } from "@/components/chat/ui";
 import { stayPrice, uberLink, type HotelCard as Card } from "@/lib/flights-shared";
 
@@ -51,6 +53,8 @@ export default async function StayPage({ params, searchParams }: { params: Promi
           : status === HOTEL_STATUS.NEEDS_REVIEW
             ? { title: "We're checking with the hotel", sub: "Your payment went through but the hotel was slow to confirm. We'll email you shortly with your confirmation or a full refund.", tone: "is-warn" }
             : { title: "Payment not completed", sub: "Your card wasn't charged. Go back to book again, or ask the assistant for current rates.", tone: "is-off" };
+  // Booked from the chat: back there once it's confirmed, and Neon carries on.
+  const fromChat = status === HOTEL_STATUS.BOOKED || working ? await chatForCard([b.offerId, card.id, card.offerId]) : null;
   return (
     <div className="wrap page narrow trk">
       {working && <meta httpEquiv="refresh" content="3" />}
@@ -65,6 +69,7 @@ export default async function StayPage({ params, searchParams }: { params: Promi
             <code>{b.confirmationCode}</code>
           </p>
         )}
+        {fromChat && <BackToChat chatId={fromChat} booked={`hotel:${b.number}`} what="stay" done={status === HOTEL_STATUS.BOOKED} />}
       </section>
       <div className="fl-summary">
         <HotelCard h={card} bookable={false} />

@@ -10,6 +10,8 @@ import { FlightCard } from "@/components/chat/ui";
 import { flightPrice, type FlightCard as Card } from "@/lib/flights-shared";
 import { timingSafeEqual } from "node:crypto";
 import ShareButton from "@/components/ShareButton";
+import BackToChat from "@/components/BackToChat";
+import { chatForCard } from "@/lib/chat-session";
 import { destinationLabel, shareFromBooking, tripDates, whosGoing } from "@/lib/shared-trips";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +63,8 @@ export default async function TripPage({ params, searchParams }: { params: Promi
             ? { title: "We're checking with the airline", sub: "Your payment went through but the airline was slow to confirm. We're on it and will email you shortly, either your confirmation or a full refund.", tone: "is-warn" }
             : { title: "Payment not completed", sub: "Your card wasn't charged. Go back to book again, or ask the assistant for current fares.", tone: "is-off" };
 
+  // Booked from the chat: back there once it's confirmed, and Neon carries on.
+  const fromChat = status === FLIGHT_STATUS.BOOKED || working ? await chatForCard([b.offerId]) : null;
   return (
     <div className="wrap page narrow trk">
       {working && <meta httpEquiv="refresh" content="3" />}
@@ -75,6 +79,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
             <code>{b.bookingReference}</code>
           </p>
         )}
+        {fromChat && <BackToChat chatId={fromChat} booked={`flight:${b.number}`} what="flight" done={status === FLIGHT_STATUS.BOOKED} />}
       </section>
       <div className="fl-summary">
         <FlightCard f={card} bookable={false} />

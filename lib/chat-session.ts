@@ -69,3 +69,17 @@ export async function listChats(): Promise<ChatSummary[]> {
   });
   return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt.toISOString() }));
 }
+
+/** The current shopper's most recent chat that showed one of these cards (a booking made from the chat). */
+export async function chatForCard(ids: Array<string | null | undefined>): Promise<string | null> {
+  const wanted = [...new Set(ids.filter((x): x is string => !!x && x.length <= 2000))];
+  if (!wanted.length) return null;
+  const { customerId, visitorId, where } = await currentOwner();
+  if (!customerId && !visitorId) return null;
+  const chat = await prisma.assistantChat.findFirst({
+    where: { ...where, OR: wanted.map((id) => ({ uiJson: { contains: JSON.stringify(id) } })) },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true },
+  });
+  return chat?.id ?? null;
+}
