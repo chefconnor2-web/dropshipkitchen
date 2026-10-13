@@ -61,6 +61,10 @@ interface Session {
 
 // Cache of chat → session for this process; the chat row is the source of truth.
 const byChat = processSingleton("browser-sessions", () => new Map<string, Session>());
+// A browser being opened for a chat: steps that arrive at the same time wait for it instead of opening another.
+const opening = processSingleton("browser-opening", () => new Map<string, Promise<Session>>());
+// Each chat's browser steps run one after another (the model may call two browser tools at once).
+const queues = processSingleton("browser-queues", () => new Map<string, Promise<unknown>>());
 
 /** A short-lived live-view address for this session (HMAC token, CONTRACTS.md §3). Server only. */
 export function mintLiveUrl(sessionId: string, ttlSeconds = 600): { url: string; expiresAt: string } {
@@ -85,10 +89,20 @@ export async function chatBrowser(chatId: string, signal?: AbortSignal): Promise
     byChat.set(chatId, s);
     return { session: s, created: false };
   }
-  const created = await call<{ id: string }>("/sessions", undefined, "POST", signal);
-  const session = { id: created.id };
-  await remember(chatId, session);
-  return { session, created: true };
+  const pending = opening.get(chatId);
+  if (pending) return { session: await pending, created: false };
+  const open = (async () => {
+    const created = await call<{ id: string }>("/sessions", undefined, "POST", signal);
+    const session = { id: created.id };
+    await remember(chatId, session);
+    return session;
+  })();
+  opening.set(chatId, open);
+  try {
+    return { session: await open, created: true };
+  } finally {
+    if (opening.get(chatId) === open) opening.delete(chatId);
+  }
 }
 
 /** The chat's browser session id, without opening a browser (null when it has none). */
@@ -136,8 +150,17 @@ async function stepWhenFree<T>(step: () => Promise<T>, signal?: AbortSignal): Pr
   }
 }
 
-/** Runs a browser step for this chat, opening a new browser if the old one closed. */
-export async function inBrowser<T>(chatId: string, step: (id: string) => Promise<T>, signal?: AbortSignal): Promise<{ result: T; session: Session; created: boolean }> {
+/** Runs a browser step for this chat, after any step already running for it, opening a browser if needed. */
+export function inBrowser<T>(chatId: string, step: (id: string) => Promise<T>, signal?: AbortSignal): Promise<{ result: T; session: Session; created: boolean }> {
+  const before = queues.get(chatId) ?? Promise.resolve();
+  const mine = before.catch(() => {}).then(() => inBrowserNow(chatId, step, signal));
+  const tail = mine.catch(() => {});
+  queues.set(chatId, tail);
+  void tail.then(() => queues.get(chatId) === tail && queues.delete(chatId));
+  return mine;
+}
+
+async function inBrowserNow<T>(chatId: string, step: (id: string) => Promise<T>, signal?: AbortSignal): Promise<{ result: T; session: Session; created: boolean }> {
   let { session, created } = await chatBrowser(chatId, signal);
   try {
     return { result: await stepWhenFree(() => step(session.id), signal), session, created };
