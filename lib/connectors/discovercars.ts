@@ -344,10 +344,11 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const phone = str(input.phone, 40) || saved?.phone || hotel?.phone || flight?.phone || "";
       const flightNumber = str(input.flight_number, 20) || flight?.slices[0]?.flights[0] || "";
       if (!name || !email) return { content: "No driver name or email yet: ask the shopper for the driver's name, email and phone, then call this again with them.", isError: true };
-      const details = { name, email, ...(phone ? { phone } : {}), ...(flightNumber ? { flight_number: flightNumber } : {}) };
+      const address = saved?.addressLine1 ? [saved.addressLine1, saved.addressLine2, saved.city, saved.region, saved.postalCode, saved.country].filter(Boolean).join(", ") : "";
+      const details = { name, email, ...(phone ? { phone } : {}), ...(flightNumber ? { flight_number: flightNumber } : {}), ...(address ? { address_if_asked: address } : {}), ...(saved?.bornOn ? { date_of_birth_if_asked: saved.bornOn } : {}) };
       const w = await ctx.waitForShopper({
         kind: "choice",
-        message: `Book with these driver details? ${name} · ${email}${phone ? ` · ${phone}` : ""}${flightNumber ? ` · flight ${flightNumber}` : ""}. Approve & next and Neon fills them in on Discover Cars.`,
+        message: `Book with these driver details? ${name} · ${email}${phone ? ` · ${phone}` : ""}${flightNumber ? ` · flight ${flightNumber}` : ""}${address ? ` · ${address}` : ""}${saved?.bornOn ? ` · born ${saved.bornOn}` : ""}. Approve & next and Neon fills them in on Discover Cars.`,
         browser: null,
       });
       if (w.outcome !== "resumed") return { content: "The shopper didn't approve the driver details, so don't type them. Ask what to change." };

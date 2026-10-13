@@ -2309,3 +2309,4 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .dp-status { font-size: 13.5px; color: #0a7a3d; margin: 0; }
 .dp-save { min-height: 44px; font-size: 15px; }
 .dp-forget { border: 0; background: none; color: #a12a1a; font: 500 13.5px/1 var(--text); padding: 8px 0; cursor: pointer; align-self: center; }
+.dp-test { width: 100%; min-height: 40px; margin-bottom: 12px; border-style: dashed; white-space: normal; text-align: center; line-height: 1.3; }

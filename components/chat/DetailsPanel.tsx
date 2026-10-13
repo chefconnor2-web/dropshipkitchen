@@ -26,6 +26,17 @@ const GROUPS: Array<{ title: string; fields: Field[] }> = [
     ],
   },
   {
+    title: "Address",
+    fields: [
+      { k: "addressLine1", label: "Street address", auto: "address-line1" },
+      { k: "addressLine2", label: "Apartment, suite (optional)", auto: "address-line2" },
+      { k: "city", label: "City", auto: "address-level2" },
+      { k: "region", label: "Province or state", auto: "address-level1" },
+      { k: "postalCode", label: "Postal code", auto: "postal-code" },
+      { k: "country", label: "Country code", placeholder: "CA", auto: "country" },
+    ],
+  },
+  {
     title: "Passport",
     fields: [
       { k: "passportNumber", label: "Passport number", auto: "off" },
@@ -39,11 +50,15 @@ export default function DetailsPanel({ onClose }: { onClose: () => void }) {
   const [p, setP] = useState<TravellerProfileData | null>(null);
   const [status, setStatus] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [testMode, setTestMode] = useState(false);
 
   useEffect(() => {
     fetch("/api/profile", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d: { profile: TravellerProfileData }) => setP(d.profile ?? {}))
+      .then((d: { profile: TravellerProfileData; testMode?: boolean }) => {
+        setP(d.profile ?? {});
+        setTestMode(!!d.testMode);
+      })
       .catch(() => setP({}));
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
@@ -52,7 +67,10 @@ export default function DetailsPanel({ onClose }: { onClose: () => void }) {
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const body = Object.fromEntries(new FormData(e.currentTarget).entries());
+    await put(Object.fromEntries(new FormData(e.currentTarget).entries()));
+  }
+
+  async function put(body: Record<string, unknown>) {
     setSaving(true);
     setStatus("");
     const r = await fetch("/api/profile", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
@@ -81,6 +99,11 @@ export default function DetailsPanel({ onClose }: { onClose: () => void }) {
         </div>
         <div className="tp-body">
           <p className="tp-empty">Saved for your flight, hotel and rental car bookings, so the forms fill themselves and Neon can fill in the car driver form (after you approve). Encrypted. Never your card.</p>
+          {testMode && (
+            <button type="button" className="cx-btn dp-test" disabled={saving} onClick={() => put({ useTestDetails: true })}>
+              🧪 Fill test details (chefconnor2@gmail.com, mock passport and address)
+            </button>
+          )}
           {!p ? (
             <p className="tp-empty">Loading…</p>
           ) : (
