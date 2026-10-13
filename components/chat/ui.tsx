@@ -551,6 +551,14 @@ function EmailDraft({ e }: { e: EmailDraftCard }) {
         <span className="cx-email-from">{e.from ? `From your Gmail (${e.from})` : "From the store, replies come to you"}</span>
       </div>
       <dl className="cx-email-meta">
+        {e.foundAddress && e.foundAddress !== e.to && (
+          <>
+            <dt>Front desk</dt>
+            <dd>
+              {e.foundAddress} <span className="cx-muted">(found{e.foundAt ? ` on ${e.foundAt}` : ""}, not emailed)</span>
+            </dd>
+          </>
+        )}
         <dt>To</dt>
         <dd>{e.to}</dd>
         {e.cc.length > 0 && (
