@@ -114,6 +114,29 @@ const LINK_TOOL: Anthropic.Beta.BetaTool = {
   },
 };
 
+const SAVE_TOOL: Anthropic.Beta.BetaTool = {
+  name: "rental_car_save_booking",
+  description:
+    "Save a booked rental car to the shopper's trip (itinerary and receipts), from their booking confirmation: a screenshot they sent of Discover Cars' confirmation page or email. Copy exactly what it shows; leave a field empty when it isn't shown. Shows a Booked card.",
+  input_schema: {
+    type: "object",
+    properties: {
+      location: { type: "string", description: "The pickup place as you searched it, e.g. 'Miami Airport (MIA)'" },
+      pickup_date: { type: "string", description: "YYYY-MM-DD" },
+      dropoff_date: { type: "string", description: "YYYY-MM-DD" },
+      confirmation: { type: "string", description: "Booking or confirmation number" },
+      supplier: { type: "string", description: "Rental company, e.g. 'Alamo'" },
+      car: { type: "string", description: "e.g. 'Economy · Kia Rio or similar'" },
+      price: { type: "string", description: "Total paid as shown, with currency, e.g. '$123.40 USD'" },
+      pickup_at: { type: "string", description: "YYYY-MM-DDTHH:MM local pickup time, or YYYY-MM-DD" },
+      dropoff_at: { type: "string", description: "YYYY-MM-DDTHH:MM local return time, or YYYY-MM-DD" },
+      pickup_place: { type: "string", description: "Pickup desk or address as shown" },
+      dropoff_place: { type: "string", description: "Return desk or address as shown, if different" },
+    },
+    required: ["location", "pickup_date", "dropoff_date"],
+  },
+};
+
 const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_browse",
@@ -236,7 +259,7 @@ Rental cars (Discover Cars):
 - Be fast: a few calls, several actions each. On extras or insurance screens, click_text "Skip", "No, I'll take the risk" or "Continue" (no paid extras unless asked).
 - When results show, sort them by price (lowest first) on the page (select "Sort by" "Price", or click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
-- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one (Discover Cars emails the voucher), then carry on with the next step.
+- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one and ask for a screenshot of the booking confirmation; when they send it, call rental_car_save_booking with exactly what it shows (it goes on their trip itinerary), then carry on with the next step. If they send a car booking screenshot at any time, do the same.
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`
       : `
@@ -245,9 +268,37 @@ Rental cars:
 - You can't see car prices or availability, so never quote either or promise a car type. Say what to search for and tips (book early, check the fuel and mileage policy, what deposit to expect).
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`,
   get tools() {
-    return [LINK_TOOL, ...(browserConfigured() ? BROWSER_TOOLS : [])];
+    return [LINK_TOOL, SAVE_TOOL, ...(browserConfigured() ? BROWSER_TOOLS : [])];
   },
   async run(tool, input, ctx) {
+    if (tool === "rental_car_save_booking") {
+      const location = str(input.location, 80);
+      const pickup = str(input.pickup_date, 10);
+      const dropoff = str(input.dropoff_date, 10);
+      const DAY = /^\d{4}-\d{2}-\d{2}$/;
+      if (!location || !DAY.test(pickup) || !DAY.test(dropoff)) return { content: "Give the location and the pickup and drop-off dates (YYYY-MM-DD) as you searched them.", isError: true };
+      const when = (v: unknown) => {
+        const t = str(v, 16);
+        return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(t) ? t : undefined;
+      };
+      const opt = (v: unknown, n: number) => str(v, n) || undefined;
+      const booked = {
+        confirmation: opt(input.confirmation, 40),
+        supplier: opt(input.supplier, 60),
+        car: opt(input.car, 80),
+        price: opt(input.price, 40),
+        pickupAt: when(input.pickup_at),
+        dropoffAt: when(input.dropoff_at),
+        pickupPlace: opt(input.pickup_place, 120),
+        dropoffPlace: opt(input.dropoff_place, 120),
+      };
+      // Same place and dates as the search card: it replaces it in the chat and the trip.
+      const last = lastSearch.get(ctx.chatId);
+      const same = last && last.pickup === pickup && last.dropoff === dropoff ? last.location : location;
+      const card: CarRentalCard = { kind: "car", id: carId(same, pickup, dropoff), location: same, pickup, dropoff, url: discoverCarsUrl(), booked };
+      ctx.show("", [card]);
+      return { content: JSON.stringify({ saved: true, booked, note: "Saved to the trip's itinerary and receipts. Tell the shopper in one line what you saved (company, car, pickup time, confirmation), then carry on." }) };
+    }
     if (tool === "rental_car_link") {
       const s = parseCarSearch(input, new Date().toISOString().slice(0, 10));
       if (typeof s === "string") return { content: `Can't make the link: ${s}.`, isError: true };
@@ -490,9 +541,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
               booking_confirmed: confirmed,
               ...(confirmed && last?.number ? { confirmation_number: last.number } : {}),
               how: detected ? "Chit saw the booking go through" : "the shopper tapped I've paid",
-              next: confirmed
-                ? "Tell them the car is booked (with the confirmation number if there is one) and that Discover Cars emails the voucher, then carry on with the trip's next step."
-                : "The booking didn't show up yet (it can take a minute). Tell the shopper you'll treat it as booked once Discover Cars' email arrives, and ask them to say if payment didn't go through. Then carry on.",
+              next: `${confirmed ? "Tell them the car is booked (with the confirmation number if there is one)." : "The booking didn't show up on our side yet (it can take a minute); ask them to say if payment didn't go through."} Then ask them for a screenshot of the booking confirmation (Discover Cars' confirmation page or email: the 📷 Send booking screenshot button on the card) so you can add the exact pickup time, desk and confirmation to their trip. End your turn there. When they send it, read it and call rental_car_save_booking with exactly what it shows, then carry on with the trip's next step.`,
             }),
           };
         }

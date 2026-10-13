@@ -622,6 +622,30 @@ function SupplierCard({ s }: { s: Supplier }) {
 /** A rental car search to run on Discover Cars: where and when, and the button there. */
 function CarCard({ c }: { c: CarRentalCard }) {
   const days = Math.max(1, Math.round((Date.parse(c.dropoff) - Date.parse(c.pickup)) / 86400_000));
+  if (c.booked)
+    return (
+      <div className="cx-car cx-car-booked">
+        <div className="cx-car-kind">✅ Rental car booked</div>
+        <div className="cx-car-where">{c.booked.car || c.location}</div>
+        <div className="cx-muted">
+          {c.booked.supplier ? `${c.booked.supplier} · ` : ""}
+          {c.booked.pickupPlace || c.location}
+        </div>
+        <div className="cx-muted">
+          {shortDate((c.booked.pickupAt || c.pickup).slice(0, 10))}
+          {c.booked.pickupAt && c.booked.pickupAt.length > 10 ? ` ${c.booked.pickupAt.slice(11, 16)}` : ""} – {shortDate((c.booked.dropoffAt || c.dropoff).slice(0, 10))}
+          {c.booked.dropoffAt && c.booked.dropoffAt.length > 10 ? ` ${c.booked.dropoffAt.slice(11, 16)}` : ""}
+        </div>
+        {(c.booked.confirmation || c.booked.price) && (
+          <div className="cx-car-pick-price">
+            {c.booked.confirmation ? `Confirmation ${c.booked.confirmation}` : ""}
+            {c.booked.confirmation && c.booked.price ? " · " : ""}
+            {c.booked.price ?? ""}
+          </div>
+        )}
+        <div className="cx-car-note">Saved to your trip. Discover Cars emails the voucher; bring your licence and the card you paid with.</div>
+      </div>
+    );
   if (c.pay)
     return (
       <div className="cx-car cx-car-pay">
@@ -635,6 +659,9 @@ function CarCard({ c }: { c: CarRentalCard }) {
         <a className="cx-btn cx-btn-primary" href={c.url} target="_blank" rel="noopener noreferrer sponsored">
           Pay on Discover Cars
         </a>
+        <button type="button" className="cx-btn cx-btn-ghost" onClick={() => window.dispatchEvent(new Event("cx:attach"))}>
+          📷 Send booking screenshot
+        </button>
         <div className="cx-car-note">
           {c.pay.step === "payment"
             ? "Opens the checkout Neon filled in, in your own browser. Pay with your saved card or Apple Pay. Neon carries on as soon as it's booked."

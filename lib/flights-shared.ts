@@ -77,6 +77,22 @@ export interface HotelCard {
 }
 
 /** Rental cars: a link to Discover Cars (our affiliate link) for the place and dates; the shopper books there. */
+export interface CarBooking {
+  confirmation?: string;
+  /** Rental company, e.g. "Alamo". */
+  supplier?: string;
+  /** e.g. "Economy · Kia Rio or similar". */
+  car?: string;
+  /** As shown, e.g. "$123.40 USD". */
+  price?: string;
+  /** Local "YYYY-MM-DDTHH:MM" (or a date). */
+  pickupAt?: string;
+  dropoffAt?: string;
+  /** Desk or address, e.g. "Miami Int'l Airport, Rental Car Center". */
+  pickupPlace?: string;
+  dropoffPlace?: string;
+}
+
 export interface CarRentalCard {
   kind: "car";
   id: string;
@@ -91,6 +107,8 @@ export interface CarRentalCard {
   pick?: { car: string; price: string; supplier?: string; why?: string };
   /** The checkout Neon filled in, ready to pay in the shopper's own browser ("Pay on Discover Cars"). */
   pay?: { step: "payment" | "driver" };
+  /** Booked: what the shopper's confirmation (their screenshot) shows, for the itinerary and receipts. */
+  booked?: CarBooking;
   group?: string;
 }
 
