@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { startFlightCheckout } from "@/lib/flight-booking";
 import { getMemberId } from "@/lib/session";
+import { saveFromForm } from "@/lib/traveller";
 
 export interface BookState {
   error?: string;
@@ -22,6 +23,7 @@ export async function bookFlightAction(prev: BookState, form: FormData): Promise
     const r = await startFlightCheckout({ offerId, shownCents: prev.shownCents, form, customerId: await getMemberId() });
     if (r.url) url = r.url;
     else return { error: r.error, shownCents: r.newPriceCents ?? prev.shownCents, values, n: prev.n + 1 };
+    await saveFromForm(form, "flight");
   } catch (e) {
     console.error("[flights] checkout failed:", e);
     return { error: "Something went wrong starting the payment. Please try again.", shownCents: prev.shownCents, values, n: prev.n + 1 };

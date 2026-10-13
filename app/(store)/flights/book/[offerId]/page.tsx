@@ -4,7 +4,7 @@ import { toCard } from "@/lib/flights";
 import { passengerSlots } from "@/lib/flight-booking";
 import { FlightCard } from "@/components/chat/ui";
 import BookForm from "./BookForm";
-import { travellerPrefill } from "@/lib/traveller";
+import { flightPrefill } from "@/lib/traveller";
 import { PrefillNote } from "@/components/PrefillNote";
 import { prisma } from "@/lib/db";
 import { tripTitle } from "@/lib/shared-trips";
@@ -43,8 +43,7 @@ export default async function BookFlightPage({ params, searchParams }: { params:
 
   const card = toCard(offer);
   const slots = passengerSlots(offer);
-  const me = await travellerPrefill();
-  const prefill = me ? { given_0: me.firstName, family_0: me.lastName, email: me.email, phone: me.phone } : undefined;
+  const { values: prefill, from } = await flightPrefill();
   return (
     <div className="wrap page narrow fl-book">
       <p className="eyebrow">{duffelTestMode() ? "Test mode · no real ticket is issued" : "Secure booking"}</p>
@@ -57,7 +56,7 @@ export default async function BookFlightPage({ params, searchParams }: { params:
           {card.changeable === true ? "Changes allowed (the airline may charge a fee)." : card.changeable === false ? "No changes allowed." : ""}
         </p>
       </div>
-      <PrefillNote signedIn={!!me} next={`/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`} />
+      <PrefillNote from={from} next={`/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`} />
       <BookForm prefill={prefill} offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} tripSlug={trip?.slug} />
     </div>
   );

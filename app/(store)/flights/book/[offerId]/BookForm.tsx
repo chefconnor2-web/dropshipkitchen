@@ -111,6 +111,10 @@ export default function BookForm({
           </label>
         </div>
       </fieldset>
+      <label className="fl-save">
+        <input type="checkbox" name="save_details" defaultChecked={(state.values ? state.values.save_details === "on" : true)} />
+        <span>Save my details for next time (names, date of birth, passport and contact, encrypted). Never your card.</span>
+      </label>
       {state.error && (
         <p className="notice err" role="alert">
           {state.error}

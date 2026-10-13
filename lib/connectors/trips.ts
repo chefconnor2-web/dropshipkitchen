@@ -13,6 +13,7 @@ import type { EmailDraftCard, FlightCard, HotelCard } from "@/lib/flights-shared
 import type { Connector, ConnectorContext, ToolResult } from "./types";
 import { ownedBy } from "@/lib/chat-session";
 import { tripsFor } from "@/lib/trips";
+import { saveProfile } from "@/lib/traveller";
 
 const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[a-z]{2,}$/i;
 export const validEmail = (s: unknown): s is string => typeof s === "string" && s.length <= 254 && EMAIL.test(s.trim());
@@ -20,6 +21,26 @@ export const validEmail = (s: unknown): s is string => typeof s === "string" && 
 const MAX_SENDS = 5;
 
 const TOOLS: Anthropic.Beta.BetaTool[] = [
+  {
+    name: "save_my_details",
+    description:
+      "Save the shopper's own traveller details they gave you in the chat (My details), so flight, hotel and rental car forms fill themselves next time. Only what they told you about themselves; an empty string clears a field. Never card details.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", enum: ["mr", "ms", "mrs", "miss", "dr", ""] },
+        gender: { type: "string", enum: ["m", "f", ""] },
+        givenName: { type: "string", description: "First and middle names" },
+        familyName: { type: "string" },
+        bornOn: { type: "string", description: "YYYY-MM-DD" },
+        email: { type: "string" },
+        phone: { type: "string" },
+        passportNumber: { type: "string" },
+        passportCountry: { type: "string", description: "2-letter country code" },
+        passportExpiry: { type: "string", description: "YYYY-MM-DD" },
+      },
+    },
+  },
   {
     name: "my_trips",
     description:
@@ -123,6 +144,13 @@ export async function bookingsForChat(chatId: string) {
 }
 
 async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorContext): Promise<ToolResult> {
+  if (tool === "save_my_details") {
+    const owner = await ownerOf(ctx.chatId);
+    const saved = await saveProfile(owner, input);
+    if (!saved) return { content: "Couldn't save: open the chat in their browser first.", isError: true };
+    const keys = Object.keys(saved);
+    return { content: JSON.stringify({ saved: keys, note: "Saved in My details (the sidebar). Booking forms fill themselves from it; card details are never saved. Confirm in one line without repeating passport numbers." }) };
+  }
   if (tool === "my_trips") {
     const owner = await ownerOf(ctx.chatId);
     const trips = await tripsFor({ customerId: owner.customerId, where: ownedBy(owner.customerId, owner.visitorId) });
@@ -221,6 +249,7 @@ Trips and email:
   7. Last, once the package is on its way to the hotel, the email: find the hotel's front desk email on the hotel's own website (web search) and call send_email with a short, polite note from them: their name, booking confirmation, flight number and arrival time, that a package from Amazon is due around <date>, and a request to hold it at the front desk until they check in. It's sent only after they approve it in the chat.
 - After any hotel is booked, even without a package, offer once: you can shop anything they need on Amazon or from wholesalers and have it shipped to their accommodation, waiting for them when they arrive.
 - If the shopper asks you to send it to another address instead (say, their own, to test), still find the front desk's address first, then call send_email with to = their address, found_address = the front desk's and found_at = the site you found it on; the draft shows both. Mention the front desk address in your reply too.
+- When the shopper tells you their own details to keep (name, birth date, email, phone, passport) or asks you to save their info, call save_my_details. It never holds card details: payment is always typed at payment.
 - When they ask about their trips, itinerary, receipts or confirmation codes, call my_trips and answer from it (in a short, scannable list), and mention that it's all in the Trips menu (✈️ at the top of the chat).
 - Never invent an email address, a booking, a time or a delivery date: use only what the tools returned.`,
   tools: TOOLS,

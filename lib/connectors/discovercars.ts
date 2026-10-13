@@ -18,6 +18,8 @@ import type { BrowserCard, CarRentalCard } from "@/lib/flights-shared";
 import { BrowserError, browserApi, browserConfigured, chatBrowserId, inBrowser, isBusy, type PageState } from "@/lib/browser";
 import type { Connector, ConnectorContext, ToolResult } from "./types";
 import { bookingsForChat } from "./trips";
+import { getProfile } from "@/lib/traveller";
+import { prisma } from "@/lib/db";
 import { processSingleton } from "@/lib/singleton";
 import type { PendingKind } from "@/lib/run-shared";
 
@@ -195,9 +197,9 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Driver's full name; empty to use the name on their trip bookings" },
-        email: { type: "string", description: "Empty to use the email on their trip bookings" },
-        phone: { type: "string", description: "Empty to use the phone on their trip bookings" },
+        name: { type: "string", description: "Driver's full name; empty to use their saved details (My details), else their trip bookings" },
+        email: { type: "string", description: "Empty to use their saved details, else their trip bookings" },
+        phone: { type: "string", description: "Empty to use their saved details, else their trip bookings" },
         flight_number: { type: "string", description: "Their arrival flight number, if the form asks, e.g. 'AC 1630'" },
       },
     },
@@ -333,9 +335,13 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const b = await bookingsForChat(ctx.chatId);
       const hotel = b.hotels[0];
       const flight = b.flights[0];
-      const name = str(input.name, 80) || hotel?.guest || flight?.passengers[0] || "";
-      const email = str(input.email, 120) || hotel?.email || flight?.email || "";
-      const phone = str(input.phone, 40) || hotel?.phone || flight?.phone || "";
+      // What they told you, then their saved details (My details), then their trip bookings.
+      const chat = await prisma.assistantChat.findUnique({ where: { id: ctx.chatId }, select: { customerId: true, visitorId: true } });
+      const saved = chat ? await getProfile({ customerId: chat.customerId, visitorId: chat.visitorId }) : null;
+      const savedName = [saved?.givenName, saved?.familyName].filter(Boolean).join(" ");
+      const name = str(input.name, 80) || savedName || hotel?.guest || flight?.passengers[0] || "";
+      const email = str(input.email, 120) || saved?.email || hotel?.email || flight?.email || "";
+      const phone = str(input.phone, 40) || saved?.phone || hotel?.phone || flight?.phone || "";
       const flightNumber = str(input.flight_number, 20) || flight?.slices[0]?.flights[0] || "";
       if (!name || !email) return { content: "No driver name or email yet: ask the shopper for the driver's name, email and phone, then call this again with them.", isError: true };
       const details = { name, email, ...(phone ? { phone } : {}), ...(flightNumber ? { flight_number: flightNumber } : {}) };

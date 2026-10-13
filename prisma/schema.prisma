@@ -791,3 +791,14 @@ model GmailConnection {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+/// A shopper's saved traveller details (encrypted JSON), so every booking form fills itself: flights, hotels and
+/// the rental car driver. One per signed-in customer, else per browser (visitor id, like chats). Never card details.
+model TravellerProfile {
+  id         String   @id @default(cuid())
+  customerId String?  @unique
+  visitorId  String?  @unique
+  dataEnc    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
