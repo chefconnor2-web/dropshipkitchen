@@ -154,7 +154,9 @@ export async function inBrowser<T>(chatId: string, step: (id: string) => Promise
 const BATCH_MS = 5 * 60_000;
 
 export const browserApi = {
-  act: (id: string, actions: unknown[], signal?: AbortSignal) => call<PageState>(`/sessions/${id}/act`, { actions }, "POST", signal),
+  /** Runs actions in order; smart form actions (fill / select / date / click_text) each report what they did. */
+  act: (id: string, actions: unknown[], signal?: AbortSignal) =>
+    call<PageState & { results?: Array<{ type: string; field?: string; text?: string; ok: boolean; did?: string; why?: string }> }>(`/sessions/${id}/act`, { actions }, "POST", signal),
   state: (id: string, signal?: AbortSignal) => call<PageState>(`/sessions/${id}/state`, undefined, "GET", signal),
   search: (id: string, domain: string, query: string, signal?: AbortSignal) =>
     call<PageState & { results?: AmazonResult[] }>(`/sessions/${id}/amazon/search`, { domain, query }, "POST", signal),

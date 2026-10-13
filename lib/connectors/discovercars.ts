@@ -127,7 +127,7 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_act",
     description:
-      "Work Discover Cars' page in the live browser: actions run in order, then you get a screenshot to check the result. tap x/y are pixels on the latest screenshot (a click). Use it to fill the search form (tap the pick-up field, type the place, tap the right suggestion; set the dates and times in the calendar; tap Search), then read and sort the results. Only Discover Cars pages open. Type driver details only exactly as rental_car_driver_details returned them after the shopper approved them, and never type or look for card details.",
+      "Work Discover Cars' page in the live browser: actions run in order (up to 8), then one screenshot. Fastest first: smart actions find the field themselves by its label and report what they did: fill {field, value, choose (pick the matching suggestion)}, select {field, value} (dropdowns; times in any format like 10:30), date {field?, value YYYY-MM-DD} (opens the calendar and pages to the day; omit field when a calendar is already open), click_text {text} (a button or link by its words, e.g. 'Sort by price' or 'View deal'). Put several in one call. Only when one fails: tap x/y (pixels on the latest screenshot), type, key, scroll. Only Discover Cars pages open. Type driver details only exactly as rental_car_driver_details returned them after the shopper approved them, and never type or look for card details.",
     input_schema: {
       type: "object",
       properties: {
@@ -137,10 +137,13 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
           items: {
             type: "object",
             properties: {
-              type: { type: "string", enum: ["tap", "type", "key", "scroll", "back", "wait"] },
+              type: { type: "string", enum: ["fill", "select", "date", "click_text", "tap", "type", "key", "scroll", "back", "wait"] },
+              field: { type: "string", description: "For fill/select/date: the field as the page labels it, e.g. 'pick-up location', 'drop-off time'" },
+              value: { type: "string", description: "For fill/select/date" },
+              choose: { type: "boolean", description: "For fill: pick the matching suggestion after typing" },
               x: { type: "number" },
               y: { type: "number" },
-              text: { type: "string", description: "For type: a place name or a date/time as the field expects" },
+              text: { type: "string", description: "For type: the text to type. For click_text: the button or link's words" },
               key: { type: "string", enum: ["Enter", "Backspace", "Tab", "Escape", "ArrowDown", "ArrowUp"] },
               dy: { type: "number", description: "For scroll: pixels down (negative scrolls up)" },
               ms: { type: "number" },
@@ -214,8 +217,8 @@ export const discoverCarsConnector: Connector = {
     browserConfigured()
       ? `
 Rental cars (Discover Cars):
-- For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). Then fill Discover Cars' search form with rental_car_act, checking each screenshot: tap the pick-up location field, type the place, tap the matching suggestion (the airport when picking up at one); open the dates and pick the pick-up and drop-off days (and times, if shown); tap Search. Keep each call to a few actions and look at the result before the next.
-- When results show, sort them by price (lowest first) on the page and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
+- For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). It fills in Discover Cars' whole search and submits it by itself, and tells you what (if anything) it couldn't fill. Fix only that, with rental_car_act's smart actions (fill / select / date / click_text, several per call); tap by coordinates only as a last resort. Be quick: as few calls as possible.
+- When results show, sort them by price (lowest first) on the page (click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
 - "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (the driver's name, email and phone from their trip bookings unless they gave others), and once approved type exactly those into the driver form. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they enter their card and tap Book themselves. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the page shows one (Discover Cars emails the voucher).
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
@@ -288,7 +291,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const dropoffTime = TIME.test(str(input.dropoff_time, 5)) ? str(input.dropoff_time, 5) : "";
       ctx.progress("Opening Discover Cars…");
       const url = discoverCarsUrl({ countryCode: s.countryCode, city: s.city, airport: s.airport });
-      let { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "goto", url }, { type: "wait", ms: 1500 }], signal), signal);
+      let { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "goto", url }, { type: "wait", ms: 600 }], signal), signal);
       ctx.show("Live browser", [liveCard(session.id)]);
       if (p.needsShopper) {
         const after = await handOver(session.id, "captcha", "Discover Cars wants to check you're not a robot. Get past it, then tap Approve & next.");
@@ -296,20 +299,53 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         p = after;
       }
       const search = { location: s.location, pickup: `${s.pickup}${pickupTime ? ` ${pickupTime}` : ""}`, dropoff: `${s.dropoff}${dropoffTime ? ` ${dropoffTime}` : ""}` };
+      // Fill the whole search right here (the page finds each field itself): no screenshot round trips.
+      ctx.progress("Filling in the search…");
+      const run = async (actions: unknown[]) => (await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal), signal)).result;
+      const steps: Array<{ type: string; field?: string; text?: string; ok: boolean; did?: string; why?: string }> = [];
+      const where = s.airport ? `${s.city || s.location} ${s.airport}` : s.location;
+      // A cookie banner may cover the form: accept it if there is one (no harm when there isn't).
+      await run([{ type: "click_text", text: "Accept all" }]).catch(() => null);
+      p = await run([
+        { type: "fill", field: "pick-up location", value: where, choose: true },
+        { type: "date", field: "pick-up date", value: s.pickup },
+      ]);
+      steps.push(...(p.results ?? []));
+      // Range calendars stay open for the drop-off day: try the field, then the open calendar.
+      p = await run([{ type: "date", field: "drop-off date", value: s.dropoff }]);
+      let drop = p.results?.[0];
+      if (drop && !drop.ok) {
+        p = await run([{ type: "date", value: s.dropoff }]);
+        drop = p.results?.[0] ?? drop;
+      }
+      if (drop) steps.push({ ...drop, field: "drop-off date" });
+      const times = [
+        ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
+        ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
+      ];
+      if (times.length) {
+        p = await run(times);
+        steps.push(...(p.results ?? []));
+      }
+      p = await run([{ type: "click_text", text: "Search" }, { type: "wait", ms: 1500 }]);
+      steps.push(...(p.results ?? []));
+      const failed = steps.filter((x) => !x.ok);
       return shot(
         p,
-        { site: SITE, search },
-        "Discover Cars is open in the live browser. Fill its search form with rental_car_act (a few actions per call, checking each screenshot): the pick-up location, then the dates and times, then Search. Dismiss a cookie banner first if one covers the form.",
+        { site: SITE, search, filled: steps.map((x) => `${x.ok ? "✓" : "✗"} ${x.field ?? x.text ?? x.type}: ${x.ok ? x.did : x.why}`) },
+        failed.length
+          ? `Most of the search was filled in automatically. Fix only what failed (${failed.map((x) => x.field ?? x.text).join(", ")}) with rental_car_act: smart actions first (fill / select / date / click_text, naming the field as the page labels it), taps only as a last resort; then click_text "Search".`
+          : "The search is filled in and submitted. If the screenshot shows results, sort by price and pick; if it still shows the form, check it and click_text the search button.",
       );
     }
     if (tool === "rental_car_act") {
-      const allowed = new Set(["tap", "type", "key", "scroll", "back", "wait"]);
+      const allowed = new Set(["fill", "select", "date", "click_text", "tap", "type", "key", "scroll", "back", "wait"]);
       const actions = (Array.isArray(input.actions) ? input.actions : []).slice(0, 8).filter((a) => allowed.has(String((a as { type?: unknown })?.type)));
       if (!actions.length) return { content: "No actions given.", isError: true };
       ctx.progress("Filling in Discover Cars…");
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal), signal);
       ctx.show("Live browser", [liveCard(session.id)]);
-      return shot(p, { done: actions.length }, undefined, ctx.chatId);
+      return shot(p, { done: actions.length, ...(p.results?.length ? { results: p.results } : {}) }, undefined, ctx.chatId);
     }
     if (tool === "rental_car_hand_over") {
       const sessionId = await chatBrowserId(ctx.chatId);
