@@ -241,6 +241,20 @@ test("on release, viewers hear control ended before dropped input is answered", 
   c.ws.close();
 });
 
+test("add-many runs in parallel helper tabs, reports every item, and the helpers close", async () => {
+  const c = await client(sid);
+  const r = await api(`/sessions/${sid}/amazon/add-many`, { domain: "amazon.com", items: [{ asin: "B000000001" }, { asin: "B000000002", quantity: 2 }, { asin: "B000000003" }, { asin: "B000000004" }, { asin: "bad" }] });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.items.length, 4, "invalid ASINs are dropped, the rest all get a result");
+  assert.deepEqual(r.body.items.map((i) => i.asin), ["B000000001", "B000000002", "B000000003", "B000000004"]);
+  assert.ok(r.body.items.every((i) => typeof i.added === "boolean"));
+  const tabs = c.msgs.filter((m) => m.t === "tabs");
+  assert.ok(tabs.some((m) => m.working === 3), "three tabs at once (BATCH_TABS default)");
+  assert.equal(tabs.at(-1).working, 0, "helpers closed when done");
+  assert.equal((await api(`/sessions/${sid}/amazon/add-many`, { domain: "amazon.com", items: [{ asin: "x" }] })).status, 400);
+  c.ws.close();
+});
+
 test("pages outside Amazon and private addresses are blocked", async () => {
   const r = await api(`/sessions/${sid}/act`, { actions: [{ type: "goto", url: "https://example.com/" }] });
   assert.equal(r.status, 400);

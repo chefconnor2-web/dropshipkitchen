@@ -85,6 +85,8 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   const [doneError, setDoneError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [vv, setVv] = useState<{ h: number; top: number } | null>(null);
+  /** Neon is working several products in parallel tabs of this browser. */
+  const [tabs, setTabs] = useState<{ working: number; done: number; total: number } | null>(null);
 
   const releasedByServer = useRef(false);
   const sentSize = useRef<Size | null>(null);
@@ -157,6 +159,7 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
           setNeeds(typeof m.needs === "string" ? m.needs : null);
         } else if (m.t === "frame-meta" && typeof m.w === "number" && typeof m.h === "number") meta.current = { w: m.w, h: m.h };
         else if (m.t === "focus") setEditing(!!m.editing);
+        else if (m.t === "tabs" && typeof m.working === "number") setTabs(m.working > 0 ? { working: m.working, done: Number(m.done) || 0, total: Number(m.total) || 0 } : null);
         else if (m.t === "control" && m.on === false) {
           // The server gave control back to Neon (the step was resumed), or another screen took over.
           if (m.by === "server") releasedByServer.current = true;
@@ -425,6 +428,11 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
       <div className="cx-browser-bar">
         <span className={`cx-browser-dot${state.s === "live" ? " is-live" : ""}`} aria-hidden />
         <span className="cx-browser-host">{host}</span>
+        {tabs && (
+          <span className="cx-browser-tabs" aria-live="polite">
+            {tabs.working} tabs · {tabs.done} of {tabs.total} done
+          </span>
+        )}
         {!ended && mode !== "required" && (
           <button type="button" ref={takeBtn} className={`cx-browser-take${expanded ? " is-on" : ""}`} onClick={() => (expanded ? handBack() : enter("voluntary"))}>
             {expanded ? "Hand back to Neon" : mine ? "Open" : "Take over"}
