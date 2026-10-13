@@ -487,6 +487,25 @@ export default function Chat({
     return () => window.removeEventListener("cx:send", onSend);
   }, []);
 
+  // Back from a booking page (/c/<id>?booked=flight:FL-123): tell Neon once, so it carries on with the next step.
+  useEffect(() => {
+    if (!chatId || loading || busy || !configured) return;
+    const params = new URLSearchParams(window.location.search);
+    const booked = params.get("booked");
+    if (!booked) return;
+    params.delete("booked");
+    const q = params.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${q ? `?${q}` : ""}`);
+    const m = /^(flight|hotel):([A-Za-z0-9-]{1,40})$/.exec(booked);
+    if (!m) return;
+    const key = `cx-booked:${chatId}:${booked}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
+    } catch {}
+    void sendRef.current(`✅ I booked the ${m[1] === "flight" ? "flight" : "hotel"} (${m[2]}). Carry on with the next step.`);
+  }, [chatId, loading, busy, configured]);
+
   /** Sends one message; resolves with the reply text (for voice mode), or null if it didn't finish. */
   async function send(text: string, opts: { voice?: boolean; editIndex?: number; images?: string[] } = {}): Promise<string | null> {
     const msg = text.trim();
