@@ -25,6 +25,8 @@ export interface ConnectorContext {
     kind: PendingKind;
     message: string;
     browser: { sessionId: string; cardId: string } | null;
+    /** Resolves when the step is done without the shopper tapping anything (e.g. a payment detected): resumes it. */
+    until?: Promise<unknown>;
   }) => Promise<{ outcome: "resumed" | "cancelled" | "expired"; stepId: string }>;
 }
 

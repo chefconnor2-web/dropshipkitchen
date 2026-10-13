@@ -622,6 +622,26 @@ function SupplierCard({ s }: { s: Supplier }) {
 /** A rental car search to run on Discover Cars: where and when, and the button there. */
 function CarCard({ c }: { c: CarRentalCard }) {
   const days = Math.max(1, Math.round((Date.parse(c.dropoff) - Date.parse(c.pickup)) / 86400_000));
+  if (c.pay)
+    return (
+      <div className="cx-car cx-car-pay">
+        <div className="cx-car-kind">Ready to pay</div>
+        <div className="cx-car-where">{c.location}</div>
+        {c.pickup && c.dropoff && (
+          <div className="cx-muted">
+            {shortDate(c.pickup)} – {shortDate(c.dropoff)} · {days} day{days === 1 ? "" : "s"}
+          </div>
+        )}
+        <a className="cx-btn cx-btn-primary" href={c.url} target="_blank" rel="noopener noreferrer sponsored">
+          Pay on Discover Cars
+        </a>
+        <div className="cx-car-note">
+          {c.pay.step === "payment"
+            ? "Opens the checkout Neon filled in, in your own browser. Pay with your saved card or Apple Pay. Neon carries on as soon as it's booked."
+            : "Opens your booking in your own browser at the driver step: check your details, continue, and pay with your saved card or Apple Pay. Neon carries on as soon as it's booked."}
+        </div>
+      </div>
+    );
   return (
     <div className="cx-car">
       <div className="cx-car-kind">Rental car</div>
@@ -652,7 +672,7 @@ function CarCard({ c }: { c: CarRentalCard }) {
       </a>
       <div className="cx-car-note">
         {c.pick
-          ? "Book it for me: Neon opens this car and fills in the driver details you approve, then you enter your card and tap Book. Neon never sees your card."
+          ? "Book it for me: Neon opens this car and fills in the driver details you approve, then you pay in your own browser with your saved card or Apple Pay. Neon never sees your card."
           : c.filled
             ? "Neon filled in your search. Pick your car, then enter your details, pay and book on Discover Cars."
             : "Compares cars from rental companies on Discover Cars. You book and pay there."}

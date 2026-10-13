@@ -89,6 +89,8 @@ export interface CarRentalCard {
   filled?: boolean;
   /** Neon's pick from the results: the most economical sensible car, as Discover Cars showed it. */
   pick?: { car: string; price: string; supplier?: string; why?: string };
+  /** The checkout Neon filled in, ready to pay in the shopper's own browser ("Pay on Discover Cars"). */
+  pay?: { step: "payment" | "driver" };
   group?: string;
 }
 
