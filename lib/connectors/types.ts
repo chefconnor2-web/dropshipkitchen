@@ -32,6 +32,8 @@ export interface ToolResult {
   /** Text, or text plus images (e.g. a screenshot for the model to look at). */
   content: string | Array<Anthropic.Beta.BetaTextBlockParam | Anthropic.Beta.BetaImageBlockParam>;
   isError?: boolean;
+  /** AI spent inside the tool (e.g. a vision helper), in micros: counts toward the turn's cost. */
+  micros?: number;
 }
 
 export interface Connector {

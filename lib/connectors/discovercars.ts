@@ -22,6 +22,7 @@ import { getProfile } from "@/lib/traveller";
 import { chatShown } from "@/lib/trips";
 import { prisma } from "@/lib/db";
 import { processSingleton } from "@/lib/singleton";
+import { visionAgent, type VisionResult } from "@/lib/vision-agent";
 import type { PendingKind } from "@/lib/run-shared";
 
 const str = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -157,6 +158,16 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
     },
   },
   {
+    name: "rental_car_vision",
+    description:
+      "Hand one goal on the live Discover Cars page to a fast vision helper that looks at the screen and taps, types and scrolls by itself until it's done (up to ~10 looks), e.g. 'Set the drop-off date to 2026-10-26 and time 10:00, then press Search' or 'Sort the cars by lowest price'. Use it for calendars, time pickers and anything rental_car_act's smart actions missed. Never for driver details or payment. Returns the final screenshot and what it did.",
+    input_schema: {
+      type: "object",
+      properties: { goal: { type: "string", description: "One concrete goal with the exact dates, times and buttons" } },
+      required: ["goal"],
+    },
+  },
+  {
     name: "rental_car_hand_over",
     description:
       "Hand the live browser to the shopper on Discover Cars for something only they can do: a robot check, a choice only they can make (which car), or payment (they enter their card and tap Book themselves; you never see that page). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now (after payment: only where it went, plus a screenshot once it has left the payment page).",
@@ -218,7 +229,7 @@ export const discoverCarsConnector: Connector = {
     browserConfigured()
       ? `
 Rental cars (Discover Cars):
-- For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). It fills in Discover Cars' whole search and submits it by itself, and tells you what (if anything) it couldn't fill. Call it on its own (no other browser tool in the same reply) and wait for its result. Fix only that, with rental_car_act's smart actions (fill / select / date / click_text, several per call); tap by coordinates only as a last resort. Be quick: as few calls as possible.
+- For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). It fills in Discover Cars' whole search and submits it by itself, and tells you what (if anything) it couldn't fill. Call it on its own (no other browser tool in the same reply) and wait for its result. When a quick fill misses a date or time it runs a vision helper itself. For anything still wrong, or to sort by price / open a deal, give rental_car_vision one concrete goal (it looks and taps on its own), or use rental_car_act's smart actions when you know the exact field. Be quick: as few calls as possible.
 - Be fast: a few calls, several actions each. On extras or insurance screens, click_text "Skip", "No, I'll take the risk" or "Continue" (no paid extras unless asked).
 - When results show, sort them by price (lowest first) on the page (select "Sort by" "Price", or click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
@@ -260,7 +271,7 @@ const liveCard = (session: string, handoff?: string): BrowserCard => ({ kind: "b
 // The payment page each chat handed to the shopper: never screenshotted for the model while it's still showing.
 const paymentPages = processSingleton("discovercars-payment-pages", () => new Map<string, string>());
 
-function shot(p: PageState, facts: Record<string, unknown>, note?: string, chatId?: string): ToolResult {
+function shot(p: PageState, facts: Record<string, unknown>, note?: string, chatId?: string, micros?: number): ToolResult {
   const paying = chatId ? paymentPages.get(chatId) : undefined;
   if (paying && p.url !== paying && chatId) paymentPages.delete(chatId);
   const hidden = !!paying && p.url === paying;
@@ -270,8 +281,9 @@ function shot(p: PageState, facts: Record<string, unknown>, note?: string, chatI
     p.needsShopper ? "The page shows a robot check: call rental_car_hand_over with reason captcha and a one-line message." : "",
   ].filter(Boolean);
   const text = JSON.stringify({ ...facts, page: { url: p.url, title: p.title }, ...(notes.length ? { important: notes.join(" ") } : {}) });
-  if (!p.screenshot || hidden) return { content: text };
-  return { content: [{ type: "text", text }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: p.screenshot } }] };
+  const spent = micros ? { micros } : {};
+  if (!p.screenshot || hidden) return { content: text, ...spent };
+  return { content: [{ type: "text", text }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: p.screenshot } }], ...spent };
 }
 
 const STOPPED = "The shopper didn't finish that step in time, so you stopped waiting. End your turn: tell them in one line that you'll carry on when they say so.";
@@ -348,27 +360,55 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       let drop = (await run([{ type: "date", field: "drop-off date", value: s.dropoff }])).results?.[0];
       if (drop && !drop.ok) drop = (await run([{ type: "date", value: s.dropoff }])).results?.[0] ?? drop;
       if (drop) steps.push({ ...drop, field: "drop-off date" });
-      p = await run(
-        [
-          ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
-          ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
-          { type: "click_text", text: "Search" },
-          { type: "wait", ms: 1200 },
-        ],
-        false,
-      );
-      steps.push(...(p.results ?? []));
-      const failed = steps.filter((x) => !x.ok);
+      const times = [
+        ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
+        ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
+      ];
+      if (times.length) steps.push(...((await run(times)).results ?? []));
+      // Search only once everything is set; otherwise the vision helper finishes the form and searches.
+      const missed = steps.some((x) => !x.ok);
+      p = await run(missed ? [] : [{ type: "click_text", text: "Search" }, { type: "wait", ms: 1200 }], false);
+      if (!missed) steps.push(...(p.results ?? []));
+      let failed = steps.filter((x) => !x.ok);
+      // Dates or times the quick fill missed: the vision helper looks at the page and taps them in itself.
+      let vision: VisionResult | null = null;
+      if (failed.length && !p.needsShopper) {
+        ctx.progress("Looking at the page to set the dates…");
+        vision = await visionAgent(
+          ctx.chatId,
+          `On Discover Cars' search form: pick-up location ${where} (choose the airport suggestion), pick-up ${search.pickup}, drop-off ${search.dropoff} (same location). Fix only what isn't already set (the quick fill missed: ${failed.map((x) => x.field ?? x.text).join(", ")}), then press the Search button. Done when the page lists cars with prices.`,
+          { signal, start: p, progress: ctx.progress },
+        );
+        p = vision.page;
+        if (vision.ok) failed = [];
+      }
       const fieldsOnPage = failed.find((x) => x.fields?.length)?.fields;
       return shot(
         p,
-        { site: SITE, search, filled: steps.map((x) => `${x.ok ? "✓" : "✗"} ${x.field ?? x.text ?? x.type}: ${x.ok ? x.did : x.why}`), ...(fieldsOnPage ? { fields_on_page: fieldsOnPage } : {}) },
-        failed.length
+        {
+          site: SITE,
+          search,
+          filled: steps.map((x) => `${x.ok ? "✓" : "✗"} ${x.field ?? x.text ?? x.type}: ${x.ok ? x.did : x.why}`),
+          ...(vision ? { vision_helper: { ok: vision.ok, looks: vision.steps, log: vision.log, ...(vision.why ? { why: vision.why } : {}) } } : {}),
+          ...(fieldsOnPage && failed.length ? { fields_on_page: fieldsOnPage } : {}),
+        },
+        vision?.ok
+          ? "The vision helper set what the quick fill missed and submitted the search. If the screenshot shows cars, sort by price (rental_car_vision or click_text) and pick the cheapest."
+          : failed.length
           ? failed.some((x) => /date|time/i.test(String(x.field ?? "")))
-            ? `The dates or times didn't fill (${failed.map((x) => x.field ?? x.text).join(", ")}). Don't tap through the calendar yourself: call rental_car_hand_over once with reason choice and the message "Set ${search.pickup} to ${search.dropoff} (with the times), tap Search, then Approve & next." Then carry on from the results.`
+            ? `The dates or times didn't fill (${failed.map((x) => x.field ?? x.text).join(", ")}). The vision helper couldn't set them either${vision?.why ? ` (${vision.why})` : ""}. Don't tap through the calendar yourself: call rental_car_hand_over once with reason choice and the message "Set ${search.pickup} to ${search.dropoff} (with the times), tap Search, then Approve & next." Then carry on from the results.`
             : `Most of the search was filled in automatically. Fix only what failed (${failed.map((x) => x.field ?? x.text).join(", ")}) with rental_car_act: smart actions first (fill / select / date / click_text, naming the field as fields_on_page labels it), taps only as a last resort; then click_text "Search".`
           : "The search is filled in and submitted. If the screenshot shows results, sort by price and pick; if it still shows the form, check it and click_text the search button.",
+        ctx.chatId,
+        vision?.micros,
       );
+    }
+    if (tool === "rental_car_vision") {
+      const goal = str(input.goal, 400);
+      if (!goal) return { content: "No goal given.", isError: true };
+      ctx.progress("Working the page…");
+      const v = await visionAgent(ctx.chatId, goal, { signal, progress: ctx.progress });
+      return shot(v.page, { ok: v.ok, looks: v.steps, log: v.log, ...(v.why ? { why: v.why } : {}) }, v.ok ? undefined : "The helper couldn't finish: fix the rest with rental_car_act, or hand over if it's a robot check.", ctx.chatId, v.micros);
     }
     if (tool === "rental_car_act") {
       const allowed = new Set(["fill", "select", "date", "click_text", "tap", "type", "key", "scroll", "back", "wait"]);
