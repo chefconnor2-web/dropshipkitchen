@@ -212,7 +212,7 @@ Trips and email:
 - When the shopper wants a package sent to where they're staying (e.g. "send this to my hotel" alongside a flight and hotel), always book the trip first and do the package at the end:
   1. The flight.
   2. A hotel whose check-in date is on or before the flight's arrival date (and that's open when they land).
-  3. A rental car at the destination airport from the arrival date to the day they leave (rental_car_link), when they ask for one.
+  3. A rental car at the destination airport from the arrival date to the day they leave, when they ask for one: fill in Discover Cars' search in the live browser (rental_car_browse, then rental_car_act) and finish with rental_car_continue (or rental_car_link when the live browser isn't available).
   4. They book and pay for the flight and hotel themselves with the cards' Book buttons (the car on Discover Cars). Wait until they say they've booked, then call trip_bookings.
   5. Then the package, shipped to the hotel: find the item on Amazon (Prime only, unless nothing fits), add it to the cart, and finish with the Check out on Amazon link, telling them to ship it to "<their name>, guest arriving <date>, c/o <hotel name>, <hotel address>" and giving Amazon's estimated delivery date from your add results (an estimate; it depends on the address they enter). If it's estimated to arrive after they check out, say so and suggest something that arrives sooner.
   6. If no shop has it (nothing suitable on Amazon, or Amazon won't load), don't stall the trip: tell them their trip is booked, and that you can shop for it on Amazon or from wholesalers (the catalog) whenever they like and get it shipped to their accommodation.

@@ -128,7 +128,7 @@ export const EXAMPLES = [
 export const HOTEL_EMAIL_TEST = {
   label: "🧪 Test: book flight + hotel + car, then ship a charger to the hotel",
   prompt:
-    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, then a rental car at Miami airport from when I land until I check out. Once I've booked the trip, find a phone charger on Amazon with Prime and get it shipped to my hotel, with its estimated delivery date. Then find the hotel's front desk email on the hotel's own website and write them an email with my flight number, arrival time and the package's estimated delivery date, asking them to hold it at the front desk until I check in. This is a test: don't send it to the hotel. Send it to chefconnor2@gmail.com instead, and show me the front desk address you found and where you found it.",
+    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, then a rental car at Miami airport from an hour after I land until I check out (fill in the Discover Cars search for me in your browser and show me the best options). Once I've booked the trip, find a phone charger on Amazon with Prime and get it shipped to my hotel, with its estimated delivery date. Then find the hotel's front desk email on the hotel's own website and write them an email with my flight number, arrival time and the package's estimated delivery date, asking them to hold it at the front desk until I check in. This is a test: don't send it to the hotel. Send it to chefconnor2@gmail.com instead, and show me the front desk address you found and where you found it.",
 };
 
 /** iMessage-style timestamp: "Today 2:14 PM", "Yesterday 9:02 AM", "Monday 9:02 AM", "Oct 3, 2026 at 9:02 AM". */
@@ -626,9 +626,11 @@ function CarCard({ c }: { c: CarRentalCard }) {
         {shortDate(c.pickup)} – {shortDate(c.dropoff)} · {days} day{days === 1 ? "" : "s"}
       </div>
       <a className="cx-btn cx-btn-primary" href={c.url} target="_blank" rel="noopener noreferrer sponsored">
-        Find a car
+        {c.filled ? "Continue on Discover Cars" : "Find a car"}
       </a>
-      <div className="cx-car-note">Compares cars from rental companies on Discover Cars. You book and pay there.</div>
+      <div className="cx-car-note">
+        {c.filled ? "Neon filled in your search. Pick your car, then enter your details, pay and book on Discover Cars." : "Compares cars from rental companies on Discover Cars. You book and pay there."}
+      </div>
     </div>
   );
 }

@@ -85,6 +85,8 @@ export interface CarRentalCard {
   pickup: string;
   dropoff: string;
   url: string;
+  /** The link opens a search Neon filled in on Discover Cars in the live browser ("Continue on Discover Cars"). */
+  filled?: boolean;
   group?: string;
 }
 

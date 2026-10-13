@@ -109,8 +109,9 @@ async function cameFromForm(s) {
   return entry?.transitionType === "form_submit";
 }
 
-// Pages the browser may open. Images, scripts and styles can come from anywhere public.
-const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com)$/i;
+// Pages the browser may open: Amazon, and Discover Cars (rental car search). Images, scripts and styles can
+// come from anywhere public.
+const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com|discovercars\.com)$/i;
 // Tests only: extra hosts the browser may open (e.g. a local fixture server). Never set in production.
 const TEST_ALLOW = process.env.BROWSER_TEST_ALLOW ? new RegExp(process.env.BROWSER_TEST_ALLOW) : null;
 const navOk = (host) => NAV_ALLOWED.test(host) || !!TEST_ALLOW?.test(host);
@@ -304,6 +305,13 @@ async function isCaptcha(page) {
 async function needsShopper(page) {
   if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Get past it, then tap Approve & next.";
   if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon wants you to sign in. Sign in yourself (Neon never sees it), then tap Done.";
+  // Other sites' robot checks (Cloudflare and similar).
+  if (!/(^|\.)amazon\./i.test(hostOf(page.url()))) {
+    const title = await page.title().catch(() => "");
+    const text = await page.evaluate(() => (document.body?.innerText || "").slice(0, 1500)).catch(() => "");
+    if (/just a moment|attention required|access denied/i.test(title) || /verify you are (a )?human|press (and|&) hold|are you a robot/i.test(text))
+      return "The site wants to check you're not a robot. Get past it, then tap Approve & next.";
+  }
   return null;
 }
 
@@ -327,7 +335,7 @@ async function snapshot(s, extra = {}, page = s.page) {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function goto(s, url, page = s.page) {
-  if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon pages can be opened."), { status: 400 });
+  if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon and Discover Cars pages can be opened."), { status: 400 });
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 }
 
