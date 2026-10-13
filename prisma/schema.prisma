@@ -779,3 +779,15 @@ model HotelBooking {
 
   @@index([status])
 }
+
+/// A shopper's Gmail, connected so Neon can send email from their own address (gmail.send scope only). The
+/// refresh token is encrypted (AES-256-GCM, lib/gmail.ts). Owned like chats: by customer, else by browser.
+model GmailConnection {
+  id              String   @id @default(cuid())
+  customerId      String?  @unique
+  visitorId       String?  @unique
+  email           String
+  refreshTokenEnc String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

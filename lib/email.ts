@@ -19,6 +19,9 @@ export interface OutgoingEmail {
   text: string;
   kind: string;
   orderId?: string;
+  /** Who replies go to (default: the store's address), and who gets a copy. */
+  replyTo?: string;
+  cc?: string[];
 }
 
 export async function sendEmail(m: OutgoingEmail) {
@@ -37,7 +40,8 @@ export async function sendEmail(m: OutgoingEmail) {
         subject: m.subject,
         html: m.html,
         text: m.text,
-        ...(config.email.storeEmail ? { reply_to: config.email.storeEmail } : {}),
+        ...(m.cc?.length ? { cc: m.cc } : {}),
+        ...(m.replyTo ? { reply_to: m.replyTo } : config.email.storeEmail ? { reply_to: config.email.storeEmail } : {}),
       }),
       signal: AbortSignal.timeout(15000),
     });

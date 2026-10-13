@@ -136,8 +136,26 @@ export interface CartLinkCard {
   group?: string;
 }
 
+/** An email Neon drafted for the shopper to approve (it's sent only after Approve & next), and how it went. */
+export interface EmailDraftCard {
+  kind: "email-draft";
+  /** "em_" + random; updated in place when it's sent. */
+  id: string;
+  to: string;
+  cc: string[];
+  subject: string;
+  body: string;
+  /** The shopper's Gmail it will be sent from, or null (then it goes from the store, replies to the shopper). */
+  from: string | null;
+  /** Shown while Gmail isn't connected: where to connect it. */
+  connectUrl?: string;
+  status: "draft" | "sent" | "not_sent";
+  note?: string;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard | BrowserCard | CartLinkCard;
+export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard | BrowserCard | CartLinkCard | EmailDraftCard;
 
 /** "$1,240" for a stay, in its own currency. */
 export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {

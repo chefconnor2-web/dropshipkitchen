@@ -9,7 +9,7 @@ import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -510,6 +510,8 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
                 <BrowserView key={it.id} b={it} />
               ) : it.kind === "cart-link" ? (
                 <CartLink key={it.id} c={it} />
+              ) : it.kind === "email-draft" ? (
+                <EmailDraft key={it.id} e={it} />
               ) : (
                 <CarCard key={it.id} c={it} />
               ),
@@ -537,6 +539,37 @@ function CartLink({ c }: { c: CartLinkCard }) {
         ↗
       </span>
     </a>
+  );
+}
+
+/** An email Neon drafted: shown in full before the shopper approves it (Approve & next), then its outcome. */
+function EmailDraft({ e }: { e: EmailDraftCard }) {
+  return (
+    <div className={`cx-email is-${e.status}`}>
+      <div className="cx-email-head">
+        <span className="cx-email-status">{e.status === "sent" ? "Sent" : e.status === "not_sent" ? "Not sent" : "Draft: needs your OK"}</span>
+        <span className="cx-email-from">{e.from ? `From your Gmail (${e.from})` : "From the store, replies come to you"}</span>
+      </div>
+      <dl className="cx-email-meta">
+        <dt>To</dt>
+        <dd>{e.to}</dd>
+        {e.cc.length > 0 && (
+          <>
+            <dt>Cc</dt>
+            <dd>{e.cc.join(", ")}</dd>
+          </>
+        )}
+        <dt>Subject</dt>
+        <dd>{e.subject}</dd>
+      </dl>
+      <pre className="cx-email-body">{e.body}</pre>
+      {e.note && <p className="cx-email-note">{e.note}</p>}
+      {e.status === "draft" && e.connectUrl && (
+        <a className="cx-btn cx-email-connect" href={e.connectUrl}>
+          Connect Gmail to send it from your address
+        </a>
+      )}
+    </div>
   );
 }
 

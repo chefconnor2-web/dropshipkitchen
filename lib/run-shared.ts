@@ -9,7 +9,7 @@ export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed
 export const ACTIVE_STATUSES: readonly RunStatus[] = ["queued", "running", "waiting"];
 export const isActive = (s: RunStatus) => ACTIVE_STATUSES.includes(s);
 
-export type PendingKind = "captcha" | "sign_in" | "checkout" | "choice" | "blocked";
+export type PendingKind = "captcha" | "sign_in" | "checkout" | "choice" | "blocked" | "email";
 
 /** A step only the shopper can do, owned by the server. The run is paused until it's resumed with this id. */
 export interface PendingStep {
