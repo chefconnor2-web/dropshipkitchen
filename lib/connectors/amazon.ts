@@ -88,8 +88,10 @@ function card(sessionLive: string, id: string, site: string, handoff?: string): 
 /** Page facts for the model, plus the screenshot when it needs to see the page. */
 function pageResult(p: PageState, facts: Record<string, unknown>, withShot: boolean): ToolResult {
   const notes: string[] = [];
-  if (p.captcha) notes.push("Amazon is showing a captcha. Call browser_hand_over with reason captcha, then tell the shopper to solve it and say when they're done.");
-  if (p.signIn) notes.push("Amazon is asking to sign in. Never type credentials: call browser_hand_over with reason sign_in.");
+  if (p.needsShopper)
+    notes.push(
+      "Only the shopper can get past this page, and they've already been asked to take over (a Take over prompt is on the live browser). Don't try to get past it yourself and never type credentials. End your turn now: tell them in one line, and that you'll carry on when they say so.",
+    );
   const text = JSON.stringify({ ...facts, page: { url: p.url, title: p.title }, ...(notes.length ? { important: notes.join(" ") } : {}) });
   if (!(withShot || p.captcha || p.signIn) || !p.screenshot) return { content: text };
   return {
@@ -110,7 +112,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       if (!query) return { content: "Give me something to search for.", isError: true };
       ctx.progress(`Searching Amazon: ${query}`);
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.search(id, domain, query));
-      shown(session);
+      shown(session, p.needsShopper ?? undefined);
       const results = (p.results ?? []).map((r) => ({ asin: r.asin, title: r.title, price: r.price, rating: r.rating, reviews: r.reviews, prime: r.prime, sponsored: r.sponsored }));
       return pageResult(p, { site, query, results, note: results.length ? "Prices are as Amazon shows them right now, in the site's currency." : "No results read from the page." }, !results.length);
     }
@@ -119,14 +121,14 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       const quantity = Math.max(1, Math.min(30, Number(input.quantity) || 1));
       ctx.progress(`Adding to the Amazon cart…`);
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.add(id, domain, asin, quantity));
-      shown(session);
+      shown(session, p.needsShopper ?? undefined);
       ctx.progress(p.added ? `✓ Added ${p.title ? str(p.title, 60) : asin}` : `✗ Couldn't add ${asin}`);
       return pageResult(p, { asin, added: !!p.added, title: p.title, price: p.price, quantity: p.quantity, requestedQuantity: p.requestedQuantity, reason: p.reason }, !p.added);
     }
     if (tool === "amazon_view_cart") {
       ctx.progress("Checking the Amazon cart…");
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.cart(id, domain));
-      shown(session);
+      shown(session, p.needsShopper ?? undefined);
       return pageResult(p, { site, items: p.items ?? [], subtotal: p.subtotal ?? null }, !(p.items ?? []).length);
     }
     if (tool === "browser_act") {
@@ -134,7 +136,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       if (!actions.length) return { content: "No actions given.", isError: true };
       ctx.progress("Working in the browser…");
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions));
-      shown(session);
+      shown(session, p.needsShopper ?? undefined);
       return pageResult(p, { done: actions.length }, true);
     }
     if (tool === "browser_hand_over") {

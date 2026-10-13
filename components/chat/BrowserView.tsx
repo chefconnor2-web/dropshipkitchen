@@ -1,9 +1,11 @@
 "use client";
 // The live browser in the chat: the screen of the Chrome Neon is driving, streamed as JPEG frames over a
-// WebSocket. Tap "Take over" to drive it yourself (tap on the screen, type, scroll, go back), for a captcha,
-// signing in or checking out; "Hand back" returns it to Neon. It only connects while it's on screen.
+// WebSocket. When a page needs the shopper (a robot check, signing in, checking out) a Take over prompt covers
+// the screen; taking over opens the browser full screen so they can tap the page and type, and "Hand back to
+// Neon" returns it to the card. It only connects while it's on screen (or full screen).
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { BrowserCard } from "@/lib/flights-shared";
 
 type Status = "connecting" | "live" | "ended";
@@ -12,11 +14,14 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   const wrap = useRef<HTMLDivElement>(null);
   const img = useRef<HTMLImageElement>(null);
   const ws = useRef<WebSocket | null>(null);
+  // The latest frame, so the screen isn't blank after moving to or from full screen.
+  const lastFrame = useRef<string | null>(null);
   const [visible, setVisible] = useState(false);
   const [status, setStatus] = useState<Status>("connecting");
   const [ended, setEnded] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [control, setControl] = useState(false);
+  const [needs, setNeeds] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [frame, setFrame] = useState(false);
 
@@ -30,27 +35,29 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   }, []);
 
   useEffect(() => {
-    if (!visible || ended) return;
-    let last: string | null = null;
+    if ((!visible && !control) || ended) return;
     const sock = new WebSocket(b.live);
     sock.binaryType = "blob";
     ws.current = sock;
-    sock.onopen = () => setStatus("live");
+    sock.onopen = () => {
+      setStatus("live");
+      if (control) sock.send(JSON.stringify({ t: "control", on: true }));
+    };
     sock.onmessage = (e) => {
       if (typeof e.data === "string") {
         try {
           const m = JSON.parse(e.data);
           if (m.t === "status") {
             setUrl(m.url || "");
-            setControl(!!m.control);
+            setNeeds(m.needs || null);
           } else if (m.t === "ended") setEnded(m.reason || "This browser has closed.");
         } catch {}
         return;
       }
       const next = URL.createObjectURL(e.data as Blob);
       if (img.current) img.current.src = next;
-      if (last) URL.revokeObjectURL(last);
-      last = next;
+      if (lastFrame.current) URL.revokeObjectURL(lastFrame.current);
+      lastFrame.current = next;
       setFrame(true);
     };
     sock.onclose = () => {
@@ -58,17 +65,36 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
       ws.current = null;
     };
     sock.onerror = () => setEnded((e) => e ?? "This browser has closed.");
-    return () => {
-      sock.close();
-      if (last) URL.revokeObjectURL(last);
-    };
+    return () => sock.close();
+    // `control` is read only when (re)connecting; toggling it sends a message instead of reconnecting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, ended, b.live]);
 
+  // The image element is recreated when the card moves to or from full screen: show the last frame at once.
+  useEffect(() => {
+    if (img.current && lastFrame.current) img.current.src = lastFrame.current;
+  }, [control]);
+  useEffect(() => () => void (lastFrame.current && URL.revokeObjectURL(lastFrame.current)), []);
+
+  // Full screen while the shopper drives: no page scrolling behind it.
+  useEffect(() => {
+    if (!control) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && take(false);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [control]);
+
   const sendMsg = (m: unknown) => ws.current?.readyState === 1 && ws.current.send(JSON.stringify(m));
-  const take = (on: boolean) => {
+  function take(on: boolean) {
     sendMsg({ t: "control", on });
     setControl(on);
-  };
+  }
   const tap = (e: React.MouseEvent<HTMLImageElement>) => {
     if (!control) return;
     const r = e.currentTarget.getBoundingClientRect();
@@ -80,8 +106,10 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   } catch {}
 
   const closed = !!ended || status === "ended";
-  return (
-    <div ref={wrap} className={`cx-browser${control ? " is-control" : ""}${closed ? " is-ended" : ""}`}>
+  // The page itself says it needs the shopper (robot check, sign in), or Neon asked them to take over.
+  const ask = !closed && !control ? needs || b.handoff || null : null;
+  const card = (
+    <div className={`cx-browser${control ? " is-control is-full" : ""}${closed ? " is-ended" : ""}${ask ? " is-asking" : ""}`}>
       <div className="cx-browser-bar">
         <span className={`cx-browser-dot${status === "live" && !closed ? " is-live" : ""}`} aria-hidden />
         <span className="cx-browser-host">{host}</span>
@@ -91,12 +119,20 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
           </button>
         )}
       </div>
-      {b.handoff && !control && !closed && <div className="cx-browser-turn">Your turn: {b.handoff}</div>}
+      {control && <div className="cx-browser-turn is-driving">You&rsquo;re driving. Tap the page to click; type below.</div>}
       <div className="cx-browser-screen">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img ref={img} alt={`Live view of ${host}`} onClick={tap} draggable={false} style={{ visibility: frame ? "visible" : "hidden" }} />
         {!frame && <span className="cx-browser-wait">{closed ? ended || "This browser has closed." : "Opening the browser…"}</span>}
         {closed && frame && <span className="cx-browser-closed">{ended || "This browser has closed."}</span>}
+        {ask && status === "live" && (
+          <div className="cx-browser-ask" role="alert">
+            <p>{ask}</p>
+            <button type="button" onClick={() => take(true)}>
+              Take over
+            </button>
+          </div>
+        )}
       </div>
       {control && !closed && (
         <div className="cx-browser-keys">
@@ -120,13 +156,26 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
           </form>
           <div className="cx-browser-row">
             <button type="button" onClick={() => sendMsg({ t: "back" })}>‹ Back</button>
-            <button type="button" onClick={() => sendMsg({ t: "scroll", dy: -500 })}>▲</button>
-            <button type="button" onClick={() => sendMsg({ t: "scroll", dy: 500 })}>▼</button>
-            <button type="button" onClick={() => sendMsg({ t: "key", key: "Backspace" })}>⌫</button>
+            <button type="button" onClick={() => sendMsg({ t: "scroll", dy: -500 })} aria-label="Scroll up">▲</button>
+            <button type="button" onClick={() => sendMsg({ t: "scroll", dy: 500 })} aria-label="Scroll down">▼</button>
+            <button type="button" onClick={() => sendMsg({ t: "key", key: "Backspace" })} aria-label="Delete">⌫</button>
             <button type="button" onClick={() => sendMsg({ t: "key", key: "Enter" })}>Enter</button>
           </div>
-          <p className="cx-browser-note">You're driving. Tap the page to click. What you type goes straight to Amazon; Neon doesn't see or store it.</p>
+          <p className="cx-browser-note">What you type goes straight to Amazon; Neon doesn&rsquo;t see or store it. When you&rsquo;re done, tap Hand back to Neon and tell Neon to carry on.</p>
         </div>
+      )}
+    </div>
+  );
+  // Full screen renders at the top of the page so nothing in the chat (scrolling lists) can clip it.
+  return (
+    <div ref={wrap} className="cx-browser-slot">
+      {control && typeof document !== "undefined" ? (
+        <>
+          <div className="cx-browser-placeholder">Browser open full screen</div>
+          {createPortal(card, document.body)}
+        </>
+      ) : (
+        card
       )}
     </div>
   );

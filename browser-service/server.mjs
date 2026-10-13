@@ -85,6 +85,8 @@ async function createSession() {
     const url = req.url();
     const host = hostOf(url);
     if (/^(data|blob):/i.test(url)) return req.continue();
+    // Video and audio never matter for shopping; skipping them speeds pages up.
+    if (req.resourceType() === "media") return req.abort("blockedbyclient");
     if (!/^https?:/i.test(url) || (PRIVATE_HOST.test(host) && !TEST_ALLOW?.test(host))) return req.abort("blockedbyclient");
     if (req.isNavigationRequest() && req.frame() === page.mainFrame() && !navOk(host)) return req.abort("blockedbyclient");
     req.continue();
@@ -127,7 +129,9 @@ async function endSession(s, reason = "Closed.") {
 }
 
 async function status(s) {
-  const msg = JSON.stringify({ t: "status", url: s.page.url(), title: await s.page.title().catch(() => ""), control: s.userControl });
+  if (!s.clients.size) return;
+  const needs = await needsShopper(s.page).catch(() => null);
+  const msg = JSON.stringify({ t: "status", url: s.page.url(), title: await s.page.title().catch(() => ""), control: s.userControl, needs });
   for (const ws of s.clients) if (ws.readyState === 1) ws.send(msg);
 }
 
@@ -135,17 +139,29 @@ async function isCaptcha(page) {
   if (/validateCaptcha/i.test(page.url())) return true;
   const title = await page.title().catch(() => "");
   if (/robot check|sorry! something went wrong/i.test(title)) return true;
-  return !!(await page.$('form[action*="validateCaptcha"], #captchacharacters').catch(() => null));
+  if (await page.$('form[action*="validateCaptcha"], #captchacharacters').catch(() => null)) return true;
+  // Amazon's softer robot check: "Click the button below to continue shopping".
+  const text = await page.evaluate(() => (document.body?.innerText || "").slice(0, 2000)).catch(() => "");
+  return /click the button below to continue shopping|enter the characters you see|make sure you're not a robot/i.test(text);
+}
+
+/** What on the page only the shopper can get past, if anything (said to them in the chat). */
+async function needsShopper(page) {
+  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Tap Take over and get past it.";
+  if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon is asking you to sign in. Tap Take over to sign in yourself.";
+  return null;
 }
 
 /** Where the page is now, and a picture of it for Neon to look at. */
 async function snapshot(s, extra = {}) {
   const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, ...VIEW, scale: 1 } }).catch(() => null);
+  const needs = await needsShopper(s.page);
   return {
     url: s.page.url(),
     title: await s.page.title().catch(() => ""),
-    captcha: await isCaptcha(s.page),
-    signIn: /\/ap\/signin|\/ax\/claim/i.test(s.page.url()),
+    captcha: !!needs && !/sign in/.test(needs),
+    signIn: !!needs && /sign in/.test(needs),
+    needsShopper: needs,
     screenshot: shot ? Buffer.from(shot).toString("base64") : null,
     ...extra,
   };
@@ -155,8 +171,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function goto(s, url) {
   if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon pages can be opened."), { status: 400 });
-  await s.page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await pause(600);
+  await s.page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+  await pause(250);
 }
 
 async function runAction(s, a) {
@@ -234,14 +250,14 @@ async function amazonAdd(s, domain, asin, quantity) {
     }
   }
   const button = await page
-    .waitForSelector('#add-to-cart-button, #add-to-cart-button-ubb, input[name="submit.add-to-cart"], input[name="submit.addToCart"]', { visible: true, timeout: 8000 })
+    .waitForSelector('#add-to-cart-button, #add-to-cart-button-ubb, input[name="submit.add-to-cart"], input[name="submit.addToCart"]', { visible: true, timeout: 5000 })
     .catch(() => null);
   if (!button) return snapshot(s, { added: false, title, price, reason: "No Add to Cart button on this page (it may need an option chosen, or only be sold through other sellers)." });
   const before = await page.$eval("#nav-cart-count, .nav-cart-count", (el) => el.textContent.trim()).catch(() => "");
   await button.tap().catch(() => button.click());
   let added = false;
-  for (let i = 0; i < 14 && !added; i++) {
-    await pause(500);
+  for (let i = 0; i < 12 && !added; i++) {
+    await pause(350);
     // Decline add-on offers (protection plans) that some products show.
     const noThanks = await page.$('#attachSiNoCoverage, #siNoCoverage-announce, [aria-labelledby="attachSiNoCoverage-announce"]').catch(() => null);
     if (noThanks) await noThanks.tap().catch(() => {});
