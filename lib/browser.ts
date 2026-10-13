@@ -185,6 +185,9 @@ export const browserApi = {
       "POST",
       signal,
     ),
+  /** Opens a link in a fresh, signed-out browser (as the shopper's own would) and says where it lands. */
+  probe: (id: string, url: string, signal?: AbortSignal) =>
+    call<{ url: string; title: string; kind: "confirmed" | "payment" | "driver" | "offer" | "search" | "other"; number: string | null }>(`/sessions/${id}/probe`, { url }, "POST", signal),
   /** Claude's browser use toolset: member calls run in order, stopping at the first failure. */
   tool: (id: string, calls: Array<{ name: string; input: unknown }>, signal?: AbortSignal) =>
     call<{ results: Array<{ content: unknown[]; isError?: boolean }>; url: string; title: string; needsShopper?: string | null }>(`/sessions/${id}/browser-tool`, { calls }, "POST", signal),

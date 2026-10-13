@@ -445,7 +445,7 @@ function newStepId() {
 
 function waitForShopper(
   r: LiveRun,
-  step: { kind: PendingKind; message: string; browser: { sessionId: string; cardId: string } | null },
+  step: { kind: PendingKind; message: string; browser: { sessionId: string; cardId: string } | null; until?: Promise<unknown> },
 ): Promise<{ outcome: "resumed" | "cancelled" | "expired"; stepId: string }> {
   const next = r.waitChain.then(() => waitOnce(r, step));
   r.waitChain = next.catch(() => {});
@@ -454,7 +454,7 @@ function waitForShopper(
 
 function waitOnce(
   r: LiveRun,
-  step: { kind: PendingKind; message: string; browser: { sessionId: string; cardId: string } | null },
+  step: { kind: PendingKind; message: string; browser: { sessionId: string; cardId: string } | null; until?: Promise<unknown> },
 ): Promise<{ outcome: "resumed" | "cancelled" | "expired"; stepId: string }> {
   const signal = r.ctrl.signal;
   if (signal.aborted || !isActive(r.status)) return Promise.resolve({ outcome: "cancelled", stepId: "" });
@@ -496,6 +496,13 @@ function waitOnce(
     const onAbort = () => done("cancelled");
     const timer = setTimeout(() => done("expired"), Math.max(0, Date.parse(pending.expiresAt) - Date.now()));
     signal.addEventListener("abort", onAbort, { once: true });
+    // Done on its own (e.g. the payment was detected): resume exactly as if the shopper had tapped it.
+    step.until?.then(
+      () => {
+        if (!settled) void resumeRun(r.id, pending.id).catch(() => {});
+      },
+      () => {},
+    );
     r.waiter = {
       stepId: pending.id,
       resolve: done,

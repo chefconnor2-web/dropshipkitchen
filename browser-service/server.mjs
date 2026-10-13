@@ -351,6 +351,43 @@ async function goto(s, url, page = s.page) {
   }
 }
 
+/**
+ * Opens a link the way the shopper's own browser would (a fresh, signed-out context: no cookies from the live
+ * session) and says where it lands: the payment step, an earlier booking step, a confirmation, or somewhere
+ * else. Only the kind and a booking number go back, never page text (it can hold the shopper's details).
+ */
+async function probeUrl(url) {
+  if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon and Discover Cars pages can be opened."), { status: 400 });
+  const b = await getBrowser();
+  const ctx = await b.createBrowserContext();
+  try {
+    const page = await ctx.newPage();
+    await page.setUserAgent(UA);
+    await page.setViewport(VIEW);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+    // Booking pages render after load; give them a moment, then read.
+    await settle(page, 2500);
+    const r = await page.evaluate(() => {
+      const t = (document.body?.innerText || "").replace(/\s+/g, " ");
+      const u = location.href;
+      const fields = [...document.querySelectorAll("input, iframe")].map((e) => `${e.getAttribute("name") || ""} ${e.getAttribute("autocomplete") || ""} ${e.getAttribute("title") || ""} ${e.getAttribute("src") || ""}`).join(" ");
+      // A booking number: an upper-case code with digits, just after "booking"/"confirmation"/"reservation".
+      const at = t.search(/booking|confirmation|reservation/i);
+      const num = at < 0 ? null : (/\b(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]{5,}\b/.exec(t.slice(at, at + 160))?.[0] ?? null);
+      let kind = "other";
+      if (/booking (is )?confirmed|confirmation number|your booking (number|reference)|reservation (is )?confirmed|thank you for (your )?(booking|order)|booking successful/i.test(t) || /confirm(ation|ed)|thank-?you|success/i.test(new URL(u).pathname)) kind = "confirmed";
+      else if (/cc-number|cardnumber|card-number|cc-exp|cvc|stripe|adyen|braintree|checkout\.com|payment/i.test(fields) || /\/(payment|checkout|pay)\b/i.test(new URL(u).pathname) || /card number|payment details|pay now|cardholder/i.test(t)) kind = "payment";
+      else if (/driver details|main driver|first name/i.test(t) || /\/offer\/driver/i.test(u)) kind = "driver";
+      else if (/\/offer\//i.test(u)) kind = "offer";
+      else if (/\/search\//i.test(u)) kind = "search";
+      return { url: u, kind, number: kind === "confirmed" ? num : null };
+    });
+    return { ...r, title: await page.title().catch(() => "") };
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+}
+
 async function runAction(s, a) {
   const page = s.page;
   // Smart form actions (fill / select / date / click_text): the page finds the field itself. forms.mjs.
@@ -715,6 +752,13 @@ const server = http.createServer(async (req, res) => {
           for (const r of results) if (!r.ok && r.calendar) log("act", s.id.slice(0, 6), "calendar:", r.calendar);
           return snapshot(s, results.length ? { results } : {}, s.page, body.noShot !== true);
         }));
+      }
+      if (rest === "/probe") {
+        if (!sessions.has(id)) return send(res, 404, { error: "That browser session has closed." });
+        const t0 = Date.now();
+        const r = await probeUrl(String(body.url ?? ""));
+        log("probe", id.slice(0, 6), hostOf(r.url), (() => { try { return new URL(r.url).pathname.slice(0, 60); } catch { return ""; } })(), r.kind, `${Date.now() - t0}ms`);
+        return send(res, 200, r);
       }
       if (rest === "/browser-tool") {
         // Claude's browser use toolset: member calls in order, stopping at the first failure (browser-tool.mjs).

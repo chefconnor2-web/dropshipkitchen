@@ -428,6 +428,23 @@ export default function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Paying in their own browser: when they come back to Chit, check for the payment at once (the run carries
+  // on by itself when it's there) instead of waiting for the next poll.
+  const payingExternally = live?.pending?.kind === "checkout" && !live.pending.browser;
+  useEffect(() => {
+    if (!payingExternally) return;
+    const onBack = () => {
+      const r = run.current;
+      if (document.visibilityState === "visible" && r) void fetch(`/api/assistant/runs/${encodeURIComponent(r.id)}/check-payment`, { method: "POST" }).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onBack);
+    window.addEventListener("focus", onBack);
+    return () => {
+      document.removeEventListener("visibilitychange", onBack);
+      window.removeEventListener("focus", onBack);
+    };
+  }, [payingExternally]);
+
   /**
    * Approve & next for exactly `stepId` (CONTRACTS.md §12). Repeat taps share the request in flight; the outcome
    * is mirrored in `approvalUi`. "Approved" only after the server accepted this same step.
@@ -1387,10 +1404,12 @@ const STATUS_LINE: Record<ApprovalRecord["status"], string> = { pending: "Supers
 const openBrowser = (cardId: string) => window.dispatchEvent(new CustomEvent("cx:open-browser", { detail: { cardId } }));
 
 /** The approve button's label and state for one step. */
-function approveButton(ui: ApprovalUi | undefined) {
+function approveButton(ui: ApprovalUi | undefined, step?: { kind: string; browser: unknown } | null) {
   if (ui?.phase === "approving") return { label: "Approving…", disabled: true };
   if (ui?.phase === "approved") return { label: "Approved", disabled: true };
   if (ui?.phase === "error") return { label: "Try again", disabled: false };
+  // Paying in their own browser: Neon notices by itself, this is only for when it hasn't yet.
+  if (step?.kind === "checkout" && !step.browser) return { label: "I've paid", disabled: false };
   return { label: "Approve & next", disabled: false };
 }
 
@@ -1426,7 +1445,7 @@ function Approvals({
             </div>
           );
         }
-        const b = approveButton(state);
+        const b = approveButton(state, active ? pending : null);
         return (
           <div key={r.id} ref={activeRef} className="cx-msg cx-bot cx-approval" role="group" aria-labelledby={`ap-${r.id}`}>
             <div className="cx-bot-body">
@@ -1474,7 +1493,7 @@ function ApprovalLog({ records }: { records: ApprovalRecord[] }) {
 
 /** The step Neon is waiting on, just above the composer, while its message is scrolled out of view. */
 function PendingBar({ step, ui, onApprove, onShow }: { step: PendingStep; ui: ApprovalUi | undefined; onApprove: (stepId: string) => Promise<unknown>; onShow: () => void }) {
-  const b = approveButton(ui);
+  const b = approveButton(ui, step);
   return (
     <div className="cx-pending-bar" role="region" aria-label="Neon needs your approval">
       <button type="button" className="cx-pending-text" onClick={onShow} title="Show in the chat">

@@ -23,6 +23,7 @@ import { chatShown } from "@/lib/trips";
 import { prisma } from "@/lib/db";
 import { processSingleton } from "@/lib/singleton";
 import { visionAgent, type VisionResult } from "@/lib/vision-agent";
+import { watchPayment } from "@/lib/payment-watch";
 import type { PendingKind } from "@/lib/run-shared";
 
 const str = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -172,7 +173,7 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_hand_over",
     description:
-      "Hand the live browser to the shopper on Discover Cars for something only they can do: a robot check, a choice only they can make (which car), or payment (they enter their card and tap Book themselves; you never see that page). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now (after payment: only where it went, plus a screenshot once it has left the payment page).",
+      "Hand over to the shopper on Discover Cars for something only they can do: a robot check, a choice only they can make (which car), or payment. Payment: call it on the payment page; they get a Pay on Discover Cars button that opens that exact checkout in their own browser (saved card or Apple Pay), and you carry on automatically once it's booked (you never see card details). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now (after payment: only where it went, plus a screenshot once it has left the payment page).",
     input_schema: {
       type: "object",
       properties: {
@@ -235,7 +236,7 @@ Rental cars (Discover Cars):
 - Be fast: a few calls, several actions each. On extras or insurance screens, click_text "Skip", "No, I'll take the risk" or "Continue" (no paid extras unless asked).
 - When results show, sort them by price (lowest first) on the page (select "Sort by" "Price", or click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
-- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they enter their card and tap Book themselves. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the page shows one (Discover Cars emails the voucher).
+- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one (Discover Cars emails the voucher), then carry on with the next step.
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`
       : `
@@ -272,6 +273,8 @@ const liveCard = (session: string, handoff?: string): BrowserCard => ({ kind: "b
 
 // The payment page each chat handed to the shopper: never screenshotted for the model while it's still showing.
 const paymentPages = processSingleton("discovercars-payment-pages", () => new Map<string, string>());
+// Each chat's latest car search, for the pay card.
+const lastSearch = processSingleton("discovercars-last-search", () => new Map<string, { location: string; pickup: string; dropoff: string }>());
 
 function shot(p: PageState, facts: Record<string, unknown>, note?: string, chatId?: string, micros?: number): ToolResult {
   const paying = chatId ? paymentPages.get(chatId) : undefined;
@@ -312,6 +315,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
             note: "Not yet: the car comes after the hotel is booked. Don't open the browser now. Tell the shopper in one line to book the flight and hotel with their Book buttons, and that you'll find the cheapest car at the airport as soon as the hotel is booked. When the chat says the hotel is booked, call rental_car_browse again.",
           }),
         };
+      lastSearch.set(ctx.chatId, { location: s.location, pickup: s.pickup, dropoff: s.dropoff });
       const pickupTime = TIME.test(str(input.pickup_time, 5)) ? str(input.pickup_time, 5) : "";
       const dropoffTime = TIME.test(str(input.dropoff_time, 5)) ? str(input.dropoff_time, 5) : "";
       ctx.progress("Opening Discover Cars…");
@@ -439,6 +443,60 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       if (input.reason === "payment") {
         const now = await browserApi.state(sessionId, signal);
         paymentPages.set(ctx.chatId, now.url);
+        // The shopper pays in their own browser (their saved card or Apple Pay; no card ever touches Chit), on
+        // the exact checkout Neon filled in. First make sure the link opens that checkout on its own (no cookies
+        // from the live browser), else fall back to paying in the live browser.
+        const link = continueUrl(now.url, discoverCarsUrl());
+        ctx.progress("Getting your payment link ready…");
+        const probe = await browserApi.probe(sessionId, link, signal).catch(() => null);
+        if (probe && (probe.kind === "payment" || probe.kind === "driver")) {
+          const search = lastSearch.get(ctx.chatId);
+          const pay: CarRentalCard = {
+            kind: "car",
+            id: `carpay_${createHash("sha256").update(link).digest("hex").slice(0, 10)}`,
+            location: search?.location ?? "Your rental car",
+            pickup: search?.pickup ?? "",
+            dropoff: search?.dropoff ?? "",
+            url: link,
+            filled: true,
+            pay: { step: probe.kind },
+          };
+          ctx.show("", [pay]);
+          const watching = new AbortController();
+          const onStop = () => watching.abort();
+          signal.addEventListener("abort", onStop, { once: true });
+          // Booked? The same check, every few seconds and as soon as they're back in the chat.
+          const paid = watchPayment(ctx.chatId, async () => {
+            const p = await browserApi.probe(sessionId, link, watching.signal).catch(() => null);
+            return p?.kind === "confirmed" ? p : null;
+          }, watching.signal);
+          let detected: Awaited<typeof paid> | null = null;
+          void paid.then((p) => (detected = p));
+          const w = await ctx.waitForShopper({
+            kind: "checkout",
+            message: "Tap Pay on Discover Cars: it opens in your browser with everything filled in. Pay with your saved card or Apple Pay; Neon carries on as soon as it's booked.",
+            browser: null,
+            until: paid,
+          });
+          watching.abort();
+          signal.removeEventListener("abort", onStop);
+          if (w.outcome !== "resumed") return { content: STOPPED };
+          // Tapped "I've paid" before the watcher saw it: one last look.
+          const last: { kind: string; number: string | null } | null = detected ?? (await browserApi.probe(sessionId, link, signal).catch(() => null));
+          const confirmed = last?.kind === "confirmed";
+          return {
+            content: JSON.stringify({
+              paid_in_own_browser: true,
+              booking_confirmed: confirmed,
+              ...(confirmed && last?.number ? { confirmation_number: last.number } : {}),
+              how: detected ? "Chit saw the booking go through" : "the shopper tapped I've paid",
+              next: confirmed
+                ? "Tell them the car is booked (with the confirmation number if there is one) and that Discover Cars emails the voucher, then carry on with the trip's next step."
+                : "The booking didn't show up yet (it can take a minute). Tell the shopper you'll treat it as booked once Discover Cars' email arrives, and ask them to say if payment didn't go through. Then carry on.",
+            }),
+          };
+        }
+        // The link didn't reach the checkout on its own: they pay in the live browser instead.
         const after = await handOver(sessionId, "checkout", str(input.message, 160) || "Enter your card details and tap Book. Neon can't see this page. Then tap Approve & next.");
         if (after === "stopped") return { content: STOPPED };
         return shot(
