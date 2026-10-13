@@ -95,6 +95,7 @@ export async function bookingsForChat(chatId: string) {
         airline: card.airline,
         passengers,
         email: b.email,
+        phone: b.phone,
         slices: card.slices.map((s) => ({
           from: `${s.fromCity} (${s.from})`,
           to: `${s.toCity} (${s.to})`,
@@ -115,6 +116,7 @@ export async function bookingsForChat(chatId: string) {
         checkout: card.checkout,
         guest: `${b.firstName} ${b.lastName}`,
         email: b.email,
+        phone: b.phone,
       };
     }),
   };

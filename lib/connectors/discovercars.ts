@@ -4,8 +4,10 @@
 //
 // With the live browser (lib/browser.ts) on, Neon can also open Discover Cars in it and fill in the search
 // (place, dates, times) while the shopper watches, compare the cars, then hand over one "Continue on Discover
-// Cars" link to that page. The shopper books and pays on Discover Cars in their own browser: Neon never types
-// their details or payment, and never books.
+// Cars" link to that page, with Neon's most economical pick. "Book it for me": Neon opens the pick, fills in the
+// driver details the shopper approved in the chat, and takes it to the payment step; the shopper enters their
+// card and taps Book themselves in the live browser. Neon never types or sees card details (the payment page is
+// left out of its screenshots).
 //
 // DISCOVERCARS_AFFILIATE_ID  the a_aid from the Discover Cars affiliate dashboard
 // DISCOVERCARS_BASE_URL      tests only (a local stand-in for the site)
@@ -15,6 +17,9 @@ import { createHash, randomBytes } from "node:crypto";
 import type { BrowserCard, CarRentalCard } from "@/lib/flights-shared";
 import { BrowserError, browserApi, browserConfigured, chatBrowserId, inBrowser, isBusy, type PageState } from "@/lib/browser";
 import type { Connector, ConnectorContext, ToolResult } from "./types";
+import { bookingsForChat } from "./trips";
+import { processSingleton } from "@/lib/singleton";
+import type { PendingKind } from "@/lib/run-shared";
 
 const str = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
@@ -120,7 +125,7 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_act",
     description:
-      "Work Discover Cars' page in the live browser: actions run in order, then you get a screenshot to check the result. tap x/y are pixels on the latest screenshot (a click). Use it to fill the search form (tap the pick-up field, type the place, tap the right suggestion; set the dates and times in the calendar; tap Search), then read and sort the results. Only Discover Cars pages open. Never type the shopper's name, email, phone, address, licence or card details, and never go past choosing a car.",
+      "Work Discover Cars' page in the live browser: actions run in order, then you get a screenshot to check the result. tap x/y are pixels on the latest screenshot (a click). Use it to fill the search form (tap the pick-up field, type the place, tap the right suggestion; set the dates and times in the calendar; tap Search), then read and sort the results. Only Discover Cars pages open. Type driver details only exactly as rental_car_driver_details returned them after the shopper approved them, and never type or look for card details.",
     input_schema: {
       type: "object",
       properties: {
@@ -148,11 +153,11 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_hand_over",
     description:
-      "Hand the live browser to the shopper on Discover Cars for something only they can do: a robot check, or a choice only they can make (which car). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now.",
+      "Hand the live browser to the shopper on Discover Cars for something only they can do: a robot check, a choice only they can make (which car), or payment (they enter their card and tap Book themselves; you never see that page). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now (after payment: only where it went, plus a screenshot once it has left the payment page).",
     input_schema: {
       type: "object",
       properties: {
-        reason: { type: "string", enum: ["captcha", "choice"] },
+        reason: { type: "string", enum: ["captcha", "choice", "payment"] },
         message: { type: "string", description: 'One short line, e.g. "Pick the car you like, then tap Approve & next."' },
       },
       required: ["reason", "message"],
@@ -168,8 +173,33 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
         location: SEARCH_PROPS.location,
         pickup_date: SEARCH_PROPS.pickup_date,
         dropoff_date: SEARCH_PROPS.dropoff_date,
+        pick: {
+          type: "object",
+          description: "Your recommendation: the most economical sensible car from the results, exactly as the page showed it.",
+          properties: {
+            car: { type: "string", description: "e.g. 'Economy · Kia Rio or similar'" },
+            price: { type: "string", description: "The total for the rental as shown, e.g. '$123 total ($41/day)'" },
+            supplier: { type: "string", description: "Rental company and its rating, e.g. 'Alamo · 8.4'" },
+            why: { type: "string", description: "One short line: why it's the best value (fuel policy, mileage, free cancellation)" },
+          },
+          required: ["car", "price"],
+        },
       },
       required: ["location", "pickup_date", "dropoff_date"],
+    },
+  },
+  {
+    name: "rental_car_driver_details",
+    description:
+      "Before filling Discover Cars' driver form for a booking the shopper asked you to make: shows them the details you'll enter (from their trip bookings, or what they told you) and waits for Approve & next. Only after it returns approved may you type exactly these details with rental_car_act.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Driver's full name; empty to use the name on their trip bookings" },
+        email: { type: "string", description: "Empty to use the email on their trip bookings" },
+        phone: { type: "string", description: "Empty to use the phone on their trip bookings" },
+        flight_number: { type: "string", description: "Their arrival flight number, if the form asks, e.g. 'AC 1630'" },
+      },
     },
   },
 ];
@@ -183,8 +213,9 @@ export const discoverCarsConnector: Connector = {
       ? `
 Rental cars (Discover Cars):
 - For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). Then fill Discover Cars' search form with rental_car_act, checking each screenshot: tap the pick-up location field, type the place, tap the matching suggestion (the airport when picking up at one); open the dates and pick the pick-up and drop-off days (and times, if shown); tap Search. Keep each call to a few actions and look at the result before the next.
-- When results show, compare a few good options for them in a few words (car type, price as shown, supplier rating, fuel and mileage policy). If they want to pick on the page, use rental_car_hand_over with reason choice.
-- Finish with rental_car_continue: they continue on Discover Cars in their own browser, where they enter their details, pay and book. Never type their name, email, phone, address, licence or card details, and never try to book.
+- When results show, sort them by price (lowest first) on the page and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
+- Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
+- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (the driver's name, email and phone from their trip bookings unless they gave others), and once approved type exactly those into the driver form. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they enter their card and tap Book themselves. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the page shows one (Discover Cars emails the voucher).
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`
       : `
@@ -219,10 +250,20 @@ Rental cars:
 
 const liveCard = (session: string, handoff?: string): BrowserCard => ({ kind: "browser", id: `br_${session}`, session, site: SITE, ...(handoff ? { handoff } : {}), group: "Live browser" });
 
-function shot(p: PageState, facts: Record<string, unknown>, note?: string): ToolResult {
-  const notes = [note, p.needsShopper ? "The page shows a robot check: call rental_car_hand_over with reason captcha and a one-line message." : ""].filter(Boolean);
+// The payment page each chat handed to the shopper: never screenshotted for the model while it's still showing.
+const paymentPages = processSingleton("discovercars-payment-pages", () => new Map<string, string>());
+
+function shot(p: PageState, facts: Record<string, unknown>, note?: string, chatId?: string): ToolResult {
+  const paying = chatId ? paymentPages.get(chatId) : undefined;
+  if (paying && p.url !== paying && chatId) paymentPages.delete(chatId);
+  const hidden = !!paying && p.url === paying;
+  const notes = [
+    note,
+    hidden ? "This is the payment page, which stays private (no screenshot). Ask the shopper whether they booked, and for anything you need from it." : "",
+    p.needsShopper ? "The page shows a robot check: call rental_car_hand_over with reason captcha and a one-line message." : "",
+  ].filter(Boolean);
   const text = JSON.stringify({ ...facts, page: { url: p.url, title: p.title }, ...(notes.length ? { important: notes.join(" ") } : {}) });
-  if (!p.screenshot) return { content: text };
+  if (!p.screenshot || hidden) return { content: text };
   return { content: [{ type: "text", text }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: p.screenshot } }] };
 }
 
@@ -230,7 +271,7 @@ const STOPPED = "The shopper didn't finish that step in time, so you stopped wai
 
 async function browse(tool: string, input: Record<string, unknown>, ctx: ConnectorContext): Promise<ToolResult> {
   const signal = ctx.signal;
-  const handOver = async (sessionId: string, kind: "captcha" | "choice", message: string): Promise<PageState | "stopped"> => {
+  const handOver = async (sessionId: string, kind: PendingKind, message: string): Promise<PageState | "stopped"> => {
     ctx.show("Live browser", [liveCard(sessionId, message)]);
     const w = await ctx.waitForShopper({ kind, message, browser: { sessionId, cardId: `br_${sessionId}` } });
     ctx.show("Live browser", [liveCard(sessionId)]);
@@ -266,15 +307,45 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       ctx.progress("Filling in Discover Cars…");
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal), signal);
       ctx.show("Live browser", [liveCard(session.id)]);
-      return shot(p, { done: actions.length });
+      return shot(p, { done: actions.length }, undefined, ctx.chatId);
     }
     if (tool === "rental_car_hand_over") {
       const sessionId = await chatBrowserId(ctx.chatId);
       if (!sessionId) return { content: "The browser has closed. Open Discover Cars again with rental_car_browse.", isError: true };
+      if (input.reason === "payment") {
+        const now = await browserApi.state(sessionId, signal);
+        paymentPages.set(ctx.chatId, now.url);
+        const after = await handOver(sessionId, "checkout", str(input.message, 160) || "Enter your card details and tap Book. Neon can't see this page. Then tap Approve & next.");
+        if (after === "stopped") return { content: STOPPED };
+        return shot(
+          after,
+          { handedBack: true, afterPayment: true },
+          "The shopper handed back after the payment step. If the page shows a booking confirmation, tell them the confirmation number and that Discover Cars emails the voucher; otherwise ask whether they booked.",
+          ctx.chatId,
+        );
+      }
       const kind = input.reason === "captcha" ? "captcha" : "choice";
       const after = await handOver(sessionId, kind, str(input.message, 160) || "Your turn: tap Approve & next when you're done.");
       if (after === "stopped") return { content: STOPPED };
-      return shot(after, { handedBack: true }, "The shopper handed back; this is the page now. Carry on (finish with rental_car_continue).");
+      return shot(after, { handedBack: true }, "The shopper handed back; this is the page now. Carry on.", ctx.chatId);
+    }
+    if (tool === "rental_car_driver_details") {
+      const b = await bookingsForChat(ctx.chatId);
+      const hotel = b.hotels[0];
+      const flight = b.flights[0];
+      const name = str(input.name, 80) || hotel?.guest || flight?.passengers[0] || "";
+      const email = str(input.email, 120) || hotel?.email || flight?.email || "";
+      const phone = str(input.phone, 40) || hotel?.phone || flight?.phone || "";
+      const flightNumber = str(input.flight_number, 20) || flight?.slices[0]?.flights[0] || "";
+      if (!name || !email) return { content: "No driver name or email yet: ask the shopper for the driver's name, email and phone, then call this again with them.", isError: true };
+      const details = { name, email, ...(phone ? { phone } : {}), ...(flightNumber ? { flight_number: flightNumber } : {}) };
+      const w = await ctx.waitForShopper({
+        kind: "choice",
+        message: `Book with these driver details? ${name} · ${email}${phone ? ` · ${phone}` : ""}${flightNumber ? ` · flight ${flightNumber}` : ""}. Approve & next and Neon fills them in on Discover Cars.`,
+        browser: null,
+      });
+      if (w.outcome !== "resumed") return { content: "The shopper didn't approve the driver details, so don't type them. Ask what to change." };
+      return { content: JSON.stringify({ approved: true, details, note: "Type exactly these into the driver form with rental_car_act. Leave paid extras (extra insurance, add-ons) unticked unless the shopper asked for them. Stop at the payment step and call rental_car_hand_over with reason payment." }) };
     }
     if (tool === "rental_car_continue") {
       const location = str(input.location, 80);
@@ -284,13 +355,17 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const sessionId = await chatBrowserId(ctx.chatId);
       const page = sessionId ? await browserApi.state(sessionId, signal).catch(() => null) : null;
       const url = continueUrl(page?.url, discoverCarsUrl());
-      const card: CarRentalCard = { kind: "car", id: carId(location, pickup, dropoff), location, pickup, dropoff, url, filled: url !== discoverCarsUrl() };
+      const pk = input.pick && typeof input.pick === "object" ? (input.pick as Record<string, unknown>) : null;
+      const pick = pk && str(pk.car, 80) && str(pk.price, 60) ? { car: str(pk.car, 80), price: str(pk.price, 60), ...(str(pk.supplier, 60) ? { supplier: str(pk.supplier, 60) } : {}), ...(str(pk.why, 140) ? { why: str(pk.why, 140) } : {}) } : undefined;
+      const card: CarRentalCard = { kind: "car", id: carId(location, pickup, dropoff), location, pickup, dropoff, url, filled: url !== discoverCarsUrl(), ...(pick ? { pick } : {}) };
       ctx.show("", [card]);
       return {
         content: JSON.stringify({
           shown_as_card: "Continue on Discover Cars",
           opens: card.filled ? "the page from the live browser" : "Discover Cars' home page (the live page wasn't available)",
-          tell_the_shopper: "Tap Continue on Discover Cars: it opens this search in their own browser, where they pick the car, enter their details, pay and book. Their confirmation comes from Discover Cars. If the page asks for the search again, the place and dates are on the card.",
+          tell_the_shopper: pick
+            ? `Recommend the ${pick.car} (${pick.price}) in one or two lines and why. They can tap "Book it for me" (you open it, fill in the driver details they approve, and hand them the payment step) or continue on Discover Cars themselves.`
+            : "Tap Continue on Discover Cars: it opens this search in their own browser, where they pick the car, enter their details, pay and book. Their confirmation comes from Discover Cars. If the page asks for the search again, the place and dates are on the card.",
         }),
       };
     }
