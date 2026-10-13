@@ -16,6 +16,7 @@ import {
   CopyIcon,
   DownIcon,
   EXAMPLES,
+  HOTEL_EMAIL_TEST,
   KitCard,
   Markdown,
   MicIcon,
@@ -974,6 +975,9 @@ export default function Chat({
                     {x}
                   </button>
                 ))}
+                <button type="button" className="cx-example cx-example-test" onClick={() => send(HOTEL_EMAIL_TEST.prompt)} disabled={!configured}>
+                  {HOTEL_EMAIL_TEST.label}
+                </button>
               </div>
             </div>
           </div>

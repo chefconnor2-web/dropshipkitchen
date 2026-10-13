@@ -2238,3 +2238,6 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-email-body { margin: 0; padding: 10px; border-radius: 10px; background: rgb(0 0 0 / 0.03); font: 14px/1.45 var(--im-font, inherit); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cx-email-note { margin: 0; font-size: 13px; color: var(--im-muted, #6b6578); }
 .cx-email-connect { justify-self: start; min-height: 44px; }
+
+/* The one-tap tester for the hotel-hold email flow. */
+.cx-example.cx-example-test { border-style: dashed; }
