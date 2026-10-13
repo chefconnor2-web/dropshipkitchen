@@ -44,6 +44,7 @@ import {
 } from "./ui";
 import { imageUrl, uploadImage } from "./images";
 import { MAX_MESSAGE_CHARS } from "@/lib/limits";
+import { MAX_DOCS, MAX_PDF_B64, PASTE_AS_DOC_CHARS, TEXT_FILE, docInfo, docLabel, type DocUpload } from "@/lib/docs-shared";
 import { listen, speak, speechInputSupported, speechOutputSupported, stopSpeaking, unlockSpeech, type Recognizer } from "./voice";
 import VoiceMode from "./VoiceMode";
 
@@ -52,6 +53,18 @@ interface Attachment {
   preview: string;
   id?: string;
   error?: string;
+}
+
+/** A long paste or a text/PDF file waiting to be sent as a document. */
+type PendingDoc = DocUpload & { key: string };
+
+function readBase64(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(f);
+  });
 }
 
 export interface ChatEvents {
@@ -102,6 +115,7 @@ export default function Chat({
   const [copied, setCopied] = useState<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [docs, setDocs] = useState<PendingDoc[]>([]);
   const [dragging, setDragging] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
@@ -240,7 +254,9 @@ export default function Chat({
   async function send(text: string, opts: { voice?: boolean; editIndex?: number; images?: string[] } = {}): Promise<string | null> {
     const msg = text.trim();
     const images = opts.images ?? ready;
-    if ((!msg && !images.length) || busy || !configured) return null;
+    // Edits and regenerations reuse the documents already in the chat; a new message sends what's attached.
+    const sending = opts.images ? [] : docs;
+    if ((!msg && !images.length && !sending.length && opts.editIndex == null) || busy || !configured) return null;
     if (!opts.images && uploading) {
       flash("Wait for the photo to finish uploading");
       return null;
@@ -257,9 +273,13 @@ export default function Chat({
     if (!opts.images) {
       setInput("");
       setAttachments([]);
+      setDocs([]);
     }
     const userIndex = opts.editIndex ?? entries.length;
-    setEntries((e) => [...e.slice(0, userIndex), { role: "user", text: msg, ...(images.length ? { images } : {}), at: new Date().toISOString() }]);
+    const was = opts.editIndex != null ? entries[opts.editIndex] : undefined;
+    const keptDocs = was?.role === "user" ? was.docs : undefined;
+    const docMeta = sending.length ? sending.map(docInfo) : keptDocs;
+    setEntries((e) => [...e.slice(0, userIndex), { role: "user", text: msg, ...(images.length ? { images } : {}), ...(docMeta?.length ? { docs: docMeta } : {}), at: new Date().toISOString() }]);
     // The assistant's tapback (and the server's timestamp) land on the message just sent.
     const patchUser = (patch: Partial<Entry>) =>
       !me.detached && setEntries((en) => en.map((x, k) => (k === userIndex && x.role === "user" ? ({ ...x, ...patch } as Entry) : x)));
@@ -272,7 +292,7 @@ export default function Chat({
       const r = await fetch("/api/assistant", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: msg, chatId: id ?? undefined, images, voice: !!opts.voice, editIndex: opts.editIndex }),
+        body: JSON.stringify({ message: msg, chatId: id ?? undefined, images, voice: !!opts.voice, editIndex: opts.editIndex, ...(sending.length ? { docs: sending.map(({ name, kind, data }) => ({ name, kind, data })) } : {}) }),
         signal: me.ctrl.signal,
       });
       if (!r.ok || !r.body) {
@@ -380,9 +400,26 @@ export default function Chat({
     send(u.text, { editIndex: userIndex, images: u.images ?? [] });
   }
 
+  /** Adds a long paste or a text/PDF file as a document attachment. */
+  function addDoc(d: DocUpload) {
+    if (docs.length >= MAX_DOCS) return flash(`Up to ${MAX_DOCS} documents per message`);
+    if (d.kind === "text" && d.data.length > MAX_MESSAGE_CHARS) return flash(`Documents can be up to ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters`);
+    if (d.kind === "pdf" && d.data.length > MAX_PDF_B64) return flash("PDFs can be up to about 20 MB");
+    setDocs((x) => [...x, { ...d, key: Math.random().toString(36).slice(2) }]);
+    inputRef.current?.focus();
+  }
+
   async function addFiles(list: FileList | File[]) {
-    const files = [...list].filter((f) => f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name));
-    if (!files.length) return flash("Only photos can be attached");
+    const all = [...list];
+    for (const f of all) {
+      if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) readBase64(f).then((data) => addDoc({ name: f.name, kind: "pdf", data }), () => flash("That PDF couldn't be read"));
+      else if (f.type.startsWith("text/") || f.type === "application/json" || TEXT_FILE.test(f.name)) f.text().then((data) => addDoc({ name: f.name, kind: "text", data }), () => flash("That file couldn't be read"));
+    }
+    const files = all.filter((f) => f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name));
+    if (!files.length) {
+      if (!all.some((f) => f.type === "application/pdf" || f.type.startsWith("text/") || f.type === "application/json" || /\.pdf$/i.test(f.name) || TEXT_FILE.test(f.name))) flash("Attach photos, PDFs or text files");
+      return;
+    }
     const room = 4 - attachments.length;
     if (room <= 0) return flash("Up to 4 photos per message");
     if (files.length > room) flash("Up to 4 photos per message");
@@ -506,8 +543,8 @@ export default function Chat({
   }
 
   const lastUserIndex = entries.map((e) => e.role).lastIndexOf("user");
-  const canSend = (!!input.trim() || ready.length > 0) && !uploading && configured;
-  const showVoiceButton = canListen && !input.trim() && !attachments.length && !busy;
+  const canSend = (!!input.trim() || ready.length > 0 || docs.length > 0) && !uploading && configured;
+  const showVoiceButton = canListen && !input.trim() && !attachments.length && !docs.length && !busy;
 
   const composer = (
     <form
@@ -517,13 +554,13 @@ export default function Chat({
         send(input);
       }}
     >
-      <button type="button" className="cx-plus" onClick={() => fileRef.current?.click()} aria-label="Add photos" title="Add photos" disabled={!configured}>
+      <button type="button" className="cx-plus" onClick={() => fileRef.current?.click()} aria-label="Add photos or files" title="Add photos, PDFs or text files" disabled={!configured}>
         <PlusIcon2 />
       </button>
       <input
         ref={fileRef}
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf,.pdf,text/plain,.txt,.md,.csv,.tsv,.json"
         multiple
         hidden
         onChange={(e) => {
@@ -532,8 +569,22 @@ export default function Chat({
         }}
       />
       <div className="cx-pill">
-        {attachments.length > 0 && (
+        {(attachments.length > 0 || docs.length > 0) && (
           <div className="cx-attach-row">
+            {docs.map((d) => (
+              <div key={d.key} className="cx-doc">
+                <span className="cx-doc-icon" aria-hidden>
+                  {d.kind === "pdf" ? "PDF" : "TXT"}
+                </span>
+                <span className="cx-doc-text">
+                  <span className="cx-doc-name">{d.name}</span>
+                  <span className="cx-doc-size">{docLabel(docInfo(d))}</span>
+                </span>
+                <button type="button" className="cx-attach-x" onClick={() => setDocs((x) => x.filter((y) => y.key !== d.key))} aria-label={`Remove ${d.name}`}>
+                  <XIcon size={12} />
+                </button>
+              </div>
+            ))}
             {attachments.map((a) => (
               <div key={a.key} className={`cx-attach${a.error ? " is-error" : ""}`} title={a.error}>
                 <img src={a.preview} alt="" />
@@ -573,6 +624,13 @@ export default function Chat({
               if (files.length) {
                 e.preventDefault();
                 addFiles(files);
+                return;
+              }
+              // A long paste becomes a document Neon reads in full, instead of flooding the message box.
+              const pasted = e.clipboardData.getData("text/plain");
+              if (pasted.length > PASTE_AS_DOC_CHARS) {
+                e.preventDefault();
+                addDoc({ name: `Pasted text ${docs.length + 1}`, kind: "text", data: pasted });
               }
             }}
             onKeyDown={(e) => {
@@ -745,6 +803,21 @@ export default function Chat({
                             <button key={id} type="button" className="cx-user-img" onClick={() => setLightbox(id)} aria-label="View photo">
                               <img src={imageUrl(id)} alt="" loading="lazy" />
                             </button>
+                          ))}
+                        </div>
+                      )}
+                      {e.docs && e.docs.length > 0 && (
+                        <div className="cx-user-docs">
+                          {e.docs.map((d, k) => (
+                            <div key={k} className="cx-doc is-sent">
+                              <span className="cx-doc-icon" aria-hidden>
+                                {d.kind === "pdf" ? "PDF" : "TXT"}
+                              </span>
+                              <span className="cx-doc-text">
+                                <span className="cx-doc-name">{d.name}</span>
+                                <span className="cx-doc-size">{docLabel(d)}</span>
+                              </span>
+                            </div>
                           ))}
                         </div>
                       )}

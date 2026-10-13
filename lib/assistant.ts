@@ -22,6 +22,7 @@ import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
 import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_MESSAGE_CHARS } from "@/lib/limits";
+import { docInfo, type DocInfo, type DocUpload } from "@/lib/docs-shared";
 import { SUPPLIER_TOOL, parseSuppliers, seenPages, sourcingPrompt, webSourcingEnabled, webTools } from "@/lib/sourcing";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
@@ -59,7 +60,7 @@ export interface ProductCard {
 }
 export type UiEntry =
   /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
-  | { role: "user"; text: string; images?: string[]; reaction?: string; at?: string }
+  | { role: "user"; text: string; images?: string[]; docs?: DocInfo[]; reaction?: string; at?: string }
   | {
       role: "assistant";
       text: string;
@@ -674,6 +675,14 @@ export interface TurnInput {
   voice?: boolean;
   /** Replace the conversation from this transcript entry (a user message) on: edit or regenerate. */
   editIndex?: number;
+  /** Documents sent with the message (a long paste, a text file or a PDF), already checked by cleanDocs. */
+  docs?: DocUpload[];
+}
+
+function docBlock(d: DocUpload): Anthropic.Beta.BetaRequestDocumentBlock {
+  return d.kind === "pdf"
+    ? { type: "document", title: d.name, source: { type: "base64", media_type: "application/pdf", data: d.data } }
+    : { type: "document", title: d.name, source: { type: "text", media_type: "text/plain", data: d.data } };
 }
 
 export async function chatTurn(
@@ -691,26 +700,45 @@ export async function chatTurn(
   let messages = JSON.parse(chat.messagesJson) as Anthropic.Beta.BetaMessageParam[];
   let ui = JSON.parse(chat.uiJson) as UiEntry[];
   let turns = chat.userTurns;
+  let docBlocks: Anthropic.Beta.BetaContentBlockParam[] = (input.docs ?? []).map(docBlock);
+  let docInfos: DocInfo[] = (input.docs ?? []).map(docInfo);
   if (input.editIndex != null && input.editIndex >= 0 && input.editIndex < ui.length && ui[input.editIndex].role === "user") {
     const n = ui.slice(0, input.editIndex).filter((e) => e.role === "user").length;
-    messages = messages.slice(0, userMessageStart(messages, n));
+    const start = userMessageStart(messages, n);
+    // Editing or regenerating a message keeps the documents it was sent with.
+    const old = messages[start];
+    const edited = ui[input.editIndex];
+    if (!docBlocks.length && old && Array.isArray(old.content)) {
+      docBlocks = old.content.filter((b) => b.type === "document");
+      if (edited.role === "user") docInfos = edited.docs ?? [];
+    }
+    messages = messages.slice(0, start);
     ui = ui.slice(0, input.editIndex);
     turns = n;
   }
   if (turns >= MAX_USER_TURNS) throw new AssistantLimitError("This chat is full. Start a new one to keep going.");
   // The tapback lands while the answer is still being written.
-  const reacting = pickReaction(text, images.length > 0).then((r) => {
+  const reacting = pickReaction(text || (docInfos.length ? `[sent a document: ${docInfos[0].name}]` : ""), images.length > 0).then((r) => {
     if (r.emoji) emit({ type: "react", emoji: r.emoji });
     return r;
   });
   messages.push({
     role: "user",
-    content: images.length
-      ? [
-          ...images.map((im): Anthropic.Beta.BetaImageBlockParam => ({ type: "image", source: { type: "base64", media_type: im.mime as "image/jpeg", data: IMG_PREFIX + im.id } })),
-          { type: "text", text: text || "Here's a photo. What is this, and can you find it or compatible parts?" },
-        ]
-      : text,
+    content:
+      images.length || docBlocks.length
+        ? [
+            ...images.map((im): Anthropic.Beta.BetaImageBlockParam => ({ type: "image", source: { type: "base64", media_type: im.mime as "image/jpeg", data: IMG_PREFIX + im.id } })),
+            ...docBlocks,
+            {
+              type: "text",
+              text:
+                text ||
+                (docBlocks.length
+                  ? "I've attached a document. Read all of it and do what it asks; if it's a list of things I need, source them."
+                  : "Here's a photo. What is this, and can you find it or compatible parts?"),
+            },
+          ]
+        : text,
   });
   // Keep a copy of what the shopper watches the agent think and do, so the reply can show it again later.
   const startedAt = Date.now();
@@ -834,7 +862,7 @@ export async function chatTurn(
     ...(showAiCost() ? { cost: { micros: usage.micros, inputTokens: usage.in, outputTokens: usage.out, webSearches: webUse.searches, webFetches: webUse.fetches } } : {}),
   };
   ui.push(
-    { role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(reaction.emoji ? { reaction: reaction.emoji } : {}), at: sentAt },
+    { role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(docInfos.length ? { docs: docInfos } : {}), ...(reaction.emoji ? { reaction: reaction.emoji } : {}), at: sentAt },
     entry,
   );
   await prisma.assistantChat.update({

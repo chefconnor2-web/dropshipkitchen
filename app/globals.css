@@ -2095,3 +2095,12 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .vm-mic-badge svg { width: 20px; height: 20px; }
 @media (prefers-reduced-motion: reduce) { .orb-halo { animation: none; } }
 .cx-cost { margin: 2px 0 0 4px; font: 11.5px/1.3 ui-monospace, Menlo, monospace; color: var(--im-sub, var(--muted)); opacity: 0.85; }
+/* Documents (a long paste, a text file or a PDF) in the composer and in sent messages. */
+.cx-doc { position: relative; display: flex; align-items: center; gap: 10px; max-width: 260px; min-width: 0; padding: 8px 30px 8px 8px; border-radius: 14px; background: var(--im-gray, #F1EEE8); border: 1px solid var(--im-line, #E4DFD5); }
+.cx-doc.is-sent { padding-right: 12px; }
+.cx-doc-icon { flex: none; display: grid; place-items: center; width: 38px; height: 44px; border-radius: 8px; background: #5a35a8; color: #fff; font: 700 10px/1 ui-monospace, Menlo, monospace; letter-spacing: 0.05em; }
+.cx-doc-text { display: grid; gap: 2px; min-width: 0; }
+.cx-doc-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cx-doc-size { font-size: 12px; color: var(--im-sub, var(--muted)); }
+.cx-doc .cx-attach-x { top: 6px; right: 6px; }
+.cx-user-docs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
