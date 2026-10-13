@@ -87,6 +87,8 @@ export interface CarRentalCard {
   url: string;
   /** The link opens a search Neon filled in on Discover Cars in the live browser ("Continue on Discover Cars"). */
   filled?: boolean;
+  /** Neon's pick from the results: the most economical sensible car, as Discover Cars showed it. */
+  pick?: { car: string; price: string; supplier?: string; why?: string };
   group?: string;
 }
 

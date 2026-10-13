@@ -128,7 +128,7 @@ export const EXAMPLES = [
 export const HOTEL_EMAIL_TEST = {
   label: "🧪 Test: book flight + hotel + car, then ship a charger to the hotel",
   prompt:
-    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, then a rental car at Miami airport from an hour after I land until I check out (fill in the Discover Cars search for me in your browser and show me the best options). Once I've booked the trip, find a phone charger on Amazon with Prime and get it shipped to my hotel, with its estimated delivery date. Then find the hotel's front desk email on the hotel's own website and write them an email with my flight number, arrival time and the package's estimated delivery date, asking them to hold it at the front desk until I check in. This is a test: don't send it to the hotel. Send it to chefconnor2@gmail.com instead, and show me the front desk address you found and where you found it.",
+    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, then a rental car at Miami airport from an hour after I land until I check out (fill in the Discover Cars search for me in your browser and recommend the most economical car). Once I've booked the trip, find a phone charger on Amazon with Prime and get it shipped to my hotel, with its estimated delivery date. Then find the hotel's front desk email on the hotel's own website and write them an email with my flight number, arrival time and the package's estimated delivery date, asking them to hold it at the front desk until I check in. This is a test: don't send it to the hotel. Send it to chefconnor2@gmail.com instead, and show me the front desk address you found and where you found it.",
 };
 
 /** iMessage-style timestamp: "Today 2:14 PM", "Yesterday 9:02 AM", "Monday 9:02 AM", "Oct 3, 2026 at 9:02 AM". */
@@ -625,11 +625,33 @@ function CarCard({ c }: { c: CarRentalCard }) {
       <div className="cx-muted">
         {shortDate(c.pickup)} – {shortDate(c.dropoff)} · {days} day{days === 1 ? "" : "s"}
       </div>
-      <a className="cx-btn cx-btn-primary" href={c.url} target="_blank" rel="noopener noreferrer sponsored">
-        {c.filled ? "Continue on Discover Cars" : "Find a car"}
+      {c.pick && (
+        <div className="cx-car-pick">
+          <div className="cx-car-pick-label">Most economical pick</div>
+          <div className="cx-car-pick-car">{c.pick.car}</div>
+          <div className="cx-car-pick-price">
+            {c.pick.price}
+            {c.pick.supplier ? ` · ${c.pick.supplier}` : ""}
+          </div>
+          {c.pick.why && <div className="cx-muted">{c.pick.why}</div>}
+          <button
+            type="button"
+            className="cx-btn cx-btn-primary"
+            onClick={() => window.dispatchEvent(new CustomEvent("cx:send", { detail: { text: `Book the ${c.pick!.car} (${c.pick!.price}) for me on Discover Cars` } }))}
+          >
+            Book it for me
+          </button>
+        </div>
+      )}
+      <a className={`cx-btn ${c.pick ? "cx-btn-ghost" : "cx-btn-primary"}`} href={c.url} target="_blank" rel="noopener noreferrer sponsored">
+        {c.filled ? (c.pick ? "Or continue on Discover Cars yourself" : "Continue on Discover Cars") : "Find a car"}
       </a>
       <div className="cx-car-note">
-        {c.filled ? "Neon filled in your search. Pick your car, then enter your details, pay and book on Discover Cars." : "Compares cars from rental companies on Discover Cars. You book and pay there."}
+        {c.pick
+          ? "Book it for me: Neon opens this car and fills in the driver details you approve, then you enter your card and tap Book. Neon never sees your card."
+          : c.filled
+            ? "Neon filled in your search. Pick your car, then enter your details, pay and book on Discover Cars."
+            : "Compares cars from rental companies on Discover Cars. You book and pay there."}
       </div>
     </div>
   );

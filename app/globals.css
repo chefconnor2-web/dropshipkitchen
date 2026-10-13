@@ -2287,3 +2287,11 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 @media (max-width: 640px) {
   .tp { width: 100%; box-shadow: none; }
 }
+
+/* Rental car: Neon's most economical pick, with Book it for me. */
+.cx-car-pick { margin: 10px 0 8px; padding: 10px 12px; border-radius: 12px; background: #f3f8ff; border: 1px solid #cfe2ff; display: flex; flex-direction: column; gap: 3px; }
+.cx-car-pick-label { font: 600 11px/1.2 var(--text); text-transform: uppercase; letter-spacing: 0.04em; color: #0B7CFF; }
+.cx-car-pick-car { font: 600 15px/1.3 var(--text); color: var(--ink); }
+.cx-car-pick-price { font: 600 14px/1.3 var(--text); color: var(--ink); }
+.cx-car-pick .cx-btn { margin-top: 8px; }
+.cx-btn.cx-btn-ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }

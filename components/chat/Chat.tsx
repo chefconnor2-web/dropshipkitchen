@@ -475,6 +475,18 @@ export default function Chat({
   };
   const savedCtx: BrowserRunContext = { ...runCtx, pending: null };
 
+  // A card's button can send a message for the shopper (e.g. "Book it for me" on a rental car).
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    const onSend = (e: Event) => {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text;
+      if (typeof text === "string" && text.trim()) void sendRef.current(text);
+    };
+    window.addEventListener("cx:send", onSend);
+    return () => window.removeEventListener("cx:send", onSend);
+  }, []);
+
   /** Sends one message; resolves with the reply text (for voice mode), or null if it didn't finish. */
   async function send(text: string, opts: { voice?: boolean; editIndex?: number; images?: string[] } = {}): Promise<string | null> {
     const msg = text.trim();
