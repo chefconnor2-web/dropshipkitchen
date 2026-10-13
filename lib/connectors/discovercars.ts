@@ -19,6 +19,7 @@ import { BrowserError, browserApi, browserConfigured, chatBrowserId, inBrowser, 
 import type { Connector, ConnectorContext, ToolResult } from "./types";
 import { bookingsForChat } from "./trips";
 import { getProfile } from "@/lib/traveller";
+import { chatShown } from "@/lib/trips";
 import { prisma } from "@/lib/db";
 import { processSingleton } from "@/lib/singleton";
 import type { PendingKind } from "@/lib/run-shared";
@@ -288,6 +289,15 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
     if (tool === "rental_car_browse") {
       const s = parseCarSearch(input, new Date().toISOString().slice(0, 10));
       if (typeof s === "string") return { content: `Can't search: ${s}.`, isError: true };
+      // A trip with a hotel: the car comes after the hotel is booked (one thing in the browser at a time).
+      const chat = await prisma.assistantChat.findUnique({ where: { id: ctx.chatId }, select: { uiJson: true } });
+      if (chat && chatShown(chat.uiJson).hotels.size && !(await bookingsForChat(ctx.chatId)).hotels.length)
+        return {
+          content: JSON.stringify({
+            waiting: true,
+            note: "Not yet: the car comes after the hotel is booked. Don't open the browser now. Tell the shopper in one line to book the flight and hotel with their Book buttons, and that you'll find the cheapest car at the airport as soon as the hotel is booked. When the chat says the hotel is booked, call rental_car_browse again.",
+          }),
+        };
       const pickupTime = TIME.test(str(input.pickup_time, 5)) ? str(input.pickup_time, 5) : "";
       const dropoffTime = TIME.test(str(input.dropoff_time, 5)) ? str(input.dropoff_time, 5) : "";
       ctx.progress("Opening Discover Cars…");

@@ -81,3 +81,14 @@ test("picks a day from a react-datepicker-style calendar ('Choose Friday, Octobe
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(await page.$eval("#d", (e) => e.value), "2026-10-23");
 });
+
+test("'pick-up date' never lands on 'Pick-up location' (the kind of field must match)", async () => {
+  page = await browser.newPage();
+  await page.setContent(`<!doctype html><body>
+  <label>Pick-up location <input id=loc></label>
+  <div><span>Pick-up date</span><input id=d type=date></div></body>`);
+  const r = await smartAction(page, { type: "date", field: "pick-up date", value: "2026-10-23" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(await page.$eval("#d", (e) => e.value), "2026-10-23");
+  assert.equal(await page.$eval("#loc", (e) => e.value), "");
+});

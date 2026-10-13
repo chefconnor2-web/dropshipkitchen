@@ -132,7 +132,7 @@ export const EXAMPLES = [
 export const HOTEL_EMAIL_TEST = {
   label: "🧪 Test: book flight + hotel + cheapest rental car",
   prompt:
-    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, then a rental car at Miami airport from an hour after I land until I check out. Recommend the most economical car.",
+    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, and once the hotel is booked, a rental car at Miami airport from an hour after I land until I check out. Recommend the most economical car.",
 };
 
 /** iMessage-style timestamp: "Today 2:14 PM", "Yesterday 9:02 AM", "Monday 9:02 AM", "Oct 3, 2026 at 9:02 AM". */
