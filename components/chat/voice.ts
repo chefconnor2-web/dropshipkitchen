@@ -86,7 +86,7 @@ let speakToken = 0;
  * Reads text aloud, a sentence at a time (Chrome cuts off long utterances). Resolves when finished or
  * stopped. Any new speak() or stopSpeaking() cancels the previous one.
  */
-export function speak(text: string, onStart?: () => void): Promise<void> {
+export function speak(text: string, onStart?: () => void, onWord?: () => void): Promise<void> {
   if (!speechOutputSupported()) return Promise.resolve();
   const synth = window.speechSynthesis;
   synth.cancel();
@@ -101,6 +101,8 @@ export function speak(text: string, onStart?: () => void): Promise<void> {
       if (voice) u.voice = voice;
       u.rate = 1.05;
       u.onstart = () => i === 1 && onStart?.();
+      // Word boundaries (most browsers) let the orb bounce in time with the voice.
+      u.onboundary = (e) => e.name === "word" && onWord?.();
       u.onend = next;
       u.onerror = next;
       synth.speak(u);

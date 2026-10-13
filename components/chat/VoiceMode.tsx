@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MicIcon, XIcon } from "./ui";
+import NeonOrb, { type OrbState } from "./NeonOrb";
 import { listen, speak, speakable, stopSpeaking, type Recognizer } from "./voice";
 
 type Phase = "listening" | "thinking" | "speaking" | "paused";
@@ -12,14 +13,19 @@ const LABEL: Record<Phase, string> = {
   listening: "Listening…",
   thinking: "Working on it…",
   speaking: "Tap to interrupt",
-  paused: "Tap the circle to talk",
+  paused: "Tap Neon to talk",
 };
+
+const ORB: Record<Phase, OrbState> = { listening: "listening", thinking: "thinking", speaking: "speaking", paused: "idle" };
 
 export default function VoiceMode({ onSend, onClose }: { onSend: (text: string) => Promise<string | null>; onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>("paused");
   const [heard, setHeard] = useState("");
   const [said, setSaid] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  // Bumped per word heard or said, so Neon moves with the conversation.
+  const [pulse, setPulse] = useState(0);
+  const bump = () => setPulse((n) => n + 1);
   const rec = useRef<Recognizer | null>(null);
   const closed = useRef(false);
   const phaseRef = useRef<Phase>("paused");
@@ -38,7 +44,10 @@ export default function VoiceMode({ onSend, onClose }: { onSend: (text: string) 
     setNote(null);
     go("listening");
     const r = listen({
-      onText: setHeard,
+      onText: (t) => {
+        setHeard(t);
+        bump();
+      },
       onEnd: async (text, err) => {
         rec.current = null;
         if (closed.current || phaseRef.current !== "listening") return;
@@ -56,7 +65,7 @@ export default function VoiceMode({ onSend, onClose }: { onSend: (text: string) 
         }
         setSaid(speakable(reply));
         go("speaking");
-        await speak(reply);
+        await speak(reply, undefined, bump);
         if (!closed.current && (phaseRef.current as Phase) === "speaking") startListening();
       },
     });
@@ -90,9 +99,12 @@ export default function VoiceMode({ onSend, onClose }: { onSend: (text: string) 
     <div className={`vm vm-${phase}`} role="dialog" aria-label="Voice mode">
       <div className="vm-stage">
         <button type="button" className="vm-orb" onClick={tapOrb} aria-label={LABEL[phase]}>
-          <span className="vm-ring" />
-          <span className="vm-ring vm-ring-2" />
-          <span className="vm-core">{phase === "paused" && <MicIcon />}</span>
+          <NeonOrb state={ORB[phase]} size={150} pulse={pulse} mic />
+          {phase === "paused" && (
+            <span className="vm-mic-badge">
+              <MicIcon />
+            </span>
+          )}
         </button>
         <p className="vm-label">{LABEL[phase]}</p>
         <p className="vm-caption">{note ?? (phase === "listening" || phase === "thinking" ? heard : phase === "speaking" ? said : "")}</p>
