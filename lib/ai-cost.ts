@@ -24,13 +24,17 @@ export interface TokenUsage {
   output_tokens: number;
   cache_read_input_tokens?: number | null;
   cache_creation_input_tokens?: number | null;
+  server_tool_use?: { web_search_requests?: number | null } | null;
 }
+
+/** Web search: $10 per 1,000 searches. (Web fetch costs only the tokens it adds.) */
+const WEB_SEARCH_MICROS = 10_000;
 
 /** Cost of one API response in micro-dollars ($1 = 1,000,000), rounded up. */
 export function costMicros(model: string, u: TokenUsage): number {
   const p = PRICES.find(([re]) => re.test(model))?.[1] ?? FALLBACK;
   // $/MTok equals micros per token.
-  const micros = u.input_tokens * p.input + u.output_tokens * p.output + (u.cache_read_input_tokens ?? 0) * p.cacheRead + (u.cache_creation_input_tokens ?? 0) * p.cacheWrite;
+  const micros = u.input_tokens * p.input + u.output_tokens * p.output + (u.cache_read_input_tokens ?? 0) * p.cacheRead + (u.cache_creation_input_tokens ?? 0) * p.cacheWrite + (u.server_tool_use?.web_search_requests ?? 0) * WEB_SEARCH_MICROS;
   return Math.ceil(micros);
 }
 
