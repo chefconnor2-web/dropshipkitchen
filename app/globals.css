@@ -2219,3 +2219,4 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-browser.is-full .cx-browser-turn { padding: 6px 12px; }
 .cx-browser.is-full .cx-browser-turn p { font-size: 14px; line-height: 1.3; }
 .cx-browser-min { background: #2a2537; color: #eeeaf7; }
+.cx-browser-tabs { flex: none; padding: 4px 8px; border-radius: 99px; background: #2a2537; color: #e8ceff; font: 600 11.5px/1 var(--im-font, inherit); white-space: nowrap; }

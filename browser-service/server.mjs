@@ -25,6 +25,7 @@ import crypto from "node:crypto";
 import puppeteer from "puppeteer-core";
 import { WebSocketServer } from "ws";
 import { deliver as deliverFrame, stopDelivery } from "./frames.mjs";
+import { runPool } from "./pool.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 const SECRET = process.env.BROWSER_SERVICE_SECRET || "";
@@ -42,6 +43,10 @@ const UNWATCHED_MS = (Number(process.env.UNWATCHED_MINUTES) || 3) * 60_000;
 // One input step may take this long before it's reported as failed (a hung page never blocks the queue).
 const STEP_MS = 25_000;
 const log = (...a) => console.log("[browser]", ...a);
+// Tabs one batch may use at once (the watched tab plus helpers). Each extra Amazon tab is ~150-300 MB even
+// without images, so keep this low on a 1 GB service.
+const TABS = Math.max(1, Math.min(6, Number(process.env.BATCH_TABS) || 3));
+const BATCH_MAX = 20;
 const KEYS = ["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 // Same browser as workflow-agent-cart's shopping agent (desktop Chrome, 1280×800), which Amazon treats as a
 // normal shopper; a mobile emulation got a different Amazon and stalled at Add to Cart.
@@ -306,13 +311,14 @@ async function needsShopper(page) {
 }
 
 /** Where the page is now, and a picture of it for Neon to look at. */
-async function snapshot(s, extra = {}) {
+async function snapshot(s, extra = {}, page = s.page) {
   const vp = s.mode === "phone" ? PHONE_VIEW : VIEW;
-  const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null);
-  const needs = await needsShopper(s.page);
+  // Helper tabs report facts only: the shopper (and Neon) watch the main tab.
+  const shot = page === s.page ? await page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null) : null;
+  const needs = await needsShopper(page);
   return {
-    url: s.page.url(),
-    title: await s.page.title().catch(() => ""),
+    url: page.url(),
+    title: await page.title().catch(() => ""),
     captcha: !!needs && !/sign in/.test(needs),
     signIn: !!needs && /sign in/.test(needs),
     needsShopper: needs,
@@ -323,9 +329,9 @@ async function snapshot(s, extra = {}) {
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function goto(s, url) {
+async function goto(s, url, page = s.page) {
   if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon pages can be opened."), { status: 400 });
-  await s.page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 }
 
 async function runAction(s, a) {
@@ -370,11 +376,10 @@ const domainOf = (d) => (AMAZON.has(String(d)) ? String(d) : "amazon.com");
 const isProductUrl = (url) => /^https?:\/\/(www\.)?amazon\.(com|ca)\/.*(\/dp\/|\/gp\/product\/)[A-Z0-9]{10}/i.test(url);
 
 // The next two follow workflow-agent-cart's searchAmazon and addToCart step for step.
-async function amazonSearch(s, domain, query) {
+async function amazonSearch(s, domain, query, page = s.page) {
   const base = `https://www.${domainOf(domain)}`;
-  await goto(s, `${base}/s?k=${encodeURIComponent(String(query).slice(0, 200))}`);
-  if (await isCaptcha(s.page)) return snapshot(s, { results: [] });
-  const page = s.page;
+  await goto(s, `${base}/s?k=${encodeURIComponent(String(query).slice(0, 200))}`, page);
+  if (await isCaptcha(page)) return snapshot(s, { results: [] }, page);
   await page.waitForSelector('[data-component-type="s-search-result"]', { timeout: 10000 }).catch(() => null);
   for (const y of [200, 500, 900, 1300]) {
     await page.evaluate((yy) => window.scrollTo({ top: yy, behavior: "smooth" }), y);
@@ -417,28 +422,27 @@ async function amazonSearch(s, domain, query) {
   );
   const found = results.filter((p) => /\/dp\/|\/gp\/product\//i.test(p.url));
   for (const p of found) s.urls.set(p.asin, p.url);
-  return snapshot(s, { results: found.map(({ url, ...rest }) => rest) });
+  return snapshot(s, { results: found.map(({ url, ...rest }) => rest) }, page);
 }
 
-async function amazonAdd(s, domain, asin, quantity) {
+async function amazonAdd(s, domain, asin, quantity, page = s.page) {
   if (!/^[A-Z0-9]{10}$/i.test(String(asin))) throw Object.assign(new Error("That isn't an Amazon product ID (ASIN)."), { status: 400 });
-  const page = s.page;
   const known = s.urls.get(String(asin).toUpperCase()) || s.urls.get(String(asin));
   const productUrl = known && isProductUrl(known) ? known : `https://www.${domainOf(domain)}/dp/${asin}`;
   try {
-    await goto(s, productUrl);
+    await goto(s, productUrl, page);
   } catch (e) {
     if (e.status) throw e;
-    return snapshot(s, { added: false, reason: "The product page didn't load." });
+    return snapshot(s, { added: false, reason: "The product page didn't load." }, page);
   }
-  if (await isCaptcha(page)) return snapshot(s, { added: false, reason: "captcha" });
+  if (await isCaptcha(page)) return snapshot(s, { added: false, reason: "captcha" }, page);
   const title = await page.$eval("#productTitle, #title", (el) => el.textContent.trim()).catch(() => "");
   const price = await page.$eval("#corePrice_feature_div .a-offscreen, .a-price .a-offscreen", (el) => el.textContent.trim()).catch(() => null);
 
   const atc = await page
     .waitForSelector(['#add-to-cart-button', '#add-to-cart-button-ubb', 'input[name="submit.add-to-cart"]', 'input[name="submit.addToCart"]', "#submit\\.add-to-cart"].join(", "), { visible: true, timeout: 8000 })
     .catch(() => null);
-  if (!atc) return snapshot(s, { added: false, title, price, reason: "No Add to Cart button on this page (likely a buying-options listing, or it needs an option chosen)." });
+  if (!atc) return snapshot(s, { added: false, title, price, reason: "No Add to Cart button on this page (likely a buying-options listing, or it needs an option chosen)." }, page);
 
   const qty = Math.max(1, Math.min(30, Number(quantity) || 1));
   let appliedQty = 1;
@@ -463,7 +467,7 @@ async function amazonAdd(s, domain, asin, quantity) {
   try {
     await atc.click({ delay: 30 });
   } catch {
-    return snapshot(s, { added: false, title, price, reason: "Couldn't click Add to Cart." });
+    return snapshot(s, { added: false, title, price, reason: "Couldn't click Add to Cart." }, page);
   }
   const added = await Promise.race([
     page
@@ -479,8 +483,57 @@ async function amazonAdd(s, domain, asin, quantity) {
       return false;
     })(),
   ]);
-  return snapshot(s, { added, title, price, quantity: appliedQty, requestedQuantity: qty });
+  return snapshot(s, { added, title, price, quantity: appliedQty, requestedQuantity: qty }, page);
 }
+
+/** A helper tab in the session's browser (same cookies, so the same guest cart): no images, no video. */
+async function openHelper(s) {
+  const page = await s.ctx.newPage();
+  await page.setUserAgent(UA);
+  await page.setViewport(VIEW);
+  page.on("dialog", (d) => d.dismiss().catch(() => {}));
+  page.on("popup", (p) => p.close().catch(() => {}));
+  // Helpers only ever open Amazon pages; anything else is pulled back to a blank page.
+  page.on("framenavigated", (f) => {
+    if (f !== page.mainFrame()) return;
+    const url = f.url();
+    if (/^https?:/i.test(url) && !navOk(hostOf(url))) page.goto("about:blank").catch(() => {});
+  });
+  const cdp = await page.createCDPSession();
+  await cdp.send("Network.enable").catch(() => {});
+  await cdp.send("Network.setBlockedURLs", {
+    urls: ["*.mp4*", "*.m3u8*", "*.webm*", "*.m4s*", "*.mpd*", "*.jpg*", "*.jpeg*", "*.png*", "*.gif*", "*.webp*", "*.avif*", "*.svg*", "*.woff*", "*.woff2*", "*.ttf*"],
+  }).catch(() => {});
+  return page;
+}
+
+/**
+ * Runs a batch on the watched tab plus up to TABS-1 helper tabs at once (the helpers close afterwards, so their
+ * memory comes straight back). Viewers hear the progress as {t:"tabs", working, done, total}.
+ */
+async function inTabs(s, items, job) {
+  const n = Math.max(1, Math.min(TABS, items.length));
+  const helpers = [];
+  try {
+    for (let i = 1; i < n; i++) helpers.push(await openHelper(s).catch(() => null));
+    const workers = [s.page, ...helpers.filter(Boolean)];
+    log("session", s.id.slice(0, 6), "batch of", items.length, "on", workers.length, "tabs");
+    broadcast(s, { t: "tabs", working: workers.length, done: 0, total: items.length });
+    return await runPool(items, workers, job, (done, total) => {
+      s.lastUsed = Date.now();
+      broadcast(s, { t: "tabs", working: workers.length, done, total });
+    });
+  } finally {
+    for (const p of helpers) await p?.close().catch(() => {});
+    broadcast(s, { t: "tabs", working: 0, done: items.length, total: items.length });
+  }
+}
+
+const cleanItems = (items) =>
+  (Array.isArray(items) ? items : [])
+    .slice(0, BATCH_MAX)
+    .map((it) => ({ asin: String(it?.asin ?? "").toUpperCase(), quantity: Math.max(1, Math.min(30, Number(it?.quantity) || 1)) }))
+    .filter((it) => /^[A-Z0-9]{10}$/.test(it.asin));
 
 async function amazonCart(s, domain) {
   await goto(s, `https://www.${domainOf(domain)}/gp/cart/view.html`);
@@ -576,6 +629,28 @@ const server = http.createServer(async (req, res) => {
       if (rest === "/amazon/search") return send(res, 200, await withSession(id, (s) => amazonSearch(s, body.domain, body.query ?? "")));
       if (rest === "/amazon/add") return send(res, 200, await withSession(id, (s) => amazonAdd(s, body.domain, body.asin, body.quantity)));
       if (rest === "/amazon/cart") return send(res, 200, await withSession(id, (s) => amazonCart(s, body.domain)));
+      if (rest === "/amazon/search-many") {
+        const queries = (Array.isArray(body.queries) ? body.queries : []).map((q) => String(q ?? "").trim().slice(0, 200)).filter(Boolean).slice(0, 8);
+        if (!queries.length) return send(res, 400, { error: "No searches given." });
+        return send(res, 200, await withSession(id, async (s) => {
+          const results = await inTabs(s, queries, async (query, page) => {
+            const r = await amazonSearch(s, body.domain, query, page);
+            return { query, results: r.results ?? [], captcha: r.captcha, signIn: r.signIn, needsShopper: r.needsShopper };
+          });
+          return snapshot(s, { searches: results });
+        }));
+      }
+      if (rest === "/amazon/add-many") {
+        const items = cleanItems(body.items);
+        if (!items.length) return send(res, 400, { error: "No valid items (ASIN and quantity) given." });
+        return send(res, 200, await withSession(id, async (s) => {
+          const results = await inTabs(s, items, async (it, page) => {
+            const r = await amazonAdd(s, body.domain, it.asin, it.quantity, page);
+            return { asin: it.asin, added: !!r.added, title: r.title, price: r.price ?? null, quantity: r.quantity, requestedQuantity: it.quantity, reason: r.reason, captcha: r.captcha, signIn: r.signIn };
+          });
+          return snapshot(s, { items: results });
+        }));
+      }
     }
     send(res, 404, { error: "Not found" });
   } catch (e) {

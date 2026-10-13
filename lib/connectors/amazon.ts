@@ -208,6 +208,32 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "amazon_search_many",
+    description:
+      "Run several Amazon searches at once, in parallel tabs of the same live browser (faster than one by one). Use it when the shopper wants several different products. Returns the top results for each search, like amazon_search.",
+    input_schema: {
+      type: "object",
+      properties: { queries: { type: "array", items: { type: "string" }, maxItems: 8, description: "Plain search words, one per product." } },
+      required: ["queries"],
+    },
+  },
+  {
+    name: "amazon_add_many",
+    description:
+      "Add several products to the cart at once, in parallel tabs of the same live browser (one guest cart; much faster than one by one). Use ASINs from your searches. Returns, for each, whether it went in.",
+    input_schema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          maxItems: 20,
+          items: { type: "object", properties: { asin: { type: "string" }, quantity: { type: "integer", minimum: 1, maximum: 30 } }, required: ["asin"] },
+        },
+      },
+      required: ["items"],
+    },
+  },
+  {
     name: "amazon_checkout_link",
     description:
       'Show the shopper a "Check out on Amazon" button: one link that puts everything you added to the Amazon cart in this chat (same products and quantities) into the shopper\'s OWN Amazon cart, in their Safari or Amazon app where they\'re already signed in. They check out there. Call it once everything is added and you\'ve read the cart with amazon_view_cart. It never places an order.',
@@ -376,6 +402,54 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       if (isSignIn(p)) return guestResult(await asGuest(), facts, "The item went in. Carry on.");
       return pageResult(p, facts, !p.added);
     }
+    if (tool === "amazon_search_many") {
+      const queries = (Array.isArray(input.queries) ? input.queries : []).map((q) => str(q, 200)).filter(Boolean).slice(0, 8);
+      if (!queries.length) return { content: "Give me something to search for.", isError: true };
+      ctx.progress(`Searching Amazon for ${queries.length} things at once…`);
+      const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.searchMany(id, domain, queries, signal), signal);
+      shown(session);
+      if (isSignIn(p)) await asGuest();
+      const searches = (p.searches ?? []).map((x) => ({
+        query: x.query,
+        results: (x.results ?? []).map((r) => ({ asin: r.asin, title: r.title, price: r.price, rating: r.rating, reviews: r.reviews, prime: r.prime, sponsored: r.sponsored })),
+        ...(x.captcha || x.needsShopper || x.error ? { blocked: true } : {}),
+      }));
+      const blocked = searches.filter((x) => x.blocked).map((x) => x.query);
+      const note = blocked.length ? `These searches were blocked (a robot check or a page that didn't load): ${blocked.join("; ")}. Run each with amazon_search (a robot check is handed to the shopper there).` : undefined;
+      return pageResult(p, { site, searches, note: "Prices are as Amazon shows them right now, in the site's currency." }, false, note);
+    }
+    if (tool === "amazon_add_many") {
+      const items = (Array.isArray(input.items) ? input.items : [])
+        .slice(0, 20)
+        .map((o) => ({ asin: str((o as { asin?: unknown })?.asin, 10).toUpperCase(), quantity: Math.max(1, Math.min(30, Number((o as { quantity?: unknown })?.quantity) || 1)) }))
+        .filter((o) => /^[A-Z0-9]{10}$/.test(o.asin));
+      if (!items.length) return { content: "Give me ASINs from your searches to add.", isError: true };
+      const cart = await chatCart(ctx.chatId, domain);
+      ctx.progress(`Adding ${items.length} items in parallel tabs…`);
+      const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.addMany(id, domain, items, signal), signal);
+      shown(session);
+      const results = p.items ?? [];
+      for (const r of results) {
+        if (r.added) noteAdded(cart, domain, session.id, r.asin, r.quantity ?? r.requestedQuantity, r.title);
+        // Amazon asked to sign in before it went in: it still goes into the shopper's own cart via the link.
+        else if (r.signIn) noteKept(cart, domain, r.asin, r.requestedQuantity, r.title);
+      }
+      if (isSignIn(p)) await asGuest();
+      const added = results.filter((r) => r.added).length;
+      ctx.progress(`✓ Added ${added} of ${items.length}`);
+      const robot = results.filter((r) => !r.added && r.captcha).map((r) => r.asin);
+      const failed = results.filter((r) => !r.added && !r.captcha && !r.signIn).map((r) => r.asin);
+      const notes = [
+        robot.length ? `A robot check stopped these: ${robot.join(", ")}. Add each with amazon_add_to_cart (the shopper is asked to get past the check there).` : "",
+        failed.length ? `These didn't go in: ${failed.join(", ")} (see each reason). Retry one with amazon_add_to_cart only if the reason suggests it would work, or pick another listing.` : "",
+      ].filter(Boolean);
+      return pageResult(
+        p,
+        { site, added, of: items.length, results: results.map((r) => ({ asin: r.asin, added: r.added, title: r.title, price: r.price, quantity: r.quantity, keptForLink: !r.added && !!r.signIn, reason: r.reason ?? r.error })) },
+        false,
+        notes.join(" ") || undefined,
+      );
+    }
     if (tool === "amazon_view_cart") {
       ctx.progress("Checking the Amazon cart…");
       const cart = await chatCart(ctx.chatId, domain);
@@ -489,7 +563,8 @@ export const amazonConnector: Connector = {
 Amazon, in a live browser:
 - When the shopper asks for something from Amazon, or asks you to shop or fill a cart on Amazon, use the Amazon tools. They drive a real browser that appears in the chat, so the shopper watches you search and add things. The browser is never signed in: you fill a guest cart.
 - One amazon_search per product, then pick the best match: relevance and specs first, then ratings and review count, prefer Prime, skip sponsored results unless they're clearly the best fit. Say why in a few words.
-- Add what the shopper wants with amazon_add_to_cart (the right quantity). When everything is added, call amazon_view_cart and tell them what's in it and the subtotal Amazon shows, then call amazon_checkout_link. It shows a "Check out on Amazon" button that puts the same items in the shopper's own Amazon cart, in their Safari or Amazon app where they're already signed in; they check out there.
+- Several products: search them all at once with amazon_search_many, then add them all at once with amazon_add_many (parallel tabs in the same browser, much faster). One product, or a retry: amazon_search / amazon_add_to_cart.
+- Add what the shopper wants (the right quantities). When everything is added, call amazon_view_cart and tell them what's in it and the subtotal Amazon shows, then call amazon_checkout_link. It shows a "Check out on Amazon" button that puts the same items in the shopper's own Amazon cart, in their Safari or Amazon app where they're already signed in; they check out there.
 - Quote prices only as Amazon shows them in the results or cart, in that site's currency. Never invent them.
 - If a product needs a choice (size, color, voltage) and the shopper said what they want, use browser_act to select it; if they didn't, ask, or hand the page over with browser_hand_over (reason choice).
 - Never ask the shopper to sign in or to check out inside the live browser, never type a password, one-time code, card number or address, and never place an order. When Amazon asks to sign in, the tools go back and carry on as a guest; follow what their result says. Robot checks are handed to the shopper automatically, and browser_hand_over is only for a robot check or a choice only they can make. While it's handed over your turn pauses until they tap Approve & next, then you see the page and carry on in the same reply. Don't end your turn to wait.

@@ -150,6 +150,9 @@ export async function inBrowser<T>(chatId: string, step: (id: string) => Promise
   }
 }
 
+// A batch (up to 20 items over a few tabs) can take minutes; single steps keep the 90 s limit.
+const BATCH_MS = 5 * 60_000;
+
 export const browserApi = {
   act: (id: string, actions: unknown[], signal?: AbortSignal) => call<PageState>(`/sessions/${id}/act`, { actions }, "POST", signal),
   state: (id: string, signal?: AbortSignal) => call<PageState>(`/sessions/${id}/state`, undefined, "GET", signal),
@@ -162,6 +165,22 @@ export const browserApi = {
       "POST",
       signal,
     ),
+  /** Several searches at once, in parallel tabs of the same browser. */
+  searchMany: (id: string, domain: string, queries: string[], signal?: AbortSignal) =>
+    call<PageState & { searches?: Array<{ query: string; results: AmazonResult[]; captcha?: boolean; signIn?: boolean; needsShopper?: string | null; error?: string }> }>(
+      `/sessions/${id}/amazon/search-many`,
+      { domain, queries },
+      "POST",
+      signal,
+      BATCH_MS,
+    ),
+  /** Several products added at once, in parallel tabs of the same browser (one guest cart). */
+  addMany: (id: string, domain: string, items: Array<{ asin: string; quantity: number }>, signal?: AbortSignal) =>
+    call<
+      PageState & {
+        items?: Array<{ asin: string; added: boolean; title?: string; price?: string | null; quantity?: number; requestedQuantity: number; reason?: string; captcha?: boolean; signIn?: boolean; error?: string }>;
+      }
+    >(`/sessions/${id}/amazon/add-many`, { domain, items }, "POST", signal, BATCH_MS),
   cart: (id: string, domain: string, signal?: AbortSignal) =>
     call<PageState & { items?: Array<{ asin: string; title: string; quantity: number | null; price: string | null }>; subtotal?: string | null }>(
       `/sessions/${id}/amazon/cart`,
