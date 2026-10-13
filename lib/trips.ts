@@ -124,7 +124,13 @@ export function chatShown(uiJson: string) {
       else if (it.kind === "hotel") {
         if (typeof it.id === "string") hotels.add(it.id);
         if (typeof it.offerId === "string") hotels.add(it.offerId);
-      } else if (it.kind === "car" && typeof it.id === "string") cars.set(it.id, it as unknown as CarRentalCard);
+      } else if (it.kind === "car" && typeof it.id === "string") {
+        // One rental per place and dates: a later card for the same search (the filled-in one) replaces it.
+        const c = it as unknown as CarRentalCard;
+        const key = `${String(c.location).toLowerCase()}|${c.pickup}|${c.dropoff}`;
+        cars.delete(key);
+        cars.set(key, c);
+      }
       else if (it.kind === "cart-link") cart = it as unknown as CartLinkCard;
       else if (it.kind === "email-draft" && typeof it.id === "string") emails.set(it.id, { card: it as unknown as EmailDraftCard, at: e.at ?? null });
     }
