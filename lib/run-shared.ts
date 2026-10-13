@@ -25,6 +25,20 @@ export interface PendingStep {
   expiresAt: string;
 }
 
+/**
+ * One step Neon asked the shopper to approve, as the chat shows it: an actionable message while pending, then
+ * its outcome. Only steps the run really waits on produce these (robot checks, choices); nothing else is gated.
+ */
+export interface ApprovalRecord {
+  /** The pending step's id ("st_…"); an approval can only ever resume this exact step. */
+  id: string;
+  kind: PendingKind;
+  message: string;
+  status: "pending" | "approved" | "expired" | "cancelled";
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 export interface LiveCard {
   pid: string;
   title: string;
@@ -52,6 +66,8 @@ export interface PartialEntry {
   reaction: string | null;
   /** Characters written (text + thinking), for "↓ 1.2k tokens". */
   chars: number;
+  /** Steps Neon asked the shopper to approve during this reply, oldest first. */
+  approvals: ApprovalRecord[];
 }
 
 /** Live events while a run executes (same shapes the chat used before runs existed). */
@@ -62,7 +78,9 @@ export type LiveEvent =
   | { type: "text"; delta: string }
   | { type: "thinking"; delta: string }
   | { type: "break" }
-  | { type: "react"; emoji: string };
+  | { type: "react"; emoji: string }
+  /** A step to approve was opened or resolved (upserted by id). */
+  | { type: "approval"; record: ApprovalRecord };
 
 export interface RunSnapshot {
   id: string;
@@ -115,7 +133,7 @@ export interface RunAccepted {
   duplicate: boolean;
 }
 
-export const emptyPartial = (): PartialEntry => ({ text: "", steps: [], groups: [], items: [], trace: [], reaction: null, chars: 0 });
+export const emptyPartial = (): PartialEntry => ({ text: "", steps: [], groups: [], items: [], trace: [], reaction: null, chars: 0, approvals: [] });
 
 const MAX_TRACE_ITEMS = 60;
 
@@ -155,6 +173,11 @@ export function applyEvent(p: PartialEntry, e: LiveEvent): PartialEntry {
     }
     case "react":
       return { ...p, reaction: e.emoji };
+    case "approval": {
+      const list = p.approvals ?? [];
+      const at = list.findIndex((a) => a.id === e.record.id);
+      return { ...p, approvals: at >= 0 ? list.map((a, i) => (i === at ? e.record : a)) : [...list, e.record] };
+    }
   }
 }
 

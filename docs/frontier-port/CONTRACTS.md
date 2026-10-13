@@ -251,3 +251,23 @@ Agent steps while the shopper has control → 409 (unchanged).
   - Media (video and audio streams) is blocked.
   - A session with no viewer and no step for 3 minutes is closed.
   - Session lifecycle is logged: no URLs, no page content.
+
+## 12. Approval messages ("Approve & next")
+Approvals only exist for steps the run really waits on (`waitForShopper`: robot checks and choices). No new gates are added.
+
+- **Data** (`lib/run-shared.ts`).
+  - `ApprovalRecord {id: stepId, kind, message, status: pending|approved|expired|cancelled, createdAt, resolvedAt?}`.
+  - `PartialEntry.approvals: ApprovalRecord[]`.
+  - `LiveEvent {type:"approval", record}`, upserted by id.
+  - The server emits it when a step opens (pending), and when it's resumed (approved), expires or is cancelled.
+  - The saved assistant entry keeps `approvals` (the resolved history).
+- **Chat.**
+  - The active step is an assistant message appended at the latest point of the chat. It carries the explanation and an **Approve & next** button bound to that record's `id`.
+  - Resolved records render as compact status lines ("Approved").
+  - When the active message is off-screen, a compact pending bar sits just above the composer with the same action. The chat is never force-scrolled; a "Show" link scrolls only when tapped.
+- **One approval action** (`RunContext.approve(stepId)`), shared by the chat message, the pending bar and the full-screen browser:
+  - At most one request in flight per step. Duplicate taps are ignored.
+  - States: `idle → approving ("Approving…", disabled) → approved ("Approved", disabled)`, or `error` (a message, plus retry with the same stepId).
+  - The UI marks a step approved only on `{accepted:true, stepId}` from POST /resume.
+  - `stale_step`, `run_finished` and `expired` show the step's current status ("Superseded", "Already finished", "Timed out") and remove its button. An old message can never approve a newer step, because the request carries the old stepId and the server rejects it.
+- **Browser take-over.** A step tied to a browser card still opens that card full screen, with the same Approve & next action. It also has **Back to chat**, which minimizes without approving: the pending message and bar stay. After accepted approval, the card returns inline with the same session and socket.
