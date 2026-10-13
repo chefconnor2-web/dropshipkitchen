@@ -1,9 +1,20 @@
 // POST {offerId}: a shareable trip link for flights found in the chat ("Share" on a flight card), so friends
 // can book the same flights. The offer must still be live, so what's shared is real.
+// GET: the current shopper's trips (their chats with paid bookings): itinerary, receipts and confirmations.
 
 import { NextResponse } from "next/server";
 import { DuffelError, duffelConfigured } from "@/lib/duffel";
 import { shareFromOffer, sharedTripUrl } from "@/lib/shared-trips";
+import { currentOwner } from "@/lib/chat-session";
+import { tripsFor } from "@/lib/trips";
+
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  const { customerId, visitorId, where } = await currentOwner();
+  if (!customerId && !visitorId) return NextResponse.json({ trips: [] });
+  return NextResponse.json({ trips: await tripsFor({ customerId, where }) }, { headers: { "cache-control": "no-store" } });
+}
 
 export async function POST(req: Request) {
   if (!duffelConfigured()) return NextResponse.json({ error: "Flights aren't available right now." }, { status: 503 });

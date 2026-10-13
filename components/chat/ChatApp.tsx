@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import Chat, { type ChatEvents } from "./Chat";
+import TripsPanel from "./TripsPanel";
 import { BagIcon, DotsIcon, GiftIcon, GridIcon, MenuIcon, NewChatIcon, PencilIcon, SearchIcon, SidebarIcon, XIcon } from "./ui";
 
 export interface ChatSummary {
@@ -50,6 +51,8 @@ export default function ChatApp(props: { storeName: string; initials: string; co
   const [cartCount, setCartCount] = useState(props.cartCount);
   const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [tripsOpen, setTripsOpen] = useState(false);
+  const closeTrips = useCallback(() => setTripsOpen(false), []);
   const [query, setQuery] = useState("");
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -179,6 +182,17 @@ export default function ChatApp(props: { storeName: string; initials: string; co
           <input type="search" placeholder="Search chats" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <nav className="sb-links" aria-label="Store">
+          <button
+            type="button"
+            className="sb-row"
+            onClick={() => {
+              setDrawer(false);
+              setTripsOpen(true);
+            }}
+          >
+            <PlaneIcon />
+            <span>Trips</span>
+          </button>
           <Link href="/search" className="sb-row">
             <GridIcon />
             <span>Browse catalog</span>
@@ -303,6 +317,9 @@ export default function ChatApp(props: { storeName: string; initials: string; co
               <span className="topbar-sub">{active ? active.title : "Your personal POS"}</span>
             </span>
           </div>
+          <button type="button" className="sb-icon topbar-trips" onClick={() => setTripsOpen(true)} aria-label="Trips" title="Trips: itineraries and receipts">
+            <PlaneIcon />
+          </button>
           <button type="button" className="sb-icon show-mobile" onClick={newChat} aria-label="New chat">
             <NewChatIcon />
           </button>
@@ -312,8 +329,17 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             {cartCount > 0 && <span className="sb-badge">{cartCount}</span>}
           </Link>
         </header>
+        {tripsOpen && <TripsPanel onClose={closeTrips} />}
         <Chat chatId={chatId} configured={props.configured} cartCount={cartCount} events={events} storeName={props.storeName} initials={props.initials} />
       </main>
     </div>
+  );
+}
+
+function PlaneIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+      <path d="M10.5 13.5 3 11l1.5-1.5 8 .5 4.5-4.5a2.1 2.1 0 0 1 3 3L15.5 13l.5 8L14.5 22.5 12 15l-3 3v2.5L7.5 22 6 18l-4-1.5L3.5 15H6l3-3" />
+    </svg>
   );
 }
