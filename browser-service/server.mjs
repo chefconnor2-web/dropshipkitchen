@@ -317,10 +317,10 @@ async function needsShopper(page) {
 }
 
 /** Where the page is now, and a picture of it for Neon to look at. */
-async function snapshot(s, extra = {}, page = s.page) {
+async function snapshot(s, extra = {}, page = s.page, withShot = true) {
   const vp = s.mode === "phone" ? PHONE_VIEW : VIEW;
-  // Helper tabs report facts only: the shopper (and Neon) watch the main tab.
-  const shot = page === s.page ? await page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null) : null;
+  // Helper tabs report facts only: the shopper (and Neon) watch the main tab. Steps in a row can skip the picture.
+  const shot = page === s.page && withShot ? await page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null) : null;
   const needs = await needsShopper(page);
   return {
     url: page.url(),
@@ -684,11 +684,17 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, await withSession(id, async (s) => {
           // What each smart action did (or why it couldn't), so Neon knows which field to fix by hand.
           const results = [];
+          const t0 = Date.now();
+          const timing = [];
           for (const a of actions) {
+            const t = Date.now();
             const r = await runAction(s, a);
+            timing.push(`${a?.type}${a?.field ? `(${String(a.field).slice(0, 24)})` : a?.text ? `(${String(a.text).slice(0, 24)})` : ""} ${Date.now() - t}ms${r && r.ok === false ? " ✗" : ""}`);
             if (SMART.has(a?.type)) results.push({ type: a.type, ...(a.field ? { field: String(a.field).slice(0, 60) } : {}), ...(a.text ? { text: String(a.text).slice(0, 60) } : {}), ...r });
           }
-          return snapshot(s, results.length ? { results } : {});
+          log("act", s.id.slice(0, 6), hostOf(s.page.url()), `${Date.now() - t0}ms:`, timing.join(", "));
+          for (const r of results) if (!r.ok && r.fields) log("act", s.id.slice(0, 6), "fields on page:", JSON.stringify(r.fields).slice(0, 900));
+          return snapshot(s, results.length ? { results } : {}, s.page, body.noShot !== true);
         }));
       }
       if (rest === "/amazon/search") return send(res, 200, await withSession(id, (s) => amazonSearch(s, body.domain, body.query ?? "")));

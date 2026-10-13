@@ -9,7 +9,8 @@ import { PrefillNote } from "@/components/PrefillNote";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Book your hotel", robots: { index: false } };
 
-export default async function BookHotelPage({ params }: { params: Promise<{ offerId: string }> }) {
+export default async function BookHotelPage({ params, searchParams }: { params: Promise<{ offerId: string }>; searchParams: Promise<{ chat?: string }> }) {
+  const fromChat = (await searchParams).chat;
   const { offerId } = await params;
   // Our short card id; old links carried LiteAPI's long offer id, which is also the card's key for old cards.
   const card = liteapiConfigured() && offerId.length <= 2000 ? await offerCard(decodeURIComponent(offerId)) : null;
@@ -37,7 +38,7 @@ export default async function BookHotelPage({ params }: { params: Promise<{ offe
         </p>
       </div>
       <PrefillNote from={from} next={`/hotels/book/${encodeURIComponent(card.id)}`} />
-      <BookForm prefill={prefill} offerId={card.id} priceCents={card.priceCents} currency={card.currency} />
+      <BookForm chatId={fromChat} prefill={prefill} offerId={card.id} priceCents={card.priceCents} currency={card.currency} />
     </div>
   );
 }

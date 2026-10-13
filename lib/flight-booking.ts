@@ -8,6 +8,7 @@
 // booked it (a timeout), nothing is refunded and the merchant is alerted: refunding a ticket that was actually
 // issued would lose the fare.
 
+import { chatParam } from "@/lib/chat-session";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { stripe } from "@/lib/stripe";
@@ -206,7 +207,7 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
     ],
     metadata: { flightBookingId: booking.id, bookingNumber: booking.number },
     payment_intent_data: { metadata: { flightBookingId: booking.id } },
-    success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}`,
+    success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
   });
   await prisma.flightBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });

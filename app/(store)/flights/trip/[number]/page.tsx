@@ -11,7 +11,7 @@ import { flightPrice, type FlightCard as Card } from "@/lib/flights-shared";
 import { timingSafeEqual } from "node:crypto";
 import ShareButton from "@/components/ShareButton";
 import BackToChat from "@/components/BackToChat";
-import { chatForCard } from "@/lib/chat-session";
+import { chatForCard, findOwnChat } from "@/lib/chat-session";
 import { destinationLabel, shareFromBooking, tripDates, whosGoing } from "@/lib/shared-trips";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +19,9 @@ export const metadata = { title: "Your trip", robots: { index: false } };
 
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-export default async function TripPage({ params, searchParams }: { params: Promise<{ number: string }>; searchParams: Promise<{ s?: string; t?: string }> }) {
+export default async function TripPage({ params, searchParams }: { params: Promise<{ number: string }>; searchParams: Promise<{ s?: string; t?: string; chat?: string }> }) {
   const { number } = await params;
-  const { s, t } = await searchParams;
+  const { s, t, chat: chatQ } = await searchParams;
   const b = await prisma.flightBooking.findUnique({ where: { number } });
   if (!b) notFound();
   // Three ways in, all specific to this booking: back from Stripe (s), the emailed link (t), or signed in as its owner.
@@ -64,7 +64,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
             : { title: "Payment not completed", sub: "Your card wasn't charged. Go back to book again, or ask the assistant for current fares.", tone: "is-off" };
 
   // Booked from the chat: back there once it's confirmed, and Neon carries on.
-  const fromChat = status === FLIGHT_STATUS.BOOKED || working ? await chatForCard([b.offerId]) : null;
+  const fromChat = status === FLIGHT_STATUS.BOOKED || working || chatQ ? ((chatQ && (await findOwnChat(chatQ))?.id) || (await chatForCard([b.offerId]))) : null;
   return (
     <div className="wrap page narrow trk">
       {working && <meta httpEquiv="refresh" content="3" />}
@@ -79,7 +79,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
             <code>{b.bookingReference}</code>
           </p>
         )}
-        {fromChat && <BackToChat chatId={fromChat} booked={`flight:${b.number}`} what="flight" done={status === FLIGHT_STATUS.BOOKED} />}
+        {fromChat && <BackToChat chatId={fromChat} booked={`flight:${b.number}`} what="flight" done={status === FLIGHT_STATUS.BOOKED} pending={working} />}
       </section>
       <div className="fl-summary">
         <FlightCard f={card} bookable={false} />

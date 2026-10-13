@@ -54,11 +54,26 @@ function findField(hint, kinds) {
     }
     if (score > (best?.score ?? 0)) best = { el, score };
   }
-  if (!best || best.score < 30) return null;
+  // More than half the words must match ("first name" must not land on "Full name").
+  if (!best || best.score <= 30) return null;
   document.querySelectorAll("[data-neon-pick]").forEach((e) => e.removeAttribute("data-neon-pick"));
   best.el.setAttribute("data-neon-pick", "1");
   const el = best.el;
   return { tag: el.tagName.toLowerCase(), type: (el.getAttribute("type") || "").toLowerCase(), readOnly: !!el.readOnly, score: best.score };
+}
+
+/** The form's visible fields and buttons by their labels (when a field wasn't found: what's there instead). */
+function fieldInventory() {
+  const clean = (t) => String(t || "").replace(/\s+/g, " ").trim().slice(0, 40);
+  const out = [];
+  for (const el of document.querySelectorAll("input:not([type=hidden]), select, textarea, button, [role=combobox], [role=button]")) {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || out.length >= 25) continue;
+    const lab = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent : "";
+    const name = clean(el.getAttribute("aria-label") || lab || el.closest("label")?.textContent || el.getAttribute("placeholder") || el.previousElementSibling?.textContent || el.textContent || el.getAttribute("name"));
+    if (name) out.push(`${el.tagName.toLowerCase()}${el.getAttribute("type") ? `[${el.getAttribute("type")}]` : ""}: ${name}`);
+  }
+  return out;
 }
 
 /** Clicks the visible option/button/link whose text best matches (exact first). `scope`: only inside open popups. */
@@ -209,13 +224,13 @@ export async function smartAction(page, a) {
   const value = String(a.value ?? "");
   if (a.type === "click_text") {
     const did = await page.evaluate(clickMatching, [String(a.text ?? "")], "any");
-    if (!did) return { ok: false, why: `No visible button or link reads "${a.text}".` };
+    if (!did) return { ok: false, why: `No visible button or link reads "${a.text}".`, fields: await page.evaluate(fieldInventory).catch(() => []) };
     await settle(page);
     return { ok: true, did: `clicked "${did}"` };
   }
   if (a.type === "fill") {
     const f = await page.evaluate(findField, String(a.field ?? ""), "text");
-    if (!f) return { ok: false, why: `No field like "${a.field}".` };
+    if (!f) return { ok: false, why: `No field like "${a.field}".`, fields: await page.evaluate(fieldInventory).catch(() => []) };
     await typeInto(page, value);
     if (a.choose) {
       // Suggestions usually appear within a second: take the closest match to what was typed.
@@ -236,7 +251,7 @@ export async function smartAction(page, a) {
   }
   if (a.type === "select") {
     const f = await page.evaluate(findField, String(a.field ?? ""), "select");
-    if (!f) return { ok: false, why: `No dropdown like "${a.field}".` };
+    if (!f) return { ok: false, why: `No dropdown like "${a.field}".`, fields: await page.evaluate(fieldInventory).catch(() => []) };
     const forms = timeForms(value).concat(value);
     if (f.tag === "select") {
       const did = await page.$eval(
@@ -271,7 +286,7 @@ export async function smartAction(page, a) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { ok: false, why: "Dates are YYYY-MM-DD." };
     if (a.field) {
       const f = await page.evaluate(findField, String(a.field), "date");
-      if (!f) return { ok: false, why: `No date field like "${a.field}".` };
+      if (!f) return { ok: false, why: `No date field like "${a.field}".`, fields: await page.evaluate(fieldInventory).catch(() => []) };
       if (f.tag === "input" && (f.type === "date" || f.type === "datetime-local")) {
         await setNative(page, f.type === "date" ? value : `${value}T12:00`);
         return { ok: true, did: `set ${value}` };

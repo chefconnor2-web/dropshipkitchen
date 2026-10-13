@@ -7,6 +7,7 @@
 // LiteAPI refuses the booking, they're refunded in full automatically. If we can't tell whether it booked (a
 // timeout), nothing is refunded and the merchant is alerted: refunding a room that was actually booked loses it.
 
+import { chatParam } from "@/lib/chat-session";
 import type Stripe from "stripe";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
@@ -103,7 +104,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
     ],
     metadata: { hotelBookingId: booking.id, bookingNumber: booking.number },
     payment_intent_data: { metadata: { hotelBookingId: booking.id } },
-    success_url: `${config.siteUrl}/hotels/stay/${booking.number}?s={CHECKOUT_SESSION_ID}`,
+    success_url: `${config.siteUrl}/hotels/stay/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(card.id)}`,
   });
   await prisma.hotelBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });

@@ -13,10 +13,11 @@ import type { FlightCard as Card } from "@/lib/flights-shared";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Book your flight", robots: { index: false } };
 
-export default async function BookFlightPage({ params, searchParams }: { params: Promise<{ offerId: string }>; searchParams: Promise<{ trip?: string }> }) {
+export default async function BookFlightPage({ params, searchParams }: { params: Promise<{ offerId: string }>; searchParams: Promise<{ trip?: string; chat?: string }> }) {
   const { offerId } = await params;
   // Joining a friend's shared trip: say whose, and file the booking under it.
   const tripSlug = (await searchParams).trip;
+  const fromChat = (await searchParams).chat;
   const trip = tripSlug ? await prisma.sharedTrip.findUnique({ where: { slug: tripSlug } }) : null;
   let offer: DuffelOffer | null = null;
   let problem: string | null = null;
@@ -57,7 +58,7 @@ export default async function BookFlightPage({ params, searchParams }: { params:
         </p>
       </div>
       <PrefillNote from={from} next={`/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`} />
-      <BookForm prefill={prefill} offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} tripSlug={trip?.slug} />
+      <BookForm chatId={fromChat} prefill={prefill} offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} tripSlug={trip?.slug} />
     </div>
   );
 }

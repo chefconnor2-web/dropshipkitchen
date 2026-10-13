@@ -9,6 +9,10 @@ import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
+import { useRunContext } from "./run-context";
+
+/** Book buttons in the chat carry the chat's id, so after paying the shopper lands back in this chat. */
+const chatQ = (id: string | null, sep = "?") => (id && /^[A-Za-z0-9_-]{1,40}$/.test(id) ? `${sep}chat=${encodeURIComponent(id)}` : "");
 import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
@@ -659,6 +663,7 @@ function CarCard({ c }: { c: CarRentalCard }) {
 
 /** A hotel's best room for the dates: photo, rating, the room and what the whole stay costs, and Book. */
 export function HotelCard({ h, bookable = true }: { h: Hotel; bookable?: boolean }) {
+  const { chatId } = useRunContext();
   const perNight = stayPrice({ priceCents: Math.round(h.priceCents / Math.max(1, h.nights)), currency: h.currency });
   return (
     <div className="cx-hotel">
@@ -689,7 +694,7 @@ export function HotelCard({ h, bookable = true }: { h: Hotel; bookable?: boolean
               </a>
             )}
             {bookable && (
-              <Link className="cx-btn cx-btn-primary" href={`/hotels/book/${encodeURIComponent(h.id)}`}>
+              <Link className="cx-btn cx-btn-primary" href={`/hotels/book/${encodeURIComponent(h.id)}${chatQ(chatId)}`}>
                 Book
               </Link>
             )}
@@ -730,6 +735,7 @@ export function FlightCard({
   /** Extra control in the footer, e.g. the Share button on chat cards. */
   share?: ReactNode;
 }) {
+  const { chatId } = useRunContext();
   return (
     <div className="cx-flight">
       <div className="cx-flight-head">
@@ -770,7 +776,7 @@ export function FlightCard({
           <span className="cx-flight-actions">
             {share}
             {bookable && (
-              <a href={bookHref ?? `/flights/book/${encodeURIComponent(f.id)}`} className="cx-btn cx-btn-primary">
+              <a href={bookHref ?? `/flights/book/${encodeURIComponent(f.id)}${chatQ(chatId)}`} className="cx-btn cx-btn-primary">
                 Book
               </a>
             )}

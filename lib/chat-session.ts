@@ -83,3 +83,9 @@ export async function chatForCard(ids: Array<string | null | undefined>): Promis
   });
   return chat?.id ?? null;
 }
+
+/** "&chat=<id>" for a booking's return address when the form came from a chat's Book button, else "". */
+export function chatParam(form: FormData): string {
+  const id = String(form.get("chat") ?? "");
+  return /^[A-Za-z0-9_-]{1,40}$/.test(id) ? `&chat=${encodeURIComponent(id)}` : "";
+}
