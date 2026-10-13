@@ -72,7 +72,7 @@ export interface ChatCart {
    * By ASIN: added in Neon's browser or read from its cart (inCart), or kept for the link after Amazon asked to
    * sign in before it went in (not inCart). `session` is the browser it went into ("" when rebuilt from history).
    */
-  lines: Map<string, { quantity: number; domain: string; session: string; title?: string; inCart: boolean }>;
+  lines: Map<string, { quantity: number; domain: string; session: string; title?: string; inCart: boolean; delivery?: string }>;
   /** How many times Amazon asked to sign in while adding each ASIN (after the second, Neon stops retrying). */
   signInAsks: Map<string, number>;
 }
@@ -80,12 +80,12 @@ export interface ChatCart {
 export const newChatCart = (): ChatCart => ({ lines: new Map(), signInAsks: new Map() });
 
 /** amazon_add_to_cart worked: Amazon adds to what's there, so the quantities add up (in the same browser). */
-export function noteAdded(c: ChatCart, domain: string, session: string, asin: string, quantity: number, title?: string) {
+export function noteAdded(c: ChatCart, domain: string, session: string, asin: string, quantity: number, title?: string, delivery?: string | null) {
   const a = asin.toUpperCase();
   if (!ASIN.test(a)) return;
   const was = c.lines.get(a);
   const base = was?.inCart && was.domain === domain ? was.quantity : 0;
-  c.lines.set(a, { quantity: base + Math.max(1, Math.floor(quantity) || 1), domain, session, title: title || was?.title, inCart: true });
+  c.lines.set(a, { quantity: base + Math.max(1, Math.floor(quantity) || 1), domain, session, title: title || was?.title, inCart: true, delivery: delivery || was?.delivery });
   c.signInAsks.delete(a);
 }
 
@@ -147,7 +147,7 @@ export function rebuildChatCart(messages: unknown, domain: string): ChatCart {
       if (call.name === "amazon_add_to_cart") {
         const asin = String(r.asin ?? call.input.asin ?? "");
         const title = typeof r.title === "string" ? r.title : undefined;
-        if (r.added === true) noteAdded(c, site, "", asin, Number(r.quantity) || Number(call.input.quantity) || 1, title);
+        if (r.added === true) noteAdded(c, site, "", asin, Number(r.quantity) || Number(call.input.quantity) || 1, title, typeof r.delivery === "string" ? r.delivery : null);
         else if (r.keptForLink === true) noteKept(c, site, asin, Number(r.requestedQuantity) || Number(call.input.quantity) || 1, title);
       } else if (Array.isArray(r.items)) noteCartRead(c, site, "", r.items as Array<Record<string, unknown>>);
     }
@@ -412,7 +412,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       ctx.progress(`Adding to the Amazon cart…`);
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.add(id, domain, asin, quantity, signal), signal);
       showIfLoaded(session, p);
-      if (p.added) noteAdded(cart, domain, session.id, asin, p.quantity ?? quantity, p.title);
+      if (p.added) noteAdded(cart, domain, session.id, asin, p.quantity ?? quantity, p.title, p.delivery);
       if (isSignIn(p) && !p.added) return await signedOut(p.title);
       if (p.needsShopper && !p.added) {
         const after = await handOver(session, kindOf(p), p.needsShopper);
@@ -455,7 +455,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       showIfLoaded(session, p);
       const results = p.items ?? [];
       for (const r of results) {
-        if (r.added) noteAdded(cart, domain, session.id, r.asin, r.quantity ?? r.requestedQuantity, r.title);
+        if (r.added) noteAdded(cart, domain, session.id, r.asin, r.quantity ?? r.requestedQuantity, r.title, r.delivery);
         // Amazon asked to sign in before it went in: it still goes into the shopper's own cart via the link.
         else if (r.signIn) noteKept(cart, domain, r.asin, r.requestedQuantity, r.title);
       }
@@ -499,7 +499,11 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       if (!link)
         return { content: "Nothing has been added to the Amazon cart in this chat yet, so there's no link to show. Add the items with amazon_add_to_cart first.", isError: true };
       const session = (await chatBrowserId(ctx.chatId)) ?? ctx.chatId;
-      const linkCard: CartLinkCard = { kind: "cart-link", id: `cl_${session}`, url: link.url, site, products: link.products, units: link.units, group: "Amazon cart" };
+      const items = link.lines.map((l) => {
+        const line = cart.lines.get(l.asin);
+        return { asin: l.asin, quantity: l.quantity, ...(line?.title ? { title: str(line.title, 120) } : {}), ...(line?.delivery ? { delivery: str(line.delivery, 120) } : {}) };
+      });
+      const linkCard: CartLinkCard = { kind: "cart-link", id: `cl_${session}`, url: link.url, site, products: link.products, units: link.units, items, group: "Amazon cart" };
       ctx.show("Amazon cart", [linkCard]);
       ctx.progress(`Amazon cart link ready: ${link.units} item${link.units === 1 ? "" : "s"}`);
       const otherSite = [...cart.lines.values()].filter((l) => l.domain !== domain).length;

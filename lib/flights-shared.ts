@@ -133,6 +133,8 @@ export interface CartLinkCard {
   /** Distinct products and total units in the link. */
   products: number;
   units: number;
+  /** What's in it, with Amazon's delivery estimate when it was added (for the trip's itinerary). */
+  items?: Array<{ asin: string; quantity: number; title?: string; delivery?: string }>;
   group?: string;
 }
 

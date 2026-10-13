@@ -2241,3 +2241,49 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 
 /* The one-tap tester for the hotel-hold email flow. */
 .cx-example.cx-example-test { border-style: dashed; }
+
+/* Trips: itineraries, receipts and confirmations (components/chat/TripsPanel.tsx). */
+.tp-scrim { position: fixed; inset: 0; z-index: 80; background: rgba(21, 23, 26, 0.32); display: flex; justify-content: flex-end; }
+.tp { width: min(460px, 100%); height: 100%; background: #fff; display: flex; flex-direction: column; box-shadow: -12px 0 40px rgba(0, 0, 0, 0.12); animation: tp-in 0.22s ease both; }
+@keyframes tp-in { from { transform: translateX(24px); opacity: 0; } }
+.tp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: max(12px, env(safe-area-inset-top)) 16px 10px; border-bottom: 1px solid var(--line); }
+.tp-title { font: 700 18px/1.2 var(--text); color: var(--ink); }
+.tp-back { border: 0; background: none; padding: 6px 0; font: 600 16px/1 var(--text); color: #0B7CFF; cursor: pointer; }
+.tp-close { width: 36px; height: 36px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+.tp-close:hover { background: rgba(21, 23, 26, 0.07); }
+.tp-body { flex: 1; overflow-y: auto; padding: 14px 16px max(20px, env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
+.tp-empty { color: var(--ink-2); font-size: 14.5px; line-height: 1.5; margin: 8px 0; list-style: none; }
+.tp-trip { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 14px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; font: inherit; }
+.tp-trip:hover { border-color: #B9B3A7; }
+.tp-trip.is-past, .tp-trip.is-cancelled { opacity: 0.7; }
+.tp-trip-title { font: 600 16px/1.3 var(--text); color: var(--ink); }
+.tp-trip-sub { font-size: 13px; color: var(--ink-2); }
+.tp-trip.is-now .tp-trip-sub { color: #0a7a3d; font-weight: 600; }
+.tp-h { font: 700 20px/1.25 var(--text); color: var(--ink); margin: 2px 0 4px; }
+.tp-chat { display: inline-block; font-size: 13.5px; color: #0B7CFF; text-decoration: none; margin-bottom: 12px; }
+.tp-tabs { display: flex; gap: 4px; padding: 3px; background: #f1eee9; border-radius: 10px; margin-bottom: 14px; }
+.tp-tabs button { flex: 1; border: 0; background: transparent; padding: 8px 6px; border-radius: 8px; font: 600 13.5px/1.2 var(--text); color: var(--ink-2); cursor: pointer; }
+.tp-tabs button.is-on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+.tp-itin { list-style: none; margin: 0; padding: 0; position: relative; }
+.tp-item { display: grid; grid-template-columns: 32px 1fr; gap: 10px; padding: 0 0 16px; position: relative; }
+.tp-item:not(:last-child)::before { content: ""; position: absolute; left: 15px; top: 30px; bottom: 2px; width: 2px; background: var(--line); }
+.tp-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: #f1eee9; font-size: 15px; }
+.tp-when { font: 600 12px/1.3 var(--text); color: #0B7CFF; text-transform: uppercase; letter-spacing: 0.02em; margin-top: 2px; }
+.tp-item-title { font: 600 15px/1.35 var(--text); color: var(--ink); }
+.tp-item-detail { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+.tp-receipts { display: flex; flex-direction: column; gap: 10px; }
+.tp-receipt { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+.tp-receipt-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.tp-receipt-title { flex: 1; min-width: 0; font: 600 15px/1.3 var(--text); color: var(--ink); overflow-wrap: anywhere; }
+.tp-status { flex: none; font: 600 11.5px/1 var(--text); padding: 5px 8px; border-radius: 999px; background: #f1eee9; color: var(--ink-2); }
+.tp-status.is-confirmed, .tp-status.is-sent { background: #e5f5ec; color: #0a7a3d; }
+.tp-status.is-cancelled, .tp-status.is-not-sent { background: #fbe9e7; color: #a12a1a; }
+.tp-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 6px; font-size: 13.5px; }
+.tp-facts dt { color: var(--ink-2); }
+.tp-facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.tp-code { font-family: var(--mono, ui-monospace, monospace); font-weight: 600; letter-spacing: 0.04em; }
+.tp-line { margin: 2px 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; }
+.tp-link { display: inline-block; margin-top: 8px; font: 600 14px/1 var(--text); color: #0B7CFF; text-decoration: none; }
+@media (max-width: 640px) {
+  .tp { width: 100%; box-shadow: none; }
+}
