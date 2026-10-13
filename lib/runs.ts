@@ -89,6 +89,8 @@ export function runErrorMessage(e: unknown): string {
 interface Waiter {
   stepId: string;
   resolve: (outcome: "resumed" | "cancelled" | "expired") => void;
+  /** The resume was accepted: from now on the step can't expire (its release may take a moment). */
+  accept: () => void;
 }
 
 interface LiveRun {
@@ -368,6 +370,8 @@ async function execute(r: LiveRun, input: AcceptInput) {
       (e) => emitEvent(r, e),
       { runId: r.id, signal: r.ctrl.signal, waitForShopper: (step) => waitForShopper(r, step) },
     );
+    // The transcript is saved: record that at once, so a restart in the next few seconds can't misread it.
+    void write(r, { status: out.stopped ? "cancelled" : "completed", finishedAt: new Date() });
     await recordAiUse({ ...who, chatId: r.chatId, costMicros: out.costMicros }).catch(() => {});
     if (out.stopped) return await finish(r, "cancelled", null);
     await Promise.race([titling, new Promise((res) => setTimeout(res, 4000))]);
@@ -403,8 +407,17 @@ async function finish(r: LiveRun, status: RunStatus, error: string | null) {
   }, KEEP_FINISHED_MS).unref?.();
 }
 
+/** Whether chatTurn already saved this run's reply (completed, or stopped) to the transcript. */
+async function savedOutcome(chatId: string, runId: string): Promise<"completed" | "cancelled" | null> {
+  const chat = await prisma.assistantChat.findUnique({ where: { id: chatId }, select: { uiJson: true } });
+  const entry = parse<UiEntry[]>(chat?.uiJson, []).find((e) => e.role === "assistant" && e.id === runId);
+  return entry?.role === "assistant" ? (entry.stopped ? "cancelled" : "completed") : null;
+}
+
 /** A run that didn't complete: the shopper's message stays, marked failed; an edit gets the old transcript back. */
 async function markUserFailed(chatId: string, runId: string) {
+  // The reply was saved after all (the run stopped between saving it and recording its status): leave it be.
+  if (await savedOutcome(chatId, runId)) return;
   const [chat, run] = await Promise.all([
     prisma.assistantChat.findUnique({ where: { id: chatId }, select: { uiJson: true } }),
     prisma.assistantRun.findUnique({ where: { id: runId }, select: { priorUiJson: true } }),
@@ -456,14 +469,19 @@ function waitOnce(
   };
   r.pending = pending;
   r.status = "waiting";
+  // The chat shows it as an actionable message ("Approve & next") at the latest point of the conversation.
+  const record = { id: pending.id, kind: pending.kind, message: pending.message, createdAt: pending.createdAt };
+  emitEvent(r, { type: "approval", record: { ...record, status: "pending" } });
   push(r, { type: "pending", pending });
   push(r, { type: "status", status: "waiting", error: null });
   void saveNow(r);
   return new Promise((resolve) => {
     let settled = false;
+    let accepted = false;
     const done = (outcome: "resumed" | "cancelled" | "expired") => {
-      if (settled) return;
+      if (settled || (accepted && outcome === "expired")) return;
       settled = true;
+      if (outcome !== "resumed") emitEvent(r, { type: "approval", record: { ...record, status: outcome, resolvedAt: new Date().toISOString() } });
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
       if (r.waiter?.stepId === pending.id) r.waiter = null;
@@ -478,7 +496,14 @@ function waitOnce(
     const onAbort = () => done("cancelled");
     const timer = setTimeout(() => done("expired"), Math.max(0, Date.parse(pending.expiresAt) - Date.now()));
     signal.addEventListener("abort", onAbort, { once: true });
-    r.waiter = { stepId: pending.id, resolve: done };
+    r.waiter = {
+      stepId: pending.id,
+      resolve: done,
+      accept: () => {
+        accepted = true;
+        clearTimeout(timer);
+      },
+    };
   });
 }
 
@@ -501,9 +526,11 @@ export async function resumeRun(runId: string, stepId: string): Promise<{ status
   // Accept: everything that decides a second, simultaneous resume happens before the first await.
   const step = r.pending!;
   const waiter = r.waiter;
+  if (waiter?.stepId === step.id) waiter.accept();
   r.pending = null;
   r.lastResumedStep = step.id;
   r.status = "running";
+  emitEvent(r, { type: "approval", record: { id: step.id, kind: step.kind, message: step.message, createdAt: step.createdAt, status: "approved", resolvedAt: new Date().toISOString() } });
   push(r, { type: "pending", pending: null });
   push(r, { type: "status", status: "running", error: null });
   void saveNow(r);
@@ -546,8 +573,15 @@ async function doneFromChat(row: RunRow): Promise<RunDone | null> {
 /** The chat's active run (memory first), if any. */
 export async function activeRunFor(chatId: string): Promise<RunSnapshot | null> {
   for (const r of registry.runs.values()) if (r.chatId === chatId && isActive(r.status)) return snapshotOf(r);
-  const row = await prisma.assistantRun.findFirst({ where: { chatId, status: { in: ["queued", "running", "waiting"] } }, orderBy: { createdAt: "desc" } });
-  return row ? rowSnapshot(row) : null;
+  // Active in the database but not running in this process (the one process that runs them): it can't
+  // continue, so settle it now instead of blocking the chat until the next restart.
+  const rows = await prisma.assistantRun.findMany({ where: { chatId, status: { in: ["queued", "running", "waiting"] } } });
+  for (const row of rows) {
+    // A run being accepted right now is in the database a moment before it's registered here.
+    if (registry.runs.has(row.id) || registry.accepting.has(chatId) || Date.now() - row.createdAt.getTime() < 60_000) return rowSnapshot(row);
+    await interrupt(row).catch(() => {});
+  }
+  return null;
 }
 
 export async function lastRunFor(chatId: string): Promise<RunSnapshot | null> {
@@ -591,13 +625,23 @@ export async function stopChatRuns(chatId: string) {
 
 /* ---------- Boot ---------- */
 
+/** A run active in the database that no process is executing: interrupted, unless its reply was saved already. */
+async function interrupt(row: { id: string; chatId: string }) {
+  const saved = await savedOutcome(row.chatId, row.id).catch(() => null);
+  if (saved) {
+    await prisma.assistantRun.update({ where: { id: row.id }, data: { status: saved, error: null, pendingJson: null, finishedAt: new Date() } });
+    return;
+  }
+  await prisma.assistantRun.update({ where: { id: row.id }, data: { status: "interrupted", error: INTERRUPTED_ERROR, pendingJson: null, finishedAt: new Date() } });
+  await markUserFailed(row.chatId, row.id).catch(() => {});
+}
+
 /** At startup: runs that were active when the process stopped can't continue. Mark them, keep the message. */
 export async function recoverInterruptedRuns() {
   const rows = await prisma.assistantRun.findMany({ where: { status: { in: ["queued", "running", "waiting"] } } });
   for (const row of rows) {
     if (registry.runs.has(row.id)) continue;
-    await prisma.assistantRun.update({ where: { id: row.id }, data: { status: "interrupted", error: INTERRUPTED_ERROR, pendingJson: null, finishedAt: new Date() } });
-    await markUserFailed(row.chatId, row.id).catch(() => {});
+    await interrupt(row);
   }
   if (rows.length) console.log(`[runs] marked ${rows.length} unfinished run(s) interrupted`);
 }

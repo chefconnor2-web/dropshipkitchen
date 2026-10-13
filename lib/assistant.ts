@@ -21,6 +21,7 @@ import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
 import type { ConnectorContext, ToolResult } from "@/lib/connectors/types";
+import type { ApprovalRecord } from "@/lib/run-shared";
 import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_MESSAGE_CHARS } from "@/lib/limits";
 import { docInfo, type DocInfo, type DocUpload } from "@/lib/docs-shared";
@@ -80,6 +81,8 @@ export type UiEntry =
       thoughtMs?: number;
       /** What this reply cost us (all models, web searches), shown under it while SHOW_AI_COST isn't "off". */
       cost?: ReplyCost;
+      /** Steps the shopper was asked to approve while this reply was written, and what happened to each. */
+      approvals?: ApprovalRecord[];
     };
 
 export interface ReplyCost {
@@ -749,7 +752,8 @@ export async function chatTurn(
     // Editing or regenerating a message keeps the documents it was sent with.
     const old = messages[start];
     const edited = ui[input.editIndex];
-    if (!docBlocks.length && old && Array.isArray(old.content)) {
+    // A failed message never reached the model, so `old` would be the next message: only borrow from itself.
+    if (!docBlocks.length && edited.role === "user" && !edited.failed && old && Array.isArray(old.content)) {
       docBlocks = old.content.filter((b) => b.type === "document");
       if (edited.role === "user") docInfos = edited.docs ?? [];
     }
@@ -809,7 +813,28 @@ export async function chatTurn(
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
   const seen = new Set<string>();
   for (const m of messages) if (m.role === "user" || m.role === "assistant") if (Array.isArray(m.content)) seenPages(m.content, seen);
-  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen, chatId, signal, waitForShopper: run?.waitForShopper ?? noShopper };
+  // Steps the shopper was asked to approve, kept on the reply (the chat shows their outcome).
+  const approvals: ApprovalRecord[] = [];
+  const waitForShopper: ConnectorContext["waitForShopper"] = run
+    ? async (step) => {
+        const createdAt = new Date().toISOString();
+        const r = await run.waitForShopper(step);
+        if (r.stepId)
+          approvals.push({ id: r.stepId, kind: step.kind, message: String(step.message).slice(0, 200), status: r.outcome === "resumed" ? "approved" : r.outcome, createdAt, resolvedAt: new Date().toISOString() });
+        return r;
+      }
+    : noShopper;
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen, chatId, signal, waitForShopper };
+  // The round being streamed: if it's stopped or fails, what it already used is still billed (and counted).
+  let inflight: { currentMessage: Anthropic.Beta.BetaMessage | undefined } | null = null;
+  const countInflight = () => {
+    const m = inflight?.currentMessage;
+    inflight = null;
+    if (!m?.usage) return;
+    usage.in += (m.usage.input_tokens ?? 0) + (m.usage.cache_read_input_tokens ?? 0) + (m.usage.cache_creation_input_tokens ?? 0);
+    usage.out += m.usage.output_tokens ?? 0;
+    usage.micros += costMicros(m.model, m.usage);
+  };
   const web = webSourcing();
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
@@ -847,7 +872,9 @@ export async function chatTurn(
       if (b.name === "web_search" && typeof i.query === "string") emit({ type: "progress", note: `Searching the web: ${i.query.slice(0, 80)}` });
       else if (b.name === "web_fetch" && typeof i.url === "string") emit({ type: "progress", note: `Reading ${hostLabel(i.url)}` });
     });
+    inflight = stream;
     const response = await stream.finalMessage();
+    inflight = null;
     usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
     usage.out += response.usage.output_tokens;
     webUse.searches += response.usage.server_tool_use?.web_search_requests ?? 0;
@@ -895,6 +922,7 @@ export async function chatTurn(
     if (round === MAX_TOOL_ROUNDS - 1) reply ||= "I found a lot to go through. Tell me which part to look at next.";
   }
   } catch (e) {
+    countInflight();
     if (!signal.aborted) throw withCost(e, usage.micros);
     // Stopped by the shopper: keep what they watched being written, like stopping a reply anywhere else.
     const stoppedText = shownText.trim() || "(stopped)";
@@ -912,6 +940,7 @@ export async function chatTurn(
       added: ctx.added,
       ...(ctx.items.length ? { items: ctx.items.slice(0, 90) } : {}),
       ...(trace.length ? { trace: trace.map((t) => ({ kind: t.kind, text: t.text.trim() })).filter((t) => t.text) } : {}),
+      ...(approvals.length ? { approvals } : {}),
       thoughtMs: Date.now() - startedAt,
       at: new Date().toISOString(),
     };
@@ -937,6 +966,7 @@ export async function chatTurn(
     ...(ctx.kit ? { kit: ctx.kit } : {}),
     ...(ctx.items.length ? { items: ctx.items.slice(0, 90) } : {}),
     ...(trace.length ? { trace: trace.map((t) => ({ kind: t.kind, text: t.text.trim() })).filter((t) => t.text) } : {}),
+    ...(approvals.length ? { approvals } : {}),
     thoughtMs: Date.now() - startedAt,
     at: new Date().toISOString(),
     ...(showAiCost() ? { cost: { micros: usage.micros, inputTokens: usage.in, outputTokens: usage.out, webSearches: webUse.searches, webFetches: webUse.fetches } } : {}),

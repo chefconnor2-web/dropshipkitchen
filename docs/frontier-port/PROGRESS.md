@@ -86,3 +86,42 @@ All commands ran in this sandbox. Local loopback, 4 CPUs, headless Chromium 1194
 - **Two cards opened on a pending step after a refresh:** an older reply showed the same browser. Pending steps are now scoped to the live reply's card.
 - **The landscape full-screen canvas was cropped** (percentage height in a grid). It is now absolutely positioned with object-fit: contain.
 - **Banner copy said "Tap Take over"** while the browser was already open. It now says "…then tap Done."
+
+## Fix round 2 (after the first deploy), branch `claude/frontier-fixes`, PR #50
+- **The crash:** the chit-browser service hit its 1 GB memory limit (Railway metrics peaked at 0.99999 GB) and Chrome was killed. Fixes:
+  - lighter Chrome flags;
+  - media streams blocked;
+  - unwatched sessions closed after 3 minutes (unless a robot check is waiting);
+  - session lifecycle logging.
+- **Sign-in prompts:** Neon never signs in or hands over sign-in. It goes back and shops as a guest, and finishes with a "Check out on Amazon" link (`/gp/aws/cart/add.html`) that adds the items to the shopper's own cart in their own Safari or Amazon app.
+- **Approve & next** (CONTRACTS §12):
+  - The step Neon waits on is a chat message at the latest point, with the action on it.
+  - A pending bar sits above the composer when that message is off-screen, and the chat is never force-scrolled.
+  - One shared approve action (message, bar and full-screen browser) sends one request per step.
+  - The full-screen browser has "Back to chat" (not an approval) and "Stop Neon".
+- **Review findings fixed:**
+  - recovery no longer marks a reply already saved as failed;
+  - the in-flight round's cost is recorded when a reply is stopped or fails;
+  - a DB-active orphan run doesn't block its chat;
+  - an accepted resume can't expire;
+  - a failed message's retry doesn't borrow another message's documents;
+  - stale-chat UI updates are guarded;
+  - unmount cleanup;
+  - a Stop tapped before the run is accepted is honoured;
+  - release sends control-off before dropped input;
+  - Backspace has a count;
+  - mode switches wait for an agent step in progress;
+  - the reload is skipped after a form submit;
+  - Chrome error pages don't loop;
+  - per-step timeouts, and dialogs are dismissed.
+- **Verification** (local, fake model, production build):
+  - `npm test` 151/151; `tsc` clean;
+  - browser service 17/17 (twice);
+  - journey 27/27, including "a sign-in page never opens a take-over";
+  - approvals 13/13: latest message, pending bar, no forced scroll, failed then retry, Approving… disabled, double tap → 1 request, Approved only after acceptance, stale tab → Superseded without approving the newer step, approve from the message continues the run;
+  - process-loss pass;
+  - mobile/accessibility pass.
+- **Known:**
+  - live frames arrive at the page's CSS size (1×), so they're softer on a 3× iPhone screen;
+  - the 1 GB memory limit still fits about 2 Amazon browsers at once;
+  - the add-to-cart link and real Amazon flows can't be reached from the sandbox.

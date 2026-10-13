@@ -300,7 +300,7 @@ async function isCaptcha(page) {
 
 /** What on the page only the shopper can get past, if anything (said to them in the chat). */
 async function needsShopper(page) {
-  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Get past it, then tap Done.";
+  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Get past it, then tap Approve & next.";
   if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon wants you to sign in. Sign in yourself (Neon never sees it), then tap Done.";
   return null;
 }
