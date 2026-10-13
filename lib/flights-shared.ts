@@ -104,8 +104,21 @@ export interface SupplierCard {
   group?: string;
 }
 
+/** A live browser Neon is driving (Amazon): the chat streams its screen, and the shopper can take over. */
+export interface BrowserCard {
+  kind: "browser";
+  /** "br_" + the browser session id; the same card is updated in place. */
+  id: string;
+  /** wss:// address of the live view, with its view token. */
+  live: string;
+  site: string;
+  /** Set when Neon hands over: why the shopper should take over (captcha, sign in, check out). */
+  handoff?: string;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard;
+export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard | BrowserCard;
 
 /** "$1,240" for a stay, in its own currency. */
 export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {

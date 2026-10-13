@@ -20,6 +20,7 @@ import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
+import type { ToolResult } from "@/lib/connectors/types";
 import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_MESSAGE_CHARS } from "@/lib/limits";
 import { docInfo, type DocInfo, type DocUpload } from "@/lib/docs-shared";
@@ -510,17 +511,23 @@ interface Ctx {
   items: ConnectorItem[];
   /** Pages the web tools returned in this chat; supplier cards may only link to these. */
   seen: Set<string>;
+  chatId: string;
 }
 
-async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<{ content: string; isError?: boolean }> {
+async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<ToolResult> {
   const connector = connectorFor(name);
   if (connector)
     return connector.run(name, input, {
       progress: (note) => ctx.emit({ type: "progress", note }),
       show: (group, items) => {
-        ctx.items.push(...items);
+        for (const it of items) {
+          const at = ctx.items.findIndex((x) => x.id === it.id);
+          if (at >= 0) ctx.items[at] = it;
+          else ctx.items.push(it);
+        }
         ctx.emit({ type: "items", group, items });
       },
+      chatId: ctx.chatId,
     });
   if (name === "show_suppliers") {
     const { group, cards, dropped } = parseSuppliers(input, ctx.seen);
@@ -765,7 +772,7 @@ export async function chatTurn(
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
   const seen = new Set<string>();
   for (const m of messages) if (m.role === "user" || m.role === "assistant") if (Array.isArray(m.content)) seenPages(m.content, seen);
-  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen };
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen, chatId };
   const web = webSourcing();
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";

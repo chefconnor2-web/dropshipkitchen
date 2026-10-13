@@ -1,6 +1,7 @@
 "use client";
 // Shared pieces of the assistant chat: types, markdown, icons, step log, product and kit cards.
 
+import BrowserView from "./BrowserView";
 import type { DocInfo } from "@/lib/docs-shared";
 import { Fragment, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
@@ -489,6 +490,8 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
                 <HotelCard key={it.id} h={it} />
               ) : it.kind === "supplier" ? (
                 <SupplierCard key={it.id} s={it} />
+              ) : it.kind === "browser" ? (
+                <BrowserView key={it.id} b={it} />
               ) : (
                 <CarCard key={it.id} c={it} />
               ),

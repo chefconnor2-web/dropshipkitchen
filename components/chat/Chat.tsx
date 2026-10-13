@@ -44,6 +44,7 @@ import {
 } from "./ui";
 import { imageUrl, uploadImage } from "./images";
 import { MAX_MESSAGE_CHARS } from "@/lib/limits";
+import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_DOCS, MAX_PDF_B64, PASTE_AS_DOC_CHARS, TEXT_FILE, docInfo, docLabel, type DocUpload } from "@/lib/docs-shared";
 import { listen, speak, speechInputSupported, speechOutputSupported, stopSpeaking, unlockSpeech, type Recognizer } from "./voice";
 import VoiceMode from "./VoiceMode";
@@ -347,7 +348,9 @@ export default function Chat({
           t.groups = prev ? t.groups.map((x) => (x.group === e.group ? next : x)) : [...t.groups, next];
           update();
         } else if (e.type === "items") {
-          t.items = [...t.items, ...e.items.filter((x: { id: string }) => !t.items.some((y) => y.id === x.id))];
+          // A card with an id already shown replaces it (e.g. the live browser asking the shopper to take over).
+          const fresh = new Map((e.items as ConnectorItem[]).map((x) => [x.id, x]));
+          t.items = [...t.items.map((y) => fresh.get(y.id) ?? y), ...(e.items as ConnectorItem[]).filter((x) => !t.items.some((y) => y.id === x.id))];
           update();
         } else if (e.type === "react") {
           patchUser({ reaction: e.emoji });

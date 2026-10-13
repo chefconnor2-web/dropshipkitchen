@@ -1,0 +1,16 @@
+{
+  "name": "chit-browser",
+  "private": true,
+  "type": "module",
+  "description": "Live Chrome sessions for the Chit chat: Neon shops Amazon, the shopper watches and takes over.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "23.11.1",
+    "ws": "8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
