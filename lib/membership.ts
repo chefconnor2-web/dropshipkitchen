@@ -151,10 +151,10 @@ export async function recordAiUse(who: { customerId: string | null; visitorId: s
 /** What to tell someone who has run out. `prices`: the full and Lite monthly prices, e.g. "$30.00" / "$5.00". */
 export function limitMessage(a: Allowance, prices: { full?: string; lite?: string | null } = {}): string {
   if (a.plan === "lite")
-    return `You've used this month's Lite plan. It refills over the month, or upgrade to Full${prices.full ? ` (${prices.full}/month)` : ""}: twice the usage, plus a surplus mystery box every month.`;
+    return `You've used this month's Lite plan. It refills over the month, or upgrade to Full${prices.full ? ` (${prices.full}/month)` : ""} for twice the usage.`;
   if (a.subscriber)
-    return `You've used this month's assistant time. It refills over the month. You can keep searching the catalog yourself any time.`;
-  const options = [`Full${prices.full ? ` (${prices.full}/month)` : ""} with a surplus mystery box every month`, prices.lite ? `Lite (${prices.lite}/month)` : null].filter(Boolean).join(", or ");
-  const pitch = `Keep going with ${options}, or search the catalog yourself for free.`;
+    return `You've used this month's assistant time. It refills over the month.`;
+  const options = [`Full${prices.full ? ` (${prices.full}/month)` : ""} with twice the usage`, prices.lite ? `Lite (${prices.lite}/month)` : null].filter(Boolean).join(", or ");
+  const pitch = `Keep going with ${options}.`;
   return a.basis === "custom" ? `That's the end of your AI preview. ${pitch}` : `That's the end of your free preview. ${pitch} Already subscribed? Sign in.`;
 }

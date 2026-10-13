@@ -54,7 +54,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       {items.length === 0 && boxes.length === 0 ? (
         <div className="empty-cart">
           <p>Your cart is empty.</p>
-          <Link href="/shop" className="btn primary">
+          <Link href="/" className="btn primary">
             Browse the shop
           </Link>
         </div>
@@ -180,7 +180,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
             <p className="muted small summary-note">
               Availability and shipping are re-confirmed with our supplier before payment. You’ll enter your full address at checkout.
             </p>
-            <Link href="/shop" className="small summary-continue">
+            <Link href="/" className="small summary-continue">
               ← Continue shopping
             </Link>
           </aside>

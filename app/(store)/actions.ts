@@ -21,7 +21,7 @@ import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
 import { designLabel } from "@/lib/personalize";
 import { prewarmCartQuote } from "@/lib/cart-quote";
 import { endAllSessions, endSession, getMember, normalizeEmail, requestLoginCode, safeNext, startSession, verifyLoginCode } from "@/lib/session";
-import { billingPortalUrl, startBoxSubscription, startLiteSubscription } from "@/lib/subscriptions";
+import { billingPortalUrl, startBoxSubscription, startFullSubscription, startLiteSubscription } from "@/lib/subscriptions";
 import { sendEmail } from "@/lib/email";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { linkProductById, platformById, platformName } from "@/lib/lineup";
@@ -374,6 +374,21 @@ export async function subscribeToBox(form: FormData) {
     url = await startBoxSubscription({ boxId, country: shipTo.country, zip: shipTo.zip, customer: member });
   } catch (e) {
     redirect(`/boxes/${box.slug}?error=${encodeURIComponent(e instanceof Error ? e.message : "Couldn’t start the subscription.")}`);
+  }
+  redirect(url);
+}
+
+/** Plans page: subscribe to Full (twice Lite's usage) and go to Stripe. Signing in comes first. */
+export async function subscribeFull(form?: FormData) {
+  const problem = stripeKeyProblem();
+  if (problem) redirect(`/plans?error=${encodeURIComponent("Subscriptions aren’t switched on yet: " + problem)}`);
+  const member = await getMember();
+  if (!member) redirect(`/account?next=${encodeURIComponent(safeNext(form?.get("next") ?? "/plans"))}&why=subscribe`);
+  let url: string;
+  try {
+    url = await startFullSubscription(member);
+  } catch (e) {
+    redirect(`/plans?error=${encodeURIComponent(e instanceof Error ? e.message : "Couldn’t start the subscription.")}`);
   }
   redirect(url);
 }

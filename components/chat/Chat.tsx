@@ -997,7 +997,7 @@ export default function Chat({
               </div>
               {!configured && (
                 <p className="cx-err">
-                  The assistant is switched off right now. You can still <Link href="/search">search the catalog</Link>.
+                  The assistant is switched off right now. Try again in a little while.
                 </p>
               )}
               <div className="cx-examples" role="group" aria-label="Suggestions">

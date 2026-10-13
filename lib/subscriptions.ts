@@ -68,6 +68,25 @@ export async function startBoxSubscription(input: { boxId: string; country: stri
   return session.url!;
 }
 
+/** A Stripe Checkout page for the Full plan: twice Lite's assistant usage, no box, no shipping. Signed-in customers only. */
+export async function startFullSubscription(customer: { id: string; email: string; stripeCustomerId: string | null }) {
+  const plan = await getPlan();
+  const meta = { kind: "assistant_subscription", plan: "full", customerId: customer.id };
+  const session = await stripe().checkout.sessions.create({
+    mode: "subscription",
+    line_items: [
+      { quantity: 1, price_data: { currency: "usd", unit_amount: plan.priceCents, recurring: { interval: "month" }, product_data: { name: `${config.storeName} Full`, description: "The shopping assistant with twice Lite's usage." } } },
+    ],
+    ...(customer.stripeCustomerId ? { customer: customer.stripeCustomerId } : { customer_email: customer.email }),
+    client_reference_id: customer.id,
+    subscription_data: { description: `${config.storeName} Full`, metadata: meta },
+    metadata: meta,
+    success_url: `${config.siteUrl}/subscribe/complete?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${config.siteUrl}/plans`,
+  });
+  return session.url!;
+}
+
 /** A Stripe Checkout page for the Lite plan: AI only, no box, no shipping. Signed-in customers only. */
 export async function startLiteSubscription(customer: { id: string; email: string; stripeCustomerId: string | null }) {
   const lite = await getLitePlan();
@@ -136,7 +155,7 @@ async function saveSubscription(sub: Stripe.Subscription, fallback: { email?: st
       plan,
       monthlyBox,
       boxId: boxId ?? "",
-      boxName: plan === "lite" ? "" : (box?.name ?? "Mystery box"),
+      boxName: plan === "lite" || !boxId ? "" : (box?.name ?? "Mystery box"),
       stripeSubscriptionId: sub.id,
       status: sub.status,
       priceCents: Math.max(0, priceCents),
@@ -201,7 +220,8 @@ async function createOrderForInvoice(invoiceId: string): Promise<string | null> 
   const paidAt = invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000) : new Date();
 
   const first = invoice.billing_reason === "subscription_create" && !(await prisma.order.findFirst({ where: { subscriptionId: sub.id }, select: { id: true } }));
-  const boxMonth = sub.plan !== "lite" && (sub.monthlyBox ? ["subscription_create", "subscription_cycle"].includes(invoice.billing_reason ?? "") : first);
+  // Only older Full subscriptions came with a box; today's Full is assistant usage only.
+  const boxMonth = sub.plan !== "lite" && !!sub.boxId && (sub.monthlyBox ? ["subscription_create", "subscription_cycle"].includes(invoice.billing_reason ?? "") : first);
   if (!boxMonth) {
     const data = { subscriptionId: sub.id, customerId: sub.customerId, amountCents: invoice.amount_paid ?? 0, paidAt };
     await prisma.subscriptionPayment.upsert({ where: { invoiceId }, create: { invoiceId, ...data }, update: data });
