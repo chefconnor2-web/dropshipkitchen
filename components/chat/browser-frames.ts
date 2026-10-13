@@ -3,8 +3,10 @@
 //   point in the frame (0..1), and how far a drag scrolls the remote page;
 // - the reconnect schedule;
 // - FrameRenderer: newest-frame-wins decoding (one decode in flight, one pending blob, one ready frame);
-// - LiveConnection: the live-view socket's lifecycle (fresh token per try, bounded backoff, terminal states).
-// Contract: docs/frontier-port/CONTRACTS.md §8 (browser transport) and §9 (client transports).
+// - LiveConnection: the live-view socket's lifecycle (fresh token per try, bounded backoff, terminal states);
+// - the phone-sized viewport sent with control (§11), typing as the fewest page edits, and Handoff (a full-screen
+//   card's socket passed to the card that replaces it when the reply is saved).
+// Contract: docs/frontier-port/CONTRACTS.md §8 (browser transport), §9 (client transports) and §11 (fix round).
 
 export interface Size {
   w: number;
@@ -65,6 +67,121 @@ export function pagePxPerScreenPx(box: Rect, frame: Size, page: Size | null): nu
 export function scrollDelta(screenDy: number, box: Rect, frame: Size, page: Size | null): number {
   const dy = screenDy * pagePxPerScreenPx(box, frame, page);
   return Math.max(-4000, Math.min(4000, dy));
+}
+
+/* ---------- The shopper's screen as the remote phone viewport (§11) ---------- */
+
+/** The range the browser service accepts as a phone viewport (CSS px); it clamps to the same. */
+export const PHONE_VIEWPORT = { minW: 320, maxW: 600, minH: 400, maxH: 1100 } as const;
+
+/**
+ * The full-screen browser area in whole CSS px, as the phone viewport to ask for: the box's content size (its
+ * padding taken off), clamped to what the service accepts. Null for a box that isn't laid out yet. Sending it
+ * clamped means a change the service would ignore anyway (the keyboard opening on a short screen) sends nothing.
+ */
+export function phoneViewport(rect: { width: number; height: number }, pad: { top: number; right: number; bottom: number; left: number } = { top: 0, right: 0, bottom: 0, left: 0 }): Size | null {
+  const w = rect.width - (pad.left || 0) - (pad.right || 0);
+  const h = rect.height - (pad.top || 0) - (pad.bottom || 0);
+  if (!(w >= 1 && h >= 1)) return null;
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
+  return { w: clamp(w, PHONE_VIEWPORT.minW, PHONE_VIEWPORT.maxW), h: clamp(h, PHONE_VIEWPORT.minH, PHONE_VIEWPORT.maxH) };
+}
+
+export const sameSize = (a: Size | null, b: Size | null): boolean => (a === null || b === null ? a === b : a.w === b.w && a.h === b.h);
+
+/* ---------- Typing into the page ---------- */
+
+/** Most a single Backspace message may repeat, and the longest text one `type` message may carry (§8, §11). */
+export const MAX_BACKSPACES = 200;
+export const MAX_TYPE_CHARS = 2000;
+
+/** User-perceived characters (an emoji or an accented letter is one), which is what one Backspace removes. */
+export function graphemes(s: string): string[] {
+  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: string }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (Seg) return Array.from(new Seg(undefined, { granularity: "grapheme" }).segment(s), (x) => x.segment);
+  return Array.from(s);
+}
+
+export type TypingEdit = { t: "type"; text: string } | { t: "key"; key: "Backspace"; count: number };
+
+/**
+ * What to send so the focused field on the page goes from `prev` to `next` (the box mirrors it; the page's
+ * caret sits at the end of what was typed): Backspace back to where the two agree, then type the rest. Repeats
+ * go as one `{key: "Backspace", count}` (a mid-word fix or an autocorrect rewrite used to send one message per
+ * character and overflow the service's input queue), split only past the limits a message may carry.
+ */
+export function typingEdits(prev: string, next: string): TypingEdit[] {
+  if (prev === next) return [];
+  const a = graphemes(prev);
+  const b = graphemes(next);
+  let k = 0;
+  while (k < a.length && k < b.length && a[k] === b[k]) k++;
+  const out: TypingEdit[] = [];
+  for (let left = a.length - k; left > 0; left -= MAX_BACKSPACES) out.push({ t: "key", key: "Backspace", count: Math.min(left, MAX_BACKSPACES) });
+  let chunk = "";
+  for (const g of b.slice(k)) {
+    if (chunk && chunk.length + g.length > MAX_TYPE_CHARS) {
+      out.push({ t: "type", text: chunk });
+      chunk = "";
+    }
+    chunk += g;
+  }
+  if (chunk) out.push({ t: "type", text: chunk });
+  return out;
+}
+
+/** `s` without its last character (the ⌫ key on what the shopper typed). */
+export const dropLast = (s: string): string => graphemes(s).slice(0, -1).join("");
+
+/* ---------- Handing a full-screen card to its replacement ---------- */
+
+/**
+ * When the reply being written is saved, its live card unmounts and the saved reply mounts a new card for the
+ * same browser. If the shopper is driving full screen at that moment, the old card parks its socket and state
+ * here and the new card picks them up in the same commit, so the take-over carries on instead of closing. Nobody
+ * picking it up within `ms` (the chat closed, or the saved reply has no card) runs `expire`, which hands control
+ * back and closes the socket.
+ */
+export class Handoff<T> {
+  private parked = new Map<string, { value: T; timer: unknown; expire: (value: T) => void }>();
+  private readonly timers: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
+
+  constructor(timers?: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void }) {
+    this.timers = timers ?? { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) };
+  }
+
+  park(id: string, value: T, expire: (value: T) => void, ms = 1500): void {
+    this.expireNow(id);
+    const timer = this.timers.set(() => {
+      const p = this.parked.get(id);
+      if (p?.value !== value) return;
+      this.parked.delete(id);
+      expire(value);
+    }, ms);
+    this.parked.set(id, { value, timer, expire });
+  }
+
+  /** What's parked for `id`, without taking it (safe to call while rendering). */
+  peek(id: string): T | null {
+    return this.parked.get(id)?.value ?? null;
+  }
+
+  /** Takes what's parked for `id` (it won't expire). */
+  take(id: string): T | null {
+    const p = this.parked.get(id);
+    if (!p) return null;
+    this.timers.clear(p.timer);
+    this.parked.delete(id);
+    return p.value;
+  }
+
+  private expireNow(id: string) {
+    const p = this.parked.get(id);
+    if (!p) return;
+    this.timers.clear(p.timer);
+    this.parked.delete(id);
+    p.expire(p.value);
+  }
 }
 
 /* ---------- Reconnect schedule ---------- */

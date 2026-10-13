@@ -1,9 +1,10 @@
 # Chit browser service
 
 Live Chrome sessions for the Chit chat. Neon drives a browser on Amazon (search, add to cart, view cart) and the
-shopper watches it live in the chat. When a page needs the shopper (a captcha, signing in to their own Amazon
-account, checking out) the chat opens this browser full screen on their phone; they finish and tap **Done**, and
-Neon carries on. Neon never types passwords, codes, card numbers or addresses.
+shopper watches it live in the chat. Neon fills the cart as a guest and never signs in; at the end the shopper
+gets one link that adds everything to their own Amazon cart in their own Safari or Amazon app. Only a robot
+check (or a choice only they can make) opens this browser full screen on their phone; they finish and tap
+**Done**, and Neon carries on. Neon never types passwords, codes, card numbers or addresses.
 
 ## Deploy (second Railway service in the same project)
 - Source: this repo, root directory `browser-service` (it has its own `Dockerfile` and `railway.json`).
@@ -15,7 +16,10 @@ Neon carries on. Neon never types passwords, codes, card numbers or addresses.
   - Optional: `SCREENCAST_QUALITY` (JPEG quality of the live view, default 60), `FRAME_QUEUE_BYTES` (per viewer,
     default 49152: no new frame is sent while a viewer's socket holds more), `ALLOWED_ORIGINS` (comma list of
     storefront origins allowed to open the live view, e.g. `https://storefront-preview-debc.up.railway.app`),
-    `NAV_INTERCEPT=off` (turns off the page-load check described below).
+    `NAV_INTERCEPT=off` (turns off the page-load check described below), `UNWATCHED_MINUTES` (default 3: a
+    browser nobody is watching and Neon isn't using closes after this, unless it's waiting on a robot check).
+- Memory: each Amazon tab takes roughly 250–450 MB. With a 1 GB limit keep `MAX_SESSIONS` at 2 or raise the
+  service's memory limit; Chrome is started with lighter settings and video/audio streams are blocked.
 - Variables on the Chit (storefront) service:
   - `BROWSER_SERVICE_SECRET`: same value.
   - `BROWSER_SERVICE_URL`: private address, e.g. `http://chit-browser.railway.internal:8080`.

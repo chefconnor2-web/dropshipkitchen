@@ -2188,3 +2188,34 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-failed-retry:disabled { opacity: 0.5; cursor: default; }
 .cx-run-conn { align-self: center; border: 0; border-radius: 99px; padding: 8px 14px; min-height: 36px; background: var(--im-gray, #E9E9EB); color: var(--im-muted, #6b6578); font: 500 13px/1.2 var(--im-font, inherit); }
 .cx-run-conn.is-offline { cursor: pointer; color: var(--err); text-decoration: underline; }
+
+/* ---- Approve & next: the step Neon waits on, as a message at the end of the chat (and a bar when off-screen) ---- */
+.cx-approval-card { display: grid; gap: 8px; border: 1px solid #f5b400; background: #fffaf0; }
+.cx-approval-title { margin: 0; font-weight: 700; font-size: 15px; }
+.cx-approval-text { margin: 0; }
+.cx-approval-error { margin: 0; color: var(--err); font-size: 13.5px; font-weight: 600; }
+.cx-approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cx-approval-actions .cx-btn { min-height: 44px; }
+.cx-approve:disabled { opacity: 0.75; cursor: default; }
+.cx-approval-done { align-self: flex-start; margin: 2px 0 2px 4px; color: var(--im-muted, #6b6578); font-size: 12.5px; line-height: 1.35; }
+.cx-approval-done.is-approved { color: #1f7a3a; }
+.cx-approval-done.is-stale, .cx-approval-done.is-expired, .cx-approval-done.is-cancelled { color: var(--im-muted, #6b6578); }
+.cx-pending-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 8px 8px 8px 12px; border: 1px solid #f5b400; border-radius: 14px; background: #fffaf0; box-shadow: 0 6px 18px rgba(21, 23, 26, 0.12); }
+.cx-pending-text { flex: 1; min-width: 0; min-height: 44px; border: 0; background: none; padding: 0; text-align: left; font: 600 13.5px/1.3 var(--im-font, inherit); color: inherit; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; cursor: pointer; }
+.cx-pending-bar .cx-approve { flex: none; min-height: 44px; }
+/* The Amazon cart as one button that opens in the shopper's own Amazon. */
+.cx-cartlink { position: relative; display: grid; gap: 4px; flex: 0 0 auto; width: min(100%, 360px); padding: 14px 44px 14px 16px; border-radius: 16px; background: #f5b400; color: #17141f; text-decoration: none; box-shadow: 0 6px 18px rgba(21, 23, 26, 0.12); }
+.cx-cartlink-title { font: 700 16px/1.2 var(--im-font, inherit); }
+.cx-cartlink-sub { font: 500 13px/1.35 var(--im-font, inherit); opacity: 0.85; }
+.cx-cartlink-go { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 20px; }
+.cx-cartlink:focus-visible { outline: 3px solid #7b4dff; outline-offset: 2px; }
+/* Compact full-screen controls: the page gets most of the screen. */
+.cx-browser.is-full .cx-browser-keys { gap: 6px; padding-top: 8px; }
+.cx-browser-typing { display: flex; gap: 6px; align-items: stretch; }
+.cx-browser-typing button { flex: none; min-width: 44px; min-height: 44px; padding: 0 10px !important; background: #2a2537 !important; font-size: 17px !important; }
+.cx-browser-actions { display: flex; gap: 8px; }
+.cx-browser-actions .cx-browser-done { flex: 1; }
+.cx-browser-stop { flex: none; min-height: 48px; padding: 0 14px; border: 0; border-radius: 12px; background: #2a2537; color: #eeeaf7; font: 600 14px/1 var(--im-font, inherit); cursor: pointer; }
+.cx-browser.is-full .cx-browser-turn { padding: 6px 12px; }
+.cx-browser.is-full .cx-browser-turn p { font-size: 14px; line-height: 1.3; }
+.cx-browser-min { background: #2a2537; color: #eeeaf7; }

@@ -48,9 +48,9 @@ import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_DOCS, MAX_PDF_B64, PASTE_AS_DOC_CHARS, TEXT_FILE, docInfo, docLabel, type DocUpload } from "@/lib/docs-shared";
 import { listen, speak, speechInputSupported, speechOutputSupported, stopSpeaking, unlockSpeech, type Recognizer } from "./voice";
 import VoiceMode from "./VoiceMode";
-import { RunContext, type BrowserRunContext } from "./run-context";
+import { RunContext, type ApprovalUi, type BrowserRunContext } from "./run-context";
 import { cancelRun, createRun, foldRun, newClientRequestId, resumeRun, subscribeRun, type RunConnection, type RunSubscription } from "@/lib/run-client";
-import type { ResumeResult, RunFrame, RunSnapshot } from "@/lib/run-shared";
+import type { ApprovalRecord, PendingStep, ResumeResult, RunFrame, RunSnapshot } from "@/lib/run-shared";
 
 interface Attachment {
   key: string;
@@ -135,6 +135,12 @@ export default function Chat({
   const scrollRef = useRef<HTMLDivElement>(null);
   // The run answering in this chat (server-owned; this page just follows it). Null when nothing is running.
   const run = useRef<{ id: string; chatId: string; snap: RunSnapshot; sub: RunSubscription | null; resolve: (reply: string | null) => void } | null>(null);
+  const stopWhenAccepted = useRef(false);
+  const approving = useRef(new Map<string, Promise<ResumeResult>>());
+  const [approvalUi, setApprovalUi] = useState<Record<string, ApprovalUi>>({});
+  // The pending approval's message in the chat, and whether it's on screen (else the bar above the composer shows it).
+  const approvalRef = useRef<HTMLDivElement | null>(null);
+  const [approvalVisible, setApprovalVisible] = useState(true);
   const [live, setLive] = useState<RunSnapshot | null>(null);
   const [runConn, setRunConn] = useState<RunConnection | null>(null);
   const activeId = useRef<string | null | undefined>(undefined);
@@ -209,7 +215,8 @@ export default function Chat({
         if (!d.chat) return ev.current.onMissing();
         setEntries(d.entries ?? []);
         // A reply still being written (e.g. after a refresh, or while Neon waits on the shopper): follow it again.
-        if (d.activeRun) follow(d.activeRun as RunSnapshot, chatId);
+        const active = d.activeRun as RunSnapshot | null;
+        if (active && !(d.entries ?? []).some((e: Entry) => e.role === "assistant" && e.id === active.id)) follow(active, chatId);
         else showLastRunError(d.lastRun as RunSnapshot | null, d.entries ?? []);
         ev.current.onCart(d.cartCount ?? 0);
         if (d.allowance) setAllowance(d.allowance);
@@ -239,6 +246,21 @@ export default function Chat({
   useLayoutEffect(() => {
     if (stick.current) scrollToEnd();
   }, [entries, turn, error, scrollToEnd]);
+
+  // Leaving the chat page: stop following the run (it carries on on the server).
+  useEffect(() => () => detach(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Is the pending approval's message on screen? If not, the bar above the composer offers the same action
+  // (the chat is never scrolled for the shopper while they read older messages).
+  const pendingId = live?.pending?.id ?? null;
+  useEffect(() => {
+    const el = approvalRef.current;
+    const root = scrollRef.current;
+    if (!pendingId || !el || !root) return setApprovalVisible(true);
+    const io = new IntersectionObserver(([e]) => setApprovalVisible(e.isIntersecting), { root, threshold: 0.4 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [pendingId, turn !== null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Esc stops a running answer.
   useEffect(() => {
@@ -312,10 +334,12 @@ export default function Chat({
       setLive(null);
       setRunConn(null);
       const d = await reconcile(cid);
+      me.resolve(null);
+      // The shopper may have opened another chat meanwhile: nothing here belongs on its screen.
+      if (activeId.current !== cid) return;
       setTurn(null);
       if (status === "failed" || status === "interrupted") setError({ message: me.snap.error || "Something went wrong.", retryIndex: me.snap.userIndex });
       else if (!d) setError({ message: "The connection dropped before the answer arrived.", retryIndex: me.snap.userIndex });
-      me.resolve(null);
     };
     const onFrame = (f: RunFrame) => {
       if (run.current !== me) return;
@@ -369,7 +393,11 @@ export default function Chat({
   /** Stop: the server stops the run and saves what was written; the stream then ends it here. */
   async function stop() {
     const r = run.current;
-    if (!r) return;
+    if (!r) {
+      // Stop tapped while the message is still being accepted: stop the run as soon as it exists.
+      if (turn) stopWhenAccepted.current = true;
+      return;
+    }
     const res = await cancelRun(r.id);
     if (run.current === r && res && !isActiveStatus(res.run.status)) {
       r.snap = { ...r.snap, status: res.run.status };
@@ -378,8 +406,8 @@ export default function Chat({
       setLive(null);
       setRunConn(null);
       await reconcile(r.chatId);
-      setTurn(null);
       r.resolve(null);
+      if (activeId.current === r.chatId) setTurn(null);
     }
   }
 
@@ -397,9 +425,53 @@ export default function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Approve & next for exactly `stepId` (CONTRACTS.md §12). Repeat taps share the request in flight; the outcome
+   * is mirrored in `approvalUi`. "Approved" only after the server accepted this same step.
+   */
+  const approve = useCallback(
+    (stepId: string): Promise<ResumeResult> => {
+      const busyNow = approving.current.get(stepId);
+      if (busyNow) return busyNow;
+      const p = (async () => {
+        setApprovalUi((m) => ({ ...m, [stepId]: { phase: "approving" } }));
+        const r = await resume(stepId);
+        let next: ApprovalUi;
+        if (r.accepted && r.stepId === stepId) next = { phase: "approved" };
+        else if (r.accepted) next = { phase: "stale", message: "Superseded: Neon needs something else now." };
+        else if (r.reason === "not_waiting" && !r.current) next = { phase: "error", message: r.message || "Couldn't reach Neon. Try again." };
+        else
+          next = {
+            phase: "stale",
+            message:
+              r.reason === "stale_step"
+                ? "Superseded: Neon needs something else now."
+                : r.reason === "expired"
+                  ? "Timed out. Ask Neon to try again."
+                  : r.reason === "run_finished"
+                    ? "Already finished."
+                    : "No longer needed.",
+          };
+        setApprovalUi((m) => ({ ...m, [stepId]: next }));
+        return r;
+      })().finally(() => approving.current.delete(stepId));
+      approving.current.set(stepId, p);
+      return p;
+    },
+    [resume],
+  );
+
   // Only the reply being written answers a pending step: older replies can show the same browser (one per chat),
   // and must not open it too.
-  const runCtx: BrowserRunContext = { chatId: activeId.current ?? chatId, pending: live?.pending ?? null, runStatus: live?.status ?? null, resume };
+  const runCtx: BrowserRunContext = {
+    chatId: activeId.current ?? chatId,
+    pending: live?.pending ?? null,
+    runStatus: live?.status ?? null,
+    resume,
+    stop,
+    approve,
+    approvals: approvalUi,
+  };
   const savedCtx: BrowserRunContext = { ...runCtx, pending: null };
 
   /** Sends one message; resolves with the reply text (for voice mode), or null if it didn't finish. */
@@ -417,6 +489,8 @@ export default function Chat({
     stopSpeaking();
     setSpeakingIdx(null);
     let id = activeId.current ?? null;
+    const sentFrom = activeId.current;
+    stopWhenAccepted.current = false;
     stick.current = true;
     setError(null);
     setEditing(null);
@@ -476,6 +550,12 @@ export default function Chat({
       return null;
     }
     const { run: snap, chat, user } = r.accepted;
+    // Another chat is on screen now: the reply carries on on the server and shows when this chat is opened.
+    if (activeId.current !== sentFrom) return null;
+    if (stopWhenAccepted.current) {
+      stopWhenAccepted.current = false;
+      void cancelRun(snap.id);
+    }
     if (!id) {
       id = chat.id;
       activeId.current = id;
@@ -1007,6 +1087,7 @@ export default function Chat({
                       <div className="cx-bubble cx-bubble-bot cx-muted">No reply.</div>
                     )}
                     {e.stopped && <p className="cx-stopped">You stopped this answer.</p>}
+                    {e.approvals && e.approvals.length > 0 && <ApprovalLog records={e.approvals} />}
                     {e.added.length > 0 && (
                       <div className="cx-added">
                         {e.added.map((a) => (
@@ -1090,6 +1171,12 @@ export default function Chat({
               </RunContext.Provider>
             )}
 
+            {live && (
+              <RunContext.Provider value={runCtx}>
+                <Approvals records={live.partial.approvals ?? []} pending={live.pending} ui={approvalUi} onApprove={approve} activeRef={approvalRef} />
+              </RunContext.Provider>
+            )}
+
             {runConn === "reconnecting" && <div className="cx-run-conn">Reconnecting…</div>}
             {runConn === "offline" && (
               <button type="button" className="cx-run-conn is-offline" onClick={() => run.current?.sub?.reconnect()}>
@@ -1130,6 +1217,14 @@ export default function Chat({
           <button type="button" className="cx-jump" onClick={() => scrollToEnd(true)} aria-label="Jump to latest">
             <DownIcon />
           </button>
+        )}
+        {live?.pending && !approvalVisible && (
+          <PendingBar
+            step={live.pending}
+            ui={approvalUi[live.pending.id]}
+            onApprove={approve}
+            onShow={() => approvalRef.current?.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" })}
+          />
         )}
         {composer}
         <p className="cx-disclaimer">
@@ -1228,3 +1323,120 @@ function helpersAt(turn: { trace: Array<{ kind: string; text: string }>; groups:
 }
 
 const isActiveStatus = (s: string) => s === "queued" || s === "running" || s === "waiting";
+
+/* ---------- Approve & next (CONTRACTS.md §12) ---------- */
+
+const KIND_TITLE: Record<string, string> = {
+  captcha: "Amazon wants a robot check",
+  choice: "Neon needs your choice",
+  blocked: "Amazon needs you",
+  sign_in: "Amazon wants you to sign in",
+  checkout: "Ready to check out",
+};
+const STATUS_LINE: Record<ApprovalRecord["status"], string> = { pending: "Superseded", approved: "Approved", expired: "Timed out", cancelled: "Stopped" };
+
+/** Asks the full-screen browser for this step to open again (after "Back to chat"). */
+const openBrowser = (cardId: string) => window.dispatchEvent(new CustomEvent("cx:open-browser", { detail: { cardId } }));
+
+/** The approve button's label and state for one step. */
+function approveButton(ui: ApprovalUi | undefined) {
+  if (ui?.phase === "approving") return { label: "Approving…", disabled: true };
+  if (ui?.phase === "approved") return { label: "Approved", disabled: true };
+  if (ui?.phase === "error") return { label: "Try again", disabled: false };
+  return { label: "Approve & next", disabled: false };
+}
+
+/**
+ * The approvals of the reply being written, at the latest point of the chat: the step Neon is waiting on as a
+ * message with its action, and the ones already settled as one status line each.
+ */
+function Approvals({
+  records,
+  pending,
+  ui,
+  onApprove,
+  activeRef,
+}: {
+  records: ApprovalRecord[];
+  pending: PendingStep | null;
+  ui: Record<string, ApprovalUi>;
+  onApprove: (stepId: string) => Promise<unknown>;
+  activeRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const list = pending && !records.some((r) => r.id === pending.id) ? [...records, { id: pending.id, kind: pending.kind, message: pending.message, status: "pending" as const, createdAt: pending.createdAt }] : records;
+  if (!list.length) return null;
+  return (
+    <>
+      {list.map((r) => {
+        const active = pending?.id === r.id && r.status === "pending";
+        const state = ui[r.id];
+        if (!active || state?.phase === "stale") {
+          const line = state?.phase === "stale" ? state.message : state?.phase === "approved" ? "Approved" : STATUS_LINE[r.status];
+          return (
+            <div key={r.id} className={`cx-approval-done is-${state?.phase === "stale" ? "stale" : r.status}`}>
+              <span aria-hidden>{r.status === "approved" || state?.phase === "approved" ? "✓" : "•"}</span> {line} · {r.message}
+            </div>
+          );
+        }
+        const b = approveButton(state);
+        return (
+          <div key={r.id} ref={activeRef} className="cx-msg cx-bot cx-approval" role="group" aria-labelledby={`ap-${r.id}`}>
+            <div className="cx-bot-body">
+              <div className="cx-bubble cx-bubble-bot cx-approval-card">
+                <p className="cx-approval-title" id={`ap-${r.id}`}>
+                  {KIND_TITLE[r.kind] ?? "Neon needs you"}
+                </p>
+                <p className="cx-approval-text">{r.message}</p>
+                {state?.phase === "error" && (
+                  <p className="cx-approval-error" role="alert">
+                    {state.message}
+                  </p>
+                )}
+                <div className="cx-approval-actions">
+                  <button type="button" className="cx-btn cx-btn-primary cx-approve" disabled={b.disabled} aria-busy={state?.phase === "approving"} onClick={() => void onApprove(r.id)}>
+                    {b.label}
+                  </button>
+                  {pending?.browser && state?.phase !== "approved" && (
+                    <button type="button" className="cx-btn cx-approval-open" onClick={() => openBrowser(pending.browser!.cardId)}>
+                      Open browser
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** Settled approvals on a saved reply. */
+function ApprovalLog({ records }: { records: ApprovalRecord[] }) {
+  return (
+    <>
+      {records.map((r) => (
+        <div key={r.id} className={`cx-approval-done is-${r.status}`}>
+          <span aria-hidden>{r.status === "approved" ? "✓" : "•"}</span> {STATUS_LINE[r.status]} · {r.message}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** The step Neon is waiting on, just above the composer, while its message is scrolled out of view. */
+function PendingBar({ step, ui, onApprove, onShow }: { step: PendingStep; ui: ApprovalUi | undefined; onApprove: (stepId: string) => Promise<unknown>; onShow: () => void }) {
+  const b = approveButton(ui);
+  return (
+    <div className="cx-pending-bar" role="region" aria-label="Neon needs your approval">
+      <button type="button" className="cx-pending-text" onClick={onShow} title="Show in the chat">
+        {ui?.phase === "error" ? ui.message : ui?.phase === "stale" ? ui.message : step.message}
+      </button>
+      {ui?.phase !== "stale" && (
+        <button type="button" className="cx-btn cx-btn-primary cx-approve" disabled={b.disabled} aria-busy={ui?.phase === "approving"} onClick={() => void onApprove(step.id)}>
+          {b.label}
+        </button>
+      )}
+    </div>
+  );
+}

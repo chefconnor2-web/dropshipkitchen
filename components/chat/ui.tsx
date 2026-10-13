@@ -3,12 +3,13 @@
 
 import BrowserView from "./BrowserView";
 import type { DocInfo } from "@/lib/docs-shared";
+import type { ApprovalRecord } from "@/lib/run-shared";
 import { Fragment, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -64,6 +65,8 @@ export type BotEntry = {
   trace?: TraceItem[];
   thoughtMs?: number;
   cost?: { micros: number; inputTokens: number; outputTokens: number; webSearches: number; webFetches: number };
+  /** Steps the shopper was asked to approve during this reply, and their outcome. */
+  approvals?: ApprovalRecord[];
 };
 
 /** "$0.142 · 38.2k in / 4.1k out · 9 searches · 3 pages", what one reply cost. */
@@ -505,6 +508,8 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
                 <SupplierCard key={it.id} s={it} />
               ) : it.kind === "browser" ? (
                 <BrowserView key={it.id} b={it} />
+              ) : it.kind === "cart-link" ? (
+                <CartLink key={it.id} c={it} />
               ) : (
                 <CarCard key={it.id} c={it} />
               ),
@@ -513,6 +518,25 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
         </div>
       ))}
     </>
+  );
+}
+
+/**
+ * The Amazon cart Neon filled, as one button: it opens Amazon's add-to-cart page in the shopper's own Safari or
+ * Amazon app (where they're signed in), so the items go into their own cart and they check out there.
+ */
+function CartLink({ c }: { c: CartLinkCard }) {
+  return (
+    <a className="cx-cartlink" href={c.url} target="_blank" rel="noopener noreferrer">
+      <span className="cx-cartlink-title">Check out on Amazon</span>
+      <span className="cx-cartlink-sub">
+        {c.products} {c.products === 1 ? "item" : "items"}
+        {c.units > c.products ? ` (${c.units} in all)` : ""} · adds them to your own {c.site === "amazon.ca" ? "Amazon.ca" : "Amazon"} cart
+      </span>
+      <span className="cx-cartlink-go" aria-hidden>
+        ↗
+      </span>
+    </a>
   );
 }
 

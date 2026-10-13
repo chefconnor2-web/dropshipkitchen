@@ -46,8 +46,9 @@ export interface PageState {
   url: string;
   title: string;
   captcha: boolean;
+  /** Amazon wants to sign in. Neon never does and never hands it over: it goes back and shops as a guest. */
   signIn: boolean;
-  /** Set when only the shopper can get past the page (robot check, sign in): what to tell them. */
+  /** Set when the page blocks the step (robot check, sign in): what the service would tell the shopper. */
   needsShopper?: string | null;
   /** JPEG, base64, 1280×800 (desktop Chrome). */
   screenshot: string | null;
@@ -90,17 +91,62 @@ export async function chatBrowser(chatId: string, signal?: AbortSignal): Promise
   return { session, created: true };
 }
 
+/** The chat's browser session id, without opening a browser (null when it has none). */
+export async function chatBrowserId(chatId: string): Promise<string | null> {
+  const have = byChat.get(chatId);
+  if (have) return have.id;
+  const row = await prisma.assistantChat.findUnique({ where: { id: chatId }, select: { browserSessionId: true } }).catch(() => null);
+  return row?.browserSessionId ?? null;
+}
+
+/** Forgets the chat's browser (the service said it has closed), so the next step opens a new one. */
+export async function forgetChatBrowser(chatId: string): Promise<void> {
+  await remember(chatId, null);
+}
+
+/** 409 because the service is still running the previous step (not because the shopper has control). */
+export const isBusy = (e: unknown) => e instanceof BrowserError && e.status === 409 && /busy/i.test(e.message);
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(signal!.reason);
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+// After a Stop the service may still be finishing the old step (a page load runs up to 30 s): a step it refused
+// as busy never ran, so it's safe to try again a little later.
+const BUSY_RETRY_MS = [2_000, 4_000, 8_000];
+
+async function stepWhenFree<T>(step: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await step();
+    } catch (e) {
+      if (!isBusy(e) || i >= BUSY_RETRY_MS.length) throw e;
+      await sleep(BUSY_RETRY_MS[i], signal);
+    }
+  }
+}
+
 /** Runs a browser step for this chat, opening a new browser if the old one closed. */
 export async function inBrowser<T>(chatId: string, step: (id: string) => Promise<T>, signal?: AbortSignal): Promise<{ result: T; session: Session; created: boolean }> {
   let { session, created } = await chatBrowser(chatId, signal);
   try {
-    return { result: await step(session.id), session, created };
+    return { result: await stepWhenFree(() => step(session.id), signal), session, created };
   } catch (e) {
     if (!(e instanceof BrowserError) || e.status !== 404) throw e;
     byChat.delete(chatId);
     await prisma.assistantChat.update({ where: { id: chatId }, data: { browserSessionId: null } }).catch(() => {});
     ({ session, created } = await chatBrowser(chatId, signal));
-    return { result: await step(session.id), session, created };
+    return { result: await stepWhenFree(() => step(session.id), signal), session, created };
   }
 }
 

@@ -130,3 +130,12 @@ test("client request ids are checked", () => {
   assert.ok(validRequestId("3f2b6c1e-9d4a-4c1b-8a77-2f1e0c9d8b7a"));
   for (const bad of ["", "short", "x".repeat(65), "has space 123", null, 12345678]) assert.equal(validRequestId(bad), false);
 });
+
+test("approval records: opened as pending, then upserted with their outcome", () => {
+  let p = emptyPartial();
+  const rec = { id: "st_a", kind: "captcha" as const, message: "Robot check", createdAt: "2026-01-01T00:00:00Z" };
+  p = applyEvent(p, { type: "approval", record: { ...rec, status: "pending" } });
+  p = applyEvent(p, { type: "approval", record: { ...rec, status: "approved", resolvedAt: "2026-01-01T00:01:00Z" } });
+  p = applyEvent(p, { type: "approval", record: { ...rec, id: "st_b", status: "pending" } });
+  assert.deepEqual(p.approvals.map((a) => [a.id, a.status]), [["st_a", "approved"], ["st_b", "pending"]]);
+});

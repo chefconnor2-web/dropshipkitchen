@@ -232,3 +232,42 @@ Agent steps while the shopper has control → 409 (unchanged).
 | input queue | 64 | browser |
 | WS maxPayload | 16 KiB | browser |
 | view token TTL | 10 min | storefront mints, browser checks |
+
+
+## 11. Changes after the first deploy (frozen for the fix round)
+- **No Amazon sign-in in Neon's browser, ever.**
+  - Neon fills the cart as a guest. When a page asks to sign in during a step, the connector goes back and carries on as a guest; it never hands over for sign-in.
+  - At the end Neon shows a `CartLinkCard` (`lib/flights-shared.ts`, kind `"cart-link"`): Amazon's add-to-cart URL, `https://www.amazon.<ca|com>/gp/aws/cart/add.html?ASIN.1=…&Quantity.1=…`, which the shopper opens in their own browser or app, already signed in.
+  - Take-overs remain for robot checks and choices only.
+- **The browser size follows the phone.**
+  - `{t:"control", on:true, w, h}` carries the CSS size of the shopper's full-screen browser area. `{t:"viewport", w, h}` updates it on rotate or resize.
+  - The service uses it as the phone viewport, clamped to 320–600 × 400–1100, at DPR 2, with no reload.
+- **Input.**
+  - `{t:"key", key:"Backspace", count}` (count 1–200) replaces Backspace floods.
+  - Input dropped because control ended is answered `{t:"error", n, code:"dropped"}`, after `{t:"control", on:false}` has been sent. Clients ignore `dropped`; it is not a reason to take control again.
+- **`RunContext.stop()`** cancels the active run, so a required take-over offers "Stop Neon".
+- **Memory (1 GB limit on the service).**
+  - Lighter Chrome flags.
+  - Media (video and audio streams) is blocked.
+  - A session with no viewer and no step for 3 minutes is closed.
+  - Session lifecycle is logged: no URLs, no page content.
+
+## 12. Approval messages ("Approve & next")
+Approvals only exist for steps the run really waits on (`waitForShopper`: robot checks and choices). No new gates are added.
+
+- **Data** (`lib/run-shared.ts`).
+  - `ApprovalRecord {id: stepId, kind, message, status: pending|approved|expired|cancelled, createdAt, resolvedAt?}`.
+  - `PartialEntry.approvals: ApprovalRecord[]`.
+  - `LiveEvent {type:"approval", record}`, upserted by id.
+  - The server emits it when a step opens (pending), and when it's resumed (approved), expires or is cancelled.
+  - The saved assistant entry keeps `approvals` (the resolved history).
+- **Chat.**
+  - The active step is an assistant message appended at the latest point of the chat. It carries the explanation and an **Approve & next** button bound to that record's `id`.
+  - Resolved records render as compact status lines ("Approved").
+  - When the active message is off-screen, a compact pending bar sits just above the composer with the same action. The chat is never force-scrolled; a "Show" link scrolls only when tapped.
+- **One approval action** (`RunContext.approve(stepId)`), shared by the chat message, the pending bar and the full-screen browser:
+  - At most one request in flight per step. Duplicate taps are ignored.
+  - States: `idle → approving ("Approving…", disabled) → approved ("Approved", disabled)`, or `error` (a message, plus retry with the same stepId).
+  - The UI marks a step approved only on `{accepted:true, stepId}` from POST /resume.
+  - `stale_step`, `run_finished` and `expired` show the step's current status ("Superseded", "Already finished", "Timed out") and remove its button. An old message can never approve a newer step, because the request carries the old stepId and the server rejects it.
+- **Browser take-over.** A step tied to a browser card still opens that card full screen, with the same Approve & next action. It also has **Back to chat**, which minimizes without approving: the pending message and bar stay. After accepted approval, the card returns inline with the same session and socket.

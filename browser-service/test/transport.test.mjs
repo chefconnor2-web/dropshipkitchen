@@ -203,6 +203,44 @@ test("control is released when the controlling phone disconnects", async () => {
   assert.equal(ok.status, 200);
 });
 
+test("the phone page takes the shopper's screen size, and follows a resize without reloading", async () => {
+  await api(`/sessions/${sid}/act`, { actions: [{ type: "goto", url: FIX }] }); // fresh, unscrolled page
+  const c = await client(sid);
+  c.send({ t: "control", on: true, w: 375, h: 600, n: 1 });
+  await c.until((x) => x.msgs.some((m) => m.t === "frame-meta" && m.w === 375 && m.h === 600));
+  // Type into the field, resize, and the text is still there (no reload).
+  c.send({ t: "tap", x: 0.5, y: 290 / 600, n: 2 });
+  c.send({ t: "type", text: "kept", n: 3 });
+  await c.until((x) => x.msgs.some((m) => m.t === "ack" && m.n === 3));
+  c.send({ t: "viewport", w: 600, h: 400, n: 4 });
+  await c.until((x) => x.msgs.some((m) => m.t === "frame-meta" && m.w === 600 && m.h === 400));
+  const st = await api(`/sessions/${sid}/state`, undefined, "GET");
+  assert.equal(st.body.title, "typed:kept");
+  // One Backspace message with a count instead of a flood.
+  c.send({ t: "key", key: "Backspace", count: 2, n: 5 });
+  await c.until((x) => x.msgs.some((m) => m.t === "ack" && m.n === 5));
+  assert.equal((await api(`/sessions/${sid}/state`, undefined, "GET")).body.title, "typed:ke");
+  c.send({ t: "key", key: "Backspace", count: 500, n: 6 });
+  await c.until((x) => x.msgs.some((m) => m.t === "error" && m.n === 6 && m.code === "invalid"));
+  c.send({ t: "control", on: false });
+  c.ws.close();
+  await sleep(800);
+});
+
+test("on release, viewers hear control ended before dropped input is answered", async () => {
+  const c = await client(sid);
+  c.send({ t: "control", on: true, n: 1 });
+  await c.until((x) => x.msgs.some((m) => m.t === "ack" && m.n === 1));
+  for (let i = 0; i < 30; i++) c.send({ t: "scroll", dy: i % 2 ? 50 : -50, n: 10 + i });
+  c.send({ t: "back", n: 99 });
+  await api(`/sessions/${sid}/release`);
+  await c.until((x) => x.msgs.some((m) => m.t === "control" && m.on === false));
+  const offAt = c.msgs.findIndex((m) => m.t === "control" && m.on === false);
+  const firstDropped = c.msgs.findIndex((m) => m.t === "error" && m.code === "dropped");
+  assert.ok(firstDropped === -1 || firstDropped > offAt, "dropped answers come after control off");
+  c.ws.close();
+});
+
 test("pages outside Amazon and private addresses are blocked", async () => {
   const r = await api(`/sessions/${sid}/act`, { actions: [{ type: "goto", url: "https://example.com/" }] });
   assert.equal(r.status, 400);

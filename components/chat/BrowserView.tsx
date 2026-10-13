@@ -17,7 +17,7 @@ import { createPortal } from "react-dom";
 import type { BrowserCard } from "@/lib/flights-shared";
 import type { ResumeResult } from "@/lib/run-shared";
 import { useRunContext } from "./run-context";
-import { CLOSED_REASON, FrameRenderer, LiveConnection, pageSize, scrollDelta, toFramePoint, type ConnState, type Decoded, type Size, type SocketLike } from "./browser-frames";
+import { CLOSED_REASON, FrameRenderer, LiveConnection, pageSize, scrollDelta, toFramePoint, type ConnState, type Decoded, type Size, type SocketLike, phoneViewport, sameSize, typingEdits } from "./browser-frames";
 
 type Mode = "inline" | "voluntary" | "required";
 type Frame = Decoded & { src: CanvasImageSource; free: () => void };
@@ -86,6 +86,10 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   const [note, setNote] = useState<string | null>(null);
   const [vv, setVv] = useState<{ h: number; top: number } | null>(null);
 
+  const releasedByServer = useRef(false);
+  const sentSize = useRef<Size | null>(null);
+  /** Pending steps the shopper chose "Back to chat" for (not approvals). */
+  const minimized = useRef(new Set<string>());
   const modeRef = useRef<Mode>("inline");
   modeRef.current = mode;
   const expanded = mode !== "inline";
@@ -143,7 +147,7 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
       },
       onOpen: () => {
         // Back after a drop while the shopper was driving: take control again.
-        if (modeRef.current !== "inline") c.send({ t: "control", on: true });
+        if (modeRef.current !== "inline") takeControl();
       },
       onMessage: (m) => {
         if (m.t === "status") {
@@ -155,10 +159,13 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
         else if (m.t === "focus") setEditing(!!m.editing);
         else if (m.t === "control" && m.on === false) {
           // The server gave control back to Neon (the step was resumed), or another screen took over.
+          if (m.by === "server") releasedByServer.current = true;
           if (modeRef.current === "voluntary" || (modeRef.current === "required" && m.by === "server")) leave();
-        } else if (m.t === "error") {
+        } else if (m.t === "control" && m.on === true) releasedByServer.current = false;
+        else if (m.t === "error") {
           if (m.code === "failed" || m.code === "busy") flash(typeof m.message === "string" ? m.message : "Couldn't do that. Try again.");
-          else if (m.code === "not_in_control" && modeRef.current !== "inline") c.send({ t: "control", on: true });
+          // Input dropped because control ended is expected; only a screen still in a take-over takes control again.
+          else if (m.code === "not_in_control" && modeRef.current !== "inline" && !releasedByServer.current) takeControl();
         }
       },
       isOnline: () => (typeof navigator === "undefined" ? true : navigator.onLine !== false),
@@ -189,6 +196,20 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
     if (lastBlob.current) renderer.current?.push(lastBlob.current);
   }, [expanded]);
 
+  /** Takes control with the phone's full-screen browser area as the page size (CONTRACTS.md §11). */
+  function takeControl() {
+    releasedByServer.current = false;
+    const size = screenSize();
+    sentSize.current = size;
+    conn.current?.send({ t: "control", on: true, ...(size ?? {}) });
+  }
+  function screenSize(): Size | null {
+    const el = document.querySelector<HTMLElement>(`[data-browser="${b.id}"] .cx-browser-screen`);
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    const px = (v: string) => parseFloat(v) || 0;
+    return phoneViewport(el.getBoundingClientRect(), { top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft) });
+  }
   function enter(next: Mode) {
     if (modeRef.current === "inline") {
       inlineHeight.current = slot.current?.offsetHeight ?? 0;
@@ -197,7 +218,8 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
     setMode(next);
     setDoneError(null);
     setNote(null);
-    conn.current?.send({ t: "control", on: true });
+    // Control (with the screen size) once the full-screen layout exists.
+    requestAnimationFrame(() => requestAnimationFrame(takeControl));
   }
   function leave() {
     setMode("inline");
@@ -212,15 +234,36 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
     leave();
   }
 
-  // The run is waiting on the shopper in this browser: open full screen (same card, same socket).
+  // The run is waiting on the shopper in this browser: open full screen (same card, same socket), unless they
+  // chose "Back to chat" for this step (the chat's approval message and bar can open it again).
   useEffect(() => {
-    if (mine && mode !== "required") enter("required");
+    if (mine && mode !== "required" && !minimized.current.has(mine.id)) enter("required");
     else if (!mine && mode === "required" && !doneBusy) {
-      // The step went away without this card resuming it (expired, cancelled, the run ended): back to the chat.
-      leave();
+      // The step went away without this card resuming it (expired, cancelled, the run ended): back to the chat,
+      // and the browser back to Neon.
+      handBack();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mine?.id]);
+
+  // "Open browser" from the chat's approval message.
+  useEffect(() => {
+    const open = (e: Event) => {
+      const id = (e as CustomEvent<{ cardId?: string }>).detail?.cardId;
+      if (id !== b.id || !pendingRef.current) return;
+      minimized.current.delete(pendingRef.current.id);
+      enter("required");
+    };
+    window.addEventListener("cx:open-browser", open);
+    return () => window.removeEventListener("cx:open-browser", open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Back to chat during a required take-over: not an approval; the step stays pending in the chat. */
+  function minimize() {
+    if (pendingRef.current) minimized.current.add(pendingRef.current.id);
+    handBack();
+  }
 
   async function done() {
     const step = pendingRef.current;
@@ -229,7 +272,8 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
     setDoneError(null);
     let r: ResumeResult;
     try {
-      r = await run.resume(step.id);
+      // The same action as the chat's "Approve & next" message: one request per step, shared state.
+      r = await run.approve(step.id);
     } catch {
       r = { accepted: false, reason: "not_waiting", message: "Couldn't reach Neon. Try again.", current: null };
     }
@@ -258,6 +302,31 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
     leave();
     if (!r.accepted) setNote(r.message);
   }
+
+  // While full screen, the remote page follows the phone's browser area (rotation, the keyboard): debounced.
+  useEffect(() => {
+    if (!expanded) return;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const changed = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        const size = screenSize();
+        if (!size || sameSize(size, sentSize.current)) return;
+        sentSize.current = size;
+        send({ t: "viewport", ...size });
+      }, 200);
+    };
+    window.visualViewport?.addEventListener("resize", changed);
+    window.addEventListener("orientationchange", changed);
+    window.addEventListener("resize", changed);
+    return () => {
+      if (t) clearTimeout(t);
+      window.visualViewport?.removeEventListener("resize", changed);
+      window.removeEventListener("orientationchange", changed);
+      window.removeEventListener("resize", changed);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   // Full screen: lock the page behind it, follow the on-screen keyboard, and manage focus.
   useEffect(() => {
@@ -334,15 +403,7 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
     if (p) send({ t: "tap", x: p.x, y: p.y });
   }
   function onType(value: string) {
-    const prev = typed.current;
-    if (value.startsWith(prev)) {
-      if (value.length > prev.length) send({ t: "type", text: value.slice(prev.length) });
-    } else if (prev.startsWith(value)) {
-      for (let i = 0; i < prev.length - value.length; i++) send({ t: "key", key: "Backspace" });
-    } else {
-      for (let i = 0; i < prev.length; i++) send({ t: "key", key: "Backspace" });
-      if (value) send({ t: "type", text: value });
-    }
+    for (const edit of typingEdits(typed.current, value)) send(edit);
     typed.current = value;
     setText(value);
   }
@@ -350,11 +411,14 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   const status = connText(state);
   const ask = !ended && !expanded && !mine ? needs || b.handoff || null : null;
   const message = mine?.message ?? null;
+  const approval = mine ? run.approvals[mine.id] : undefined;
+  const approveLabel = doneBusy || approval?.phase === "approving" ? "Approving…" : approval?.phase === "approved" ? "Approved" : approval?.phase === "error" ? "Try again" : "Approve & next";
   const fullStyle = expanded && vv ? { height: `${vv.h}px`, top: `${vv.top}px` } : undefined;
 
   const card = (
     <div
       className={`cx-browser${expanded ? " is-control is-full" : ""}${mode === "required" ? " is-required" : ""}${ended ? " is-ended" : ""}${ask ? " is-asking" : ""}`}
+      data-browser={b.id}
       style={fullStyle}
       {...(expanded ? { role: "dialog", "aria-modal": true, "aria-labelledby": `${b.id}-title` } : {})}
     >
@@ -363,7 +427,17 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
         <span className="cx-browser-host">{host}</span>
         {!ended && mode !== "required" && (
           <button type="button" ref={takeBtn} className={`cx-browser-take${expanded ? " is-on" : ""}`} onClick={() => (expanded ? handBack() : enter("voluntary"))}>
-            {expanded ? "Hand back to Neon" : "Take over"}
+            {expanded ? "Hand back to Neon" : mine ? "Open" : "Take over"}
+          </button>
+        )}
+        {!ended && mode === "required" && (
+          <button type="button" className="cx-browser-take cx-browser-min" onClick={minimize}>
+            Back to chat
+          </button>
+        )}
+        {ended && expanded && (
+          <button type="button" className="cx-browser-take" onClick={leave}>
+            Close
           </button>
         )}
       </div>
@@ -404,6 +478,7 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
       {expanded && !ended && (
         <div className="cx-browser-keys">
           <form
+            className="cx-browser-typing"
             onSubmit={(e) => {
               e.preventDefault();
               send({ t: "key", key: "Enter" });
@@ -423,24 +498,31 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
               spellCheck={false}
               enterKeyHint="go"
             />
-          </form>
-          <div className="cx-browser-row">
-            <button type="button" onClick={() => send({ t: "back" })}>‹ Back</button>
+            <button type="button" onClick={() => send({ t: "back" })} aria-label="Back">
+              ‹
+            </button>
             <button type="button" onClick={() => send({ t: "key", key: "Backspace" })} aria-label="Delete">
               ⌫
             </button>
-            <button type="button" onClick={() => send({ t: "key", key: "Enter" })}>Enter</button>
-          </div>
+            <button type="submit" aria-label="Enter">
+              ↵
+            </button>
+          </form>
           {mode === "required" && (
             <>
-              {doneError && (
+              {(doneError || approval?.phase === "error") && (
                 <p className="cx-browser-done-error" role="alert">
-                  {doneError}
+                  {doneError || (approval?.phase === "error" ? approval.message : "")}
                 </p>
               )}
-              <button type="button" className="cx-browser-done" onClick={done} disabled={doneBusy || !mine} aria-busy={doneBusy}>
-                {doneBusy ? "Telling Neon…" : "Done — continue"}
-              </button>
+              <div className="cx-browser-actions">
+                <button type="button" className="cx-browser-done" onClick={done} disabled={doneBusy || !mine || approval?.phase === "approving" || approval?.phase === "approved"} aria-busy={doneBusy}>
+                  {approveLabel}
+                </button>
+                <button type="button" className="cx-browser-stop" onClick={() => void run.stop()}>
+                  Stop Neon
+                </button>
+              </div>
             </>
           )}
         </div>
