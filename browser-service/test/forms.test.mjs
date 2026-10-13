@@ -92,3 +92,44 @@ test("'pick-up date' never lands on 'Pick-up location' (the kind of field must m
   assert.equal(await page.$eval("#d", (e) => e.value), "2026-10-23");
   assert.equal(await page.$eval("#loc", (e) => e.value), "");
 });
+
+// Discover Cars-like location box: a nav menu of <li>s already on the page, a long scrolling suggestion list
+// (the airport is far down, out of view) of divs, an overlay left open after choosing, and a list that only
+// answers some searches.
+const LOCATION = `<!doctype html><html><body style="font:16px sans-serif">
+<ul id=nav><li>Miami deals</li><li>Help</li></ul>
+<label for=loc>Pick-up location</label><input id=loc autocomplete=off>
+<div id=box class="Autocomplete-List" style="max-height:120px;overflow:auto"></div>
+<div id=ov class="Autocomplete-LocationPickerOverlay" style="position:fixed;inset:0;display:none"></div>
+<script>
+const all=["Miami Beach","Miami Downtown","Miami Gardens","Miami Lakes","Miami Springs","Miami Shores","Miami International Airport (MIA)","Miami Port"];
+let typed=[];
+loc.addEventListener("input",()=>{typed.push(loc.value);setTimeout(()=>{
+  const q=loc.value.toLowerCase();
+  const hits=q==="miami mia"?[]:all.filter(n=>n.toLowerCase().includes(q.split(" ")[0])||n.toLowerCase().includes("("+q+")"));
+  box.innerHTML=hits.map(n=>'<div class="Autocomplete-item" style="height:30px">'+n+'</div>').join("");ov.style.display=hits.length?"block":"none"},200)});
+box.addEventListener("click",e=>{if(e.target.classList.contains("Autocomplete-item")){loc.value=e.target.textContent;box.innerHTML="";window.chosen=e.target.textContent}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")ov.style.display="none"});
+</script></body></html>`;
+
+test("location: always one of the site's suggestions, the airport by its code, even scrolled out of view", async () => {
+  const p = await browser.newPage();
+  await p.setContent(LOCATION);
+  // "Miami MIA" shows no list on this site: the code alone does, and the airport is 7th in a scrolling list.
+  const r = await smartAction(p, { type: "fill", field: "pick-up location", value: "Miami MIA", choose: true, code: "MIA", alternates: ["MIA", "Miami airport", "Miami"] });
+  assert.equal(r.ok, true, r.why);
+  assert.match(r.did, /chose "Miami International Airport \(MIA\)" from the site's list/);
+  assert.equal(await p.evaluate(() => window.chosen), "Miami International Airport (MIA)");
+  // The overlay the site left open is closed, and the page's own menu was never touched.
+  assert.equal(await p.$eval("#ov", (e) => e.style.display), "none");
+  await p.close();
+});
+
+test("location: no suggestion list at all is reported, never left as typed text", async () => {
+  const p = await browser.newPage();
+  await p.setContent(`<label for=loc>Pick-up location</label><input id=loc><ul><li>Menu</li></ul>`);
+  const r = await smartAction(p, { type: "fill", field: "pick-up location", value: "Miami MIA", choose: true, code: "MIA", alternates: ["MIA"] });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /no suggestion list/);
+  await p.close();
+});

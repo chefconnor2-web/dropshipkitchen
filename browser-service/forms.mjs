@@ -109,26 +109,61 @@ function clickMatching(texts, scope) {
   return best.text.slice(0, 80);
 }
 
-/** The suggestion to take after typing: the first one holding every typed word (any order), else the first one. */
-function pickSuggestion(value) {
+// Things that look like autocomplete options. Plain "ul li" is only trusted when it appeared after typing.
+const OPTION_SEL = "[role=option], [role=listbox] li, [role=listbox] > *, [class*=suggest i] li, [class*=suggest i] [class*=item i], [class*=autocomplete i] li, [class*=autocomplete i] [class*=item i], [class*=autocomplete i] [class*=option i], [class*=location i] [class*=item i], [class*=dropdown i] li, [class*=result i] li, ul li";
+
+/** Marks the option-like elements already on the page before typing, so only the new dropdown counts. */
+function markOptionsBefore(sel) {
+  for (const el of document.querySelectorAll(sel)) el.setAttribute("data-neon-pre", "1");
+}
+
+/**
+ * The best suggestion in the dropdown that appeared after typing, scored across the whole list (scrolled-off
+ * options included): every typed word present, the airport code exactly (e.g. "(MIA)"), and "airport" when an
+ * airport is wanted. Clicks it and returns its text, or null when no dropdown appeared.
+ */
+function pickSuggestion(value, code, sel) {
   const norm = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const words = norm(value).split(" ").filter(Boolean);
-  const visible = (el) => {
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
+  const words = norm(value).split(" ").filter((w) => w.length > 1);
+  const iata = String(code || "").toLowerCase();
+  const shown = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden") return false;
+    // Inside a scrolling list an option may be out of view but still laid out.
+    return el.getClientRects().length > 0;
   };
-  const opts = [...document.querySelectorAll("[role=option], [role=listbox] li, [class*=suggest i] li, [class*=autocomplete i] li, [class*=dropdown i] li, ul li")].filter(
-    (el) => visible(el) && norm(el.textContent).length > 0 && norm(el.textContent).length < 160 && !el.querySelector("li"),
-  );
-  if (!opts.length) return null;
-  const all = opts.find((el) => {
-    const t = norm(el.textContent).split(" ");
-    return words.every((w) => t.includes(w));
+  const opts = [...document.querySelectorAll(sel)].filter((el) => {
+    if (el.hasAttribute("data-neon-pre") || !shown(el)) return false;
+    const t = norm(el.textContent);
+    if (!t || t.length > 200) return false;
+    // The option itself, not a list holding several.
+    return !el.querySelector("li, [role=option]");
   });
-  const el = all || opts[0];
-  el.scrollIntoView({ block: "center" });
+  if (!opts.length) return null;
+  let best = null;
+  opts.forEach((el, idx) => {
+    const t = norm(el.textContent);
+    const tw = t.split(" ");
+    let score = words.filter((w) => tw.includes(w)).length * 10;
+    if (iata && tw.includes(iata)) score += 40;
+    if (iata && /\bairport\b/.test(t)) score += 15;
+    if (/\b(all locations|see all|show more|view all)\b/.test(t)) score -= 50;
+    score -= idx * 0.1; // ties go to the site's own order
+    if (!best || score > best.score) best = { el, score };
+  });
+  const el = best.el;
+  el.scrollIntoView({ block: "nearest" });
   el.click();
   return el.textContent.replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+/** After choosing: the field shows the choice, and no location dropdown or overlay is left covering the form. */
+function closeLeftovers() {
+  const open = [...document.querySelectorAll("[class*=Overlay], [class*=overlay], [class*=autocomplete i], [role=listbox]")].filter((e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(e).display !== "none";
+  });
+  return open.length;
 }
 
 /** Every way a page might write a time: "12:30", "12:30 PM", "12.30", "1230". */
@@ -265,22 +300,35 @@ export async function smartAction(page, a) {
   if (a.type === "fill") {
     const f = await page.evaluate(findField, String(a.field ?? ""), "text");
     if (!f) return { ok: false, why: `No field like "${a.field}".`, fields: await page.evaluate(fieldInventory).catch(() => []) };
-    await typeInto(page, value);
     if (a.choose) {
-      // Suggestions usually appear within a second: take the closest match to what was typed.
-      for (let i = 0; i < 12; i++) {
-        await pause(120);
-        const picked = await page.evaluate(pickSuggestion, value);
-        if (picked) {
-          await settle(page, 500);
-          return { ok: true, did: `typed "${value}", chose "${picked}"` };
+      // Always end on one of the site's own suggestions (never free text): the typed value first, then the
+      // alternates (e.g. the airport code, "<city> airport", the city), each given time for the list to load.
+      const tries = [value, ...(Array.isArray(a.alternates) ? a.alternates.map(String) : [])].filter((v, k, all) => v && all.indexOf(v) === k).slice(0, 3);
+      for (const q of tries) {
+        await page.evaluate(markOptionsBefore, OPTION_SEL).catch(() => {});
+        await typeInto(page, q);
+        // About 1.6 s per search: a list that hasn't appeared by then usually won't for this text.
+        for (let i = 0; i < 12; i++) {
+          await pause(i < 5 ? 100 : 150);
+          const picked = await page.evaluate(pickSuggestion, q, String(a.code ?? ""), OPTION_SEL).catch(() => null);
+          if (picked) {
+            await settle(page, 500);
+            // A dropdown or overlay still open would swallow the next click (Discover Cars' location picker).
+            if (await page.evaluate(closeLeftovers).catch(() => 0)) {
+              await page.keyboard.press("Escape").catch(() => {});
+              await pause(150);
+            }
+            await page.evaluate(() => document.querySelectorAll("[data-neon-pre]").forEach((e) => e.removeAttribute("data-neon-pre"))).catch(() => {});
+            return { ok: true, did: `typed "${q}", chose "${picked}" from the site's list` };
+          }
         }
+        // Re-find the field: typing may have re-rendered it.
+        if (!(await page.evaluate(findField, String(a.field ?? ""), "text"))) break;
       }
-      await page.keyboard.press("ArrowDown").catch(() => {});
-      await page.keyboard.press("Enter").catch(() => {});
-      await settle(page, 500);
-      return { ok: true, did: `typed "${value}", no suggestion list found, pressed Enter on the first` };
+      await page.evaluate(() => document.querySelectorAll("[data-neon-pre]").forEach((e) => e.removeAttribute("data-neon-pre"))).catch(() => {});
+      return { ok: false, why: `Typed ${tries.map((t) => `"${t}"`).join(", ")} but the site showed no suggestion list to choose from.`, fields: await page.evaluate(fieldInventory).catch(() => []) };
     }
+    await typeInto(page, value);
     return { ok: true, did: `typed "${value}"` };
   }
   if (a.type === "select") {
