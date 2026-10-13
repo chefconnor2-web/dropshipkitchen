@@ -1,7 +1,7 @@
 // AI limits by spend tier, and the signed account cookie.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_LIMITS, FULL_USAGE_MULTIPLIER, limitMessage, normalizeLimits, planAiBudgetMicros, tierFor } from "../lib/membership";
+import { DEFAULT_LIMITS, FULL_USAGE_MULTIPLIER, isOwnerEmail, limitMessage, normalizeLimits, planAiBudgetMicros, tierFor } from "../lib/membership";
 import { DEFAULT_LITE } from "../lib/plan";
 import { signValue, verifyValue } from "../lib/session";
 
@@ -63,4 +63,16 @@ test("Full gets exactly twice Lite's AI budget", () => {
   assert.equal(FULL_USAGE_MULTIPLIER, 2);
   assert.equal(planAiBudgetMicros("lite", DEFAULT_LITE), 4_050_000);
   assert.equal(planAiBudgetMicros("full", DEFAULT_LITE), 8_100_000);
+});
+
+test("owners (OWNER_EMAILS) are recognised by email, case-insensitively, and nobody else", () => {
+  const was = process.env.OWNER_EMAILS;
+  process.env.OWNER_EMAILS = " Chef@Example.com , boss@example.com";
+  assert.equal(isOwnerEmail("chef@example.com"), true);
+  assert.equal(isOwnerEmail("BOSS@example.com "), true);
+  assert.equal(isOwnerEmail("someone@example.com"), false);
+  assert.equal(isOwnerEmail(null), false);
+  process.env.OWNER_EMAILS = "";
+  assert.equal(isOwnerEmail("chef@example.com"), false);
+  process.env.OWNER_EMAILS = was;
 });
