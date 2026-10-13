@@ -2007,3 +2007,6 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .trip-cancel-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.danger { background: #b42318; border-color: #b42318; color: #fff; }
 .btn.danger:hover:not(:disabled) { background: #912018; }
+.cx-supplier { flex-basis: 286px; align-content: start; }
+.cx-supplier-offer { font-size: 13.5px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.cx-more { display: block; margin-top: 6px; padding: 0; border: 0; background: none; color: inherit; font: 600 13px/1.3 inherit; text-decoration: underline; opacity: 0.85; cursor: pointer; }

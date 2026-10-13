@@ -556,7 +556,7 @@ export default function Chat({
             id="cx-q"
             ref={inputRef}
             rows={1}
-            maxLength={1000}
+            maxLength={8000}
             value={input}
             enterKeyHint="send"
             placeholder={dictating ? "Listening…" : "Message"}
@@ -711,7 +711,7 @@ export default function Chat({
                       <textarea
                         autoFocus
                         value={editing.text}
-                        maxLength={1000}
+                        maxLength={8000}
                         onChange={(ev2) => setEditing({ index: i, text: ev2.target.value })}
                         onKeyDown={(ev2) => {
                           if (ev2.key === "Escape") setEditing(null);
@@ -746,7 +746,7 @@ export default function Chat({
                           ))}
                         </div>
                       )}
-                      {e.text && <div className="cx-bubble cx-bubble-me">{e.text}</div>}
+                      {e.text && <UserText text={e.text} />}
                       {receipt(i)}
                       {!busy && e.text && (
                         <div className="cx-actions cx-actions-user">
@@ -948,6 +948,22 @@ export default function Chat({
           {toast.text}
           {toast.cart && <Link href="/cart">View cart</Link>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** The shopper's message; a long pasted brief starts folded so it doesn't push the answer off screen. */
+function UserText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 700;
+  return (
+    <div className="cx-bubble cx-bubble-me">
+      {long && !open ? text.slice(0, 520).trimEnd() + "…" : text}
+      {long && (
+        <button type="button" className="cx-more" onClick={() => setOpen(!open)}>
+          {open ? "Show less" : "Show all"}
+        </button>
       )}
     </div>
   );

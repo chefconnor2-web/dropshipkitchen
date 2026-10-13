@@ -6,7 +6,7 @@ import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
 import Link from "next/link";
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -467,12 +467,47 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
           {group && <div className="cx-group-label">{group}</div>}
           <div className={`cx-cards ${list[0]?.kind === "hotel" ? "cx-hotels" : "cx-flights"}`}>
             {list.map((it) =>
-              it.kind === "flight" ? <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} /> : it.kind === "hotel" ? <HotelCard key={it.id} h={it} /> : <CarCard key={it.id} c={it} />,
+              it.kind === "flight" ? (
+                <FlightCard key={it.id} f={it} share={<ShareFlight f={it} />} />
+              ) : it.kind === "hotel" ? (
+                <HotelCard key={it.id} h={it} />
+              ) : it.kind === "supplier" ? (
+                <SupplierCard key={it.id} s={it} />
+              ) : (
+                <CarCard key={it.id} c={it} />
+              ),
             )}
           </div>
         </div>
       ))}
     </>
+  );
+}
+
+/** A supplier outside our catalog that Neon found on the web: what they offer, as listed, and a link to them. */
+function SupplierCard({ s }: { s: Supplier }) {
+  let site = "";
+  try {
+    site = new URL(s.url).hostname.replace(/^www\./, "");
+  } catch {}
+  return (
+    <div className="cx-car cx-supplier">
+      <div className="cx-car-kind">Outside supplier{s.location ? ` · ${s.location}` : ""}</div>
+      <div className="cx-car-where">{s.name}</div>
+      <div className="cx-supplier-offer">{s.offer}</div>
+      {(s.price || s.moq) && (
+        <div className="cx-muted">
+          {s.price ? <strong>{s.price}</strong> : null}
+          {s.price && s.moq ? " · " : ""}
+          {s.moq ? `MOQ ${s.moq}` : ""}
+        </div>
+      )}
+      {s.note && <div className="cx-car-note">{s.note}</div>}
+      <a className="cx-btn" href={s.url} target="_blank" rel="noopener noreferrer nofollow">
+        View on {site || "their site"}
+      </a>
+      <div className="cx-car-note">Not sold by us. Contact them for a quote and confirm specs before you pay.</div>
+    </div>
   );
 }
 

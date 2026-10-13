@@ -88,8 +88,24 @@ export interface CarRentalCard {
   group?: string;
 }
 
+/** A supplier outside our catalog that Neon found on the web: the shopper contacts them for a quote. */
+export interface SupplierCard {
+  kind: "supplier";
+  id: string;
+  name: string;
+  url: string;
+  /** What they make or sell that matches ("300T four-column deep-drawing press"). */
+  offer: string;
+  location?: string;
+  /** As listed, in words ("$18,000–25,000 / set"); never worked out by us. */
+  price?: string;
+  moq?: string;
+  note?: string;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard | HotelCard | CarRentalCard;
+export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard;
 
 /** "$1,240" for a stay, in its own currency. */
 export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {

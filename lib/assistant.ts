@@ -21,6 +21,7 @@ import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
 import type { ConnectorItem } from "@/lib/flights-shared";
+import { SUPPLIER_TOOL, parseSuppliers, seenPages, sourcingPrompt, webSourcingEnabled, webTools } from "@/lib/sourcing";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
 export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
@@ -33,7 +34,11 @@ const MAX_SCOUT_SEARCHES = 2;
 const MAX_PARTS = 8;
 const SCOUT_CONCURRENCY = 5;
 const MAX_USER_TURNS = 40;
-const MAX_MESSAGE_CHARS = 1000;
+// Room for a pasted brief (a bill of materials, a sourcing spec), not just a chat line.
+export const MAX_MESSAGE_CHARS = 8000;
+
+/** The planner can search the web for suppliers (dynamic-filtering web tools need Sonnet/Opus 4.6 or later). */
+const webSourcing = () => webSourcingEnabled() && !MODEL.startsWith("claude-haiku");
 
 export function assistantConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY?.trim();
@@ -90,7 +95,7 @@ function systemPrompt(): string {
 How to work:
 - Think through everything the project needs: the main components, the parts that connect them (wiring, connectors, mounts, fuses), and the tools to do it yourself.
 - Find parts with find_products, all of them in one call: it sends a scout to search the live catalog for each part in parallel and returns a shortlist per part. Give each part a clear need (specs that matter, like voltage, size, connector type) and 1-3 short keyword queries (1-3 plain words each, e.g. "48v battery", "xt90 connector"). If a part comes back empty, try once more with different keywords before giving up.
-- Only recommend products that find_products returned, at the price it returned. Never invent products, prices, specs or delivery times. If something isn't available, say so and suggest an alternative from this catalog. Never send shoppers to other stores or websites.
+- Only recommend products that find_products returned, at the price it returned. Never invent products, prices, specs or delivery times. If something isn't available, say so and suggest an alternative from this catalog.${webSourcing() ? " If nothing in it fits, source it outside the catalog as described below; otherwise don't send shoppers to other stores." : " Never send shoppers to other stores or websites."}
 - Don't open products while planning. Call get_product only for items you're about to add, or to check a spec you need.
 - When the shopper says to add something, add it in the same turn: get_product, then add_to_cart with the exact variant_id. Don't ask for confirmation again. If they asked you to build the whole cart, add your clear picks and list what you added. Otherwise add only what they asked for or agreed to.
 - Match parts to each other: voltage, connectors, sizes and wattage must be compatible. Point out anything the shopper must confirm.
@@ -105,7 +110,7 @@ How to work:
 - Sea shipping: if ships_to_shopper is NO for a shopper in Canada and the product isn't US-warehouse-only (usually a big lithium battery, which can't fly), it can still go to Canada by boat from China, about 4–7 weeks, priced per order. Tell them they can add it and tap "Get a sea-shipping price" in the cart; don't put it in a kit with fast-shipping items without saying so.
 - get_product says whether the product can ship to the shopper's country (ships_to_shopper). If it says NO, don't add it or put it in a kit: tell the shopper it can't ship to them and find an alternative that does (for a large lithium battery, try other packs; some ship from other warehouses). If a cart can't ship, view_cart and the cart page name the item that blocks it.
 - Some products are made with the shopper's own photo or text (print on demand). When they want something custom, personalized, printed with a photo, logo or name, or a personal gift, call show_personalized_products and point them to those cards. You can't add these to the cart yourself: tell them to tap Add on the card, which opens a designer where they upload a photo (any they already sent you is one tap away) or type text, see a preview, and add it. Personalized items can't be returned, so mention that they should check the preview.
-- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.${connectorPrompt(new Date().toISOString().slice(0, 10))}`;
+- Be concise: a short intro, then the picks per part as a bullet list with name and price, then any questions. The shopper sees photo cards for every shortlisted product, so don't paste links.${webSourcing() ? sourcingPrompt() : ""}${connectorPrompt(new Date().toISOString().slice(0, 10))}`;
 }
 
 const VOICE_NOTE = `\n\nThe shopper is talking to you by voice and your reply is read aloud. Answer in two to four short spoken sentences with no lists, headings, markdown or prices with cents. Still use the tools as usual; the product and kit cards show the details on screen.`;
@@ -485,6 +490,8 @@ interface Ctx {
   usage: { in: number; out: number; micros: number };
   /** Connector cards shown this turn (flights…). */
   items: ConnectorItem[];
+  /** Pages the web tools returned in this chat; supplier cards may only link to these. */
+  seen: Set<string>;
 }
 
 async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<{ content: string; isError?: boolean }> {
@@ -497,6 +504,16 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
         ctx.emit({ type: "items", group, items });
       },
     });
+  if (name === "show_suppliers") {
+    const { group, cards, dropped } = parseSuppliers(input, ctx.seen);
+    if (cards.length) {
+      ctx.items.push(...cards);
+      ctx.emit({ type: "items", group, items: cards });
+    }
+    const skipped = dropped.length ? ` Not shown, because their links weren't in your search results: ${dropped.join(", ")}. Only use links your searches returned.` : "";
+    if (!cards.length) return { content: `No supplier cards shown.${skipped}`, isError: true };
+    return { content: `Showing ${cards.length} supplier card${cards.length === 1 ? "" : "s"} under "${group}". The shopper taps through to contact them.${skipped}` };
+  }
   if (name === "find_products") {
     const parts = (Array.isArray(input.parts) ? input.parts : [])
       .slice(0, MAX_PARTS)
@@ -700,7 +717,10 @@ export async function chatTurn(
   const usage = { in: 0, out: 0, micros: 0 };
   const known = new Map<string, ProductCard>();
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
-  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [] };
+  const seen = new Set<string>();
+  for (const m of messages) if (m.role === "user" || m.role === "assistant") if (Array.isArray(m.content)) seenPages(m.content, seen);
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen };
+  const web = webSourcing();
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
   const texts: string[] = [];
@@ -712,7 +732,7 @@ export async function chatTurn(
       model: MODEL,
       max_tokens: 8000,
       system: systemPrompt() + (input.voice ? VOICE_NOTE : ""),
-      tools: [...PLANNER_TOOLS, ...connectorTools()],
+      tools: [...PLANNER_TOOLS, ...connectorTools(), ...(web ? [SUPPLIER_TOOL, ...webTools()] : [])],
       cache_control: { type: "ephemeral" },
       messages: await hydrateImages(messages),
       // Effort and refusal fallbacks are Sonnet/Opus features; Haiku rejects them.
@@ -728,21 +748,36 @@ export async function chatTurn(
     });
     stream.on("text", (delta) => emit({ type: "text", delta }));
     stream.on("thinking", (delta) => emit({ type: "thinking", delta }));
+    // Web searches run on Anthropic's side mid-response; show each one as a step.
+    stream.on("contentBlock", (b) => {
+      if (b.type !== "server_tool_use") return;
+      const i = (b.input ?? {}) as { query?: unknown; url?: unknown };
+      if (b.name === "web_search" && typeof i.query === "string") emit({ type: "progress", note: `Searching the web: ${i.query.slice(0, 80)}` });
+      else if (b.name === "web_fetch" && typeof i.url === "string") emit({ type: "progress", note: `Reading ${hostLabel(i.url)}` });
+    });
     const response = await stream.finalMessage();
     usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
     usage.out += response.usage.output_tokens;
     // Priced by the model that actually answered (a refusal fallback can switch it).
     usage.micros += costMicros(response.model, response.usage);
     messages.push({ role: "assistant", content: response.content });
+    seenPages(response.content, ctx.seen);
+    // Cited answers come back as many text blocks that run on from each other, so join them as written.
     const roundText = response.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
       .map((b) => b.text)
-      .join("\n")
+      .join("")
       .trim();
     // The saved reply is everything the shopper watched being written, across rounds.
     if (roundText) texts.push(roundText);
     reply = texts.join("\n\n");
 
+    // A long run of web searches pauses the turn; sending it back as is lets the server carry on.
+    if (response.stop_reason === "pause_turn") {
+      if (roundText) emit({ type: "break" });
+      if (round === MAX_TOOL_ROUNDS - 1) reply ||= "I found a lot to go through. Tell me which part to look at next.";
+      continue;
+    }
     if (response.stop_reason !== "tool_use") {
       if (response.stop_reason === "refusal") reply = "Sorry, I can't help with that one.";
       break;
@@ -795,6 +830,14 @@ export async function chatTurn(
   prewarmProducts([...(ctx.kit?.items.map((i) => i.pid) ?? []), ...firstPickPerPart(ctx.cards), ...ctx.cards.map((c) => c.pid)]);
   // What this message cost us (planner and scouts), for per-plan AI budgets.
   return { entry, costMicros: usage.micros, reaction: reaction.emoji };
+}
+
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "a page";
+  }
 }
 
 function firstPickPerPart(cards: ProductCard[]): string[] {
