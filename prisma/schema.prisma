@@ -527,6 +527,7 @@ model AssistantRun {
   updatedAt       DateTime  @updatedAt
 
   @@unique([chatId, clientRequestId])
+  @@index([clientRequestId])
   @@index([chatId, createdAt])
   @@index([status])
 }

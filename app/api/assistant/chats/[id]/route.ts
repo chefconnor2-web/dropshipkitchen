@@ -1,6 +1,8 @@
 // Rename (PATCH {title}) or delete one of the shopper's own chats.
 import { prisma } from "@/lib/db";
 import { findOwnChat } from "@/lib/chat-session";
+import { stopChatRuns } from "@/lib/runs";
+import { closeChatBrowser } from "@/lib/browser";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +20,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const chat = await findOwnChat((await params).id);
   if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+  // Stop a run still answering here, and close the chat's live browser, before the chat goes.
+  await stopChatRuns(chat.id);
+  await closeChatBrowser(chat.id);
   await prisma.assistantImage.deleteMany({ where: { chatId: chat.id } });
+  await prisma.assistantRun.deleteMany({ where: { chatId: chat.id } });
   await prisma.assistantChat.delete({ where: { id: chat.id } });
   return Response.json({ ok: true });
 }

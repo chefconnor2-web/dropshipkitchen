@@ -20,7 +20,7 @@ import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
-import type { ToolResult } from "@/lib/connectors/types";
+import type { ConnectorContext, ToolResult } from "@/lib/connectors/types";
 import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_MESSAGE_CHARS } from "@/lib/limits";
 import { docInfo, type DocInfo, type DocUpload } from "@/lib/docs-shared";
@@ -61,9 +61,14 @@ export interface ProductCard {
 }
 export type UiEntry =
   /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
-  | { role: "user"; text: string; images?: string[]; docs?: DocInfo[]; reaction?: string; at?: string }
+  /** id: "u_" + runId; runId: the run that sent it; failed: the run didn't finish (not in messagesJson). */
+  | { role: "user"; text: string; images?: string[]; docs?: DocInfo[]; reaction?: string; at?: string; id?: string; runId?: string; failed?: boolean }
   | {
       role: "assistant";
+      /** The run that wrote it (stable identity across the live bubble, refetches and the saved transcript). */
+      id?: string;
+      /** The shopper stopped it partway. */
+      stopped?: boolean;
       text: string;
       cards: ProductCard[];
       added: string[];
@@ -399,7 +404,7 @@ export interface ScoutResult {
   picks: Array<{ pid: string; title: string; from_price_usd: string; note: string }>;
 }
 
-async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }): Promise<ScoutResult> {
+async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }, signal?: AbortSignal): Promise<ScoutResult> {
   const seen = new Map<string, CatalogHit>();
   const search = async (q: string) => {
     const query = q.trim().slice(0, 80);
@@ -424,13 +429,14 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
 
   let picks: Array<{ pid: string; note: string }> | null = null;
   for (let round = 0; round < MAX_SCOUT_ROUNDS && !picks; round++) {
+    signal?.throwIfAborted();
     const r = await client.messages.create({
       model: SCOUT_MODEL,
       max_tokens: 1024,
       system: "You are a fast, careful product scout for a sourcing store. You only pick products from search results you were given, judged against the stated need.",
       tools: SCOUT_TOOLS,
       messages,
-    });
+    }, { signal });
     usage.in += r.usage.input_tokens;
     usage.out += r.usage.output_tokens;
     usage.micros += costMicros(r.model, r.usage);
@@ -471,15 +477,15 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
 }
 
 /** Run up to SCOUT_CONCURRENCY scouts at a time. */
-export async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }) {
+export async function runScouts(client: Anthropic, parts: Part[], emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }, signal?: AbortSignal) {
   const results: ScoutResult[] = new Array(parts.length);
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(SCOUT_CONCURRENCY, parts.length) }, async () => {
-      while (next < parts.length) {
+      while (next < parts.length && !signal?.aborted) {
         const i = next++;
         try {
-          results[i] = await scout(client, parts[i], emit, usage);
+          results[i] = await scout(client, parts[i], emit, usage, signal);
         } catch {
           results[i] = { part: parts[i].name, picks: [] };
           emit({ type: "found", group: parts[i].name, cards: [], done: true });
@@ -487,6 +493,7 @@ export async function runScouts(client: Anthropic, parts: Part[], emit: (e: Assi
       }
     }),
   );
+  signal?.throwIfAborted();
   return results;
 }
 
@@ -507,6 +514,9 @@ interface Ctx {
   /** Pages the web tools returned in this chat; supplier cards may only link to these. */
   seen: Set<string>;
   chatId: string;
+  /** Aborted when the shopper stops the run. */
+  signal: AbortSignal;
+  waitForShopper: ConnectorContext["waitForShopper"];
 }
 
 async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): Promise<ToolResult> {
@@ -523,6 +533,8 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
         ctx.emit({ type: "items", group, items });
       },
       chatId: ctx.chatId,
+      signal: ctx.signal,
+      waitForShopper: ctx.waitForShopper,
     });
   if (name === "show_suppliers") {
     const { group, cards, dropped } = parseSuppliers(input, ctx.seen);
@@ -549,7 +561,7 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
       });
     if (!parts.length) return { content: "No parts given.", isError: true };
     ctx.emit({ type: "progress", note: `Sending ${parts.length} scout${parts.length === 1 ? "" : "s"} to search…` });
-    const results = await runScouts(ctx.client, parts, ctx.emit, ctx.usage);
+    const results = await runScouts(ctx.client, parts, ctx.emit, ctx.usage, ctx.signal);
     for (const r of results)
       for (const p of r.picks)
         if (!ctx.cards.some((c) => c.pid === p.pid))
@@ -687,25 +699,52 @@ function docBlock(d: DocUpload): Anthropic.Beta.BetaRequestDocumentBlock {
     : { type: "document", title: d.name, source: { type: "text", media_type: "text/plain", data: d.data } };
 }
 
+/** How a turn runs inside a server-owned run (lib/runs.ts). */
+export interface TurnRun {
+  runId: string;
+  signal: AbortSignal;
+  waitForShopper: ConnectorContext["waitForShopper"];
+}
+
+const neverAborted = new AbortController().signal;
+const noShopper: ConnectorContext["waitForShopper"] = async () => ({ outcome: "cancelled", stepId: "" });
+
+/** Thrown when a turn fails partway; carries what it already spent so the cost is still recorded. */
+function withCost(e: unknown, micros: number): unknown {
+  if (e && typeof e === "object") Object.assign(e, { costMicros: micros });
+  return e;
+}
+
 export async function chatTurn(
   chatId: string,
   cartId: string,
   input: TurnInput,
   emit: (e: AssistantEvent) => void = () => {},
-): Promise<{ entry: UiEntry & { role: "assistant" }; costMicros: number; reaction: string | null }> {
+  run?: TurnRun,
+): Promise<{ entry: UiEntry & { role: "assistant" }; costMicros: number; reaction: string | null; stopped?: boolean }> {
   const text = input.text.trim().slice(0, MAX_MESSAGE_CHARS);
   const images = (input.images ?? []).slice(0, 4);
-  const sentAt = new Date().toISOString();
+  const signal = run?.signal ?? neverAborted;
   const chat = await prisma.assistantChat.findUniqueOrThrow({ where: { id: chatId } });
 
   // History is otherwise append-only: thinking and fallback blocks must go back to the API exactly as received.
   let messages = JSON.parse(chat.messagesJson) as Anthropic.Beta.BetaMessageParam[];
   let ui = JSON.parse(chat.uiJson) as UiEntry[];
+  // The run saved the shopper's message when it was accepted (so it's never lost); this turn writes it for real.
+  const provisional = run ? ui.find((e) => e.role === "user" && e.runId === run.runId) : undefined;
+  const sentAt = provisional?.at ?? new Date().toISOString();
+  if (run) ui = ui.filter((e) => !(e.role === "user" && e.runId === run.runId));
+  // An edit run already cut the transcript back when it was accepted; work out the edit from the one before.
+  if (run && input.editIndex != null) {
+    const prior = (await prisma.assistantRun.findUnique({ where: { id: run.runId }, select: { priorUiJson: true } }))?.priorUiJson;
+    if (prior) ui = JSON.parse(prior) as UiEntry[];
+  }
   let turns = chat.userTurns;
   let docBlocks: Anthropic.Beta.BetaContentBlockParam[] = (input.docs ?? []).map(docBlock);
   let docInfos: DocInfo[] = (input.docs ?? []).map(docInfo);
   if (input.editIndex != null && input.editIndex >= 0 && input.editIndex < ui.length && ui[input.editIndex].role === "user") {
-    const n = ui.slice(0, input.editIndex).filter((e) => e.role === "user").length;
+    // Messages that never got an answer (failed runs) aren't in the model's history.
+    const n = ui.slice(0, input.editIndex).filter((e) => e.role === "user" && !e.failed).length;
     const start = userMessageStart(messages, n);
     // Editing or regenerating a message keeps the documents it was sent with.
     const old = messages[start];
@@ -746,6 +785,7 @@ export async function chatTurn(
   const startedAt = Date.now();
   const trace: TraceItem[] = [];
   let traceChars = 0;
+  let shownText = "";
   const shown = emit;
   emit = (e) => {
     const room = traceChars < MAX_TRACE_CHARS;
@@ -758,6 +798,8 @@ export async function chatTurn(
       trace.push({ kind: "step", text: e.note });
       traceChars += e.note.length;
     }
+    if (e.type === "text") shownText += e.delta;
+    else if (e.type === "break" && shownText && !shownText.endsWith("\n\n")) shownText += "\n\n";
     shown(e);
   };
   const client = new Anthropic();
@@ -767,14 +809,16 @@ export async function chatTurn(
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
   const seen = new Set<string>();
   for (const m of messages) if (m.role === "user" || m.role === "assistant") if (Array.isArray(m.content)) seenPages(m.content, seen);
-  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen, chatId };
+  const ctx: Ctx = { cartId, cards: [], known, added: [], emit, client, usage, items: [], seen, chatId, signal, waitForShopper: run?.waitForShopper ?? noShopper };
   const web = webSourcing();
   const haikuPlanner = MODEL.startsWith("claude-haiku");
   let reply = "";
   const texts: string[] = [];
 
   emit({ type: "progress", note: "Thinking…" });
+  try {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    signal.throwIfAborted();
     // Stream so the shopper sees the answer being written; finalMessage() gives the complete turn.
     const stream = client.beta.messages.stream({
       model: MODEL,
@@ -793,7 +837,7 @@ export async function chatTurn(
             betas: ["server-side-fallback-2026-07-01"],
             fallbacks: "default" as const,
           }),
-    });
+    }, { signal });
     stream.on("text", (delta) => emit({ type: "text", delta }));
     stream.on("thinking", (delta) => emit({ type: "thinking", delta }));
     // Web searches run on Anthropic's side mid-response; show each one as a step.
@@ -840,19 +884,53 @@ export async function chatTurn(
           const r = await runTool(c.name, c.input as Record<string, unknown>, ctx);
           return { type: "tool_result" as const, tool_use_id: c.id, content: r.content, ...(r.isError ? { is_error: true } : {}) };
         } catch (e) {
+          if (signal.aborted) throw e;
           return { type: "tool_result" as const, tool_use_id: c.id, content: `Tool failed: ${e instanceof Error ? e.message : e}`, is_error: true };
         }
       }),
     );
+    signal.throwIfAborted();
     // All results for one assistant turn go back in a single user message.
     messages.push({ role: "user", content: results });
     if (round === MAX_TOOL_ROUNDS - 1) reply ||= "I found a lot to go through. Tell me which part to look at next.";
+  }
+  } catch (e) {
+    if (!signal.aborted) throw withCost(e, usage.micros);
+    // Stopped by the shopper: keep what they watched being written, like stopping a reply anywhere else.
+    const stoppedText = shownText.trim() || "(stopped)";
+    const last = messages[messages.length - 1];
+    // A tool call without its result can't go back to the model; drop it.
+    if (last?.role === "assistant" && Array.isArray(last.content) && last.content.some((b) => b.type === "tool_use")) messages.pop();
+    if (messages[messages.length - 1]?.role !== "assistant") messages.push({ role: "assistant", content: stoppedText });
+    const reactionNow = await Promise.race([reacting, Promise.resolve({ emoji: null, micros: 0 })]);
+    const stoppedEntry: UiEntry & { role: "assistant" } = {
+      role: "assistant",
+      ...(run ? { id: run.runId } : {}),
+      stopped: true,
+      text: stoppedText,
+      cards: ctx.cards.slice(0, 30),
+      added: ctx.added,
+      ...(ctx.items.length ? { items: ctx.items.slice(0, 90) } : {}),
+      ...(trace.length ? { trace: trace.map((t) => ({ kind: t.kind, text: t.text.trim() })).filter((t) => t.text) } : {}),
+      thoughtMs: Date.now() - startedAt,
+      at: new Date().toISOString(),
+    };
+    ui.push(
+      { role: "user", text, ...(run ? { id: `u_${run.runId}`, runId: run.runId } : {}), ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(docInfos.length ? { docs: docInfos } : {}), ...(reactionNow.emoji ? { reaction: reactionNow.emoji } : {}), at: sentAt },
+      stoppedEntry,
+    );
+    await prisma.assistantChat.update({
+      where: { id: chat.id },
+      data: { messagesJson: JSON.stringify(messages), uiJson: JSON.stringify(ui), userTurns: turns + 1, inputTokens: { increment: usage.in }, outputTokens: { increment: usage.out } },
+    });
+    return { entry: stoppedEntry, costMicros: usage.micros + reactionNow.micros, reaction: reactionNow.emoji, stopped: true };
   }
 
   const reaction = await reacting;
   usage.micros += reaction.micros;
   const entry: UiEntry & { role: "assistant" } = {
     role: "assistant",
+    ...(run ? { id: run.runId } : {}),
     text: reply || "Done.",
     cards: ctx.cards.slice(0, 30),
     added: ctx.added,
@@ -864,7 +942,7 @@ export async function chatTurn(
     ...(showAiCost() ? { cost: { micros: usage.micros, inputTokens: usage.in, outputTokens: usage.out, webSearches: webUse.searches, webFetches: webUse.fetches } } : {}),
   };
   ui.push(
-    { role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(docInfos.length ? { docs: docInfos } : {}), ...(reaction.emoji ? { reaction: reaction.emoji } : {}), at: sentAt },
+    { role: "user", text, ...(run ? { id: `u_${run.runId}`, runId: run.runId } : {}), ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(docInfos.length ? { docs: docInfos } : {}), ...(reaction.emoji ? { reaction: reaction.emoji } : {}), at: sentAt },
     entry,
   );
   await prisma.assistantChat.update({
