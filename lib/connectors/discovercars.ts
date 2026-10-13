@@ -72,6 +72,8 @@ export function continueUrl(pageUrl: string | null | undefined, fallback: string
 }
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** "Friday, October 23, 2026" for a YYYY-MM-DD date. */
+const longDate = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 const carId = (location: string, pickup: string, dropoff: string) => `car_${createHash("sha256").update(`${location.toLowerCase()}|${pickup}|${dropoff}`).digest("hex").slice(0, 10)}`;
 
 export function parseCarSearch(
@@ -356,15 +358,19 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         { type: "date", field: "pick-up date", value: s.pickup },
       ]);
       steps.push(...(first.results ?? []).slice(1));
-      // Range calendars stay open for the drop-off day: try the field, then the open calendar.
-      let drop = (await run([{ type: "date", field: "drop-off date", value: s.dropoff }])).results?.[0];
-      if (drop && !drop.ok) drop = (await run([{ type: "date", value: s.dropoff }])).results?.[0] ?? drop;
-      if (drop) steps.push({ ...drop, field: "drop-off date" });
-      const times = [
-        ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
-        ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
-      ];
-      if (times.length) steps.push(...((await run(times)).results ?? []));
+      // If the pick-up date didn't take, the rest of the quick fill won't either on this page: skip straight to
+      // the browser helper (it reads the page's real elements) instead of spending seconds on more misses.
+      if (steps.every((x) => x.ok)) {
+        // Range calendars stay open for the drop-off day: try the field, then the open calendar.
+        let drop = (await run([{ type: "date", field: "drop-off date", value: s.dropoff }])).results?.[0];
+        if (drop && !drop.ok) drop = (await run([{ type: "date", value: s.dropoff }])).results?.[0] ?? drop;
+        if (drop) steps.push({ ...drop, field: "drop-off date" });
+        const times = [
+          ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
+          ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
+        ];
+        if (times.length) steps.push(...((await run(times)).results ?? []));
+      }
       // Search only once everything is set; otherwise the vision helper finishes the form and searches.
       const missed = steps.some((x) => !x.ok);
       p = await run(missed ? [] : [{ type: "click_text", text: "Search" }, { type: "wait", ms: 1200 }], false);
@@ -376,7 +382,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         ctx.progress("Looking at the page to set the dates…");
         vision = await visionAgent(
           ctx.chatId,
-          `On Discover Cars' search form: pick-up location ${where} (choose the airport suggestion), pick-up ${search.pickup}, drop-off ${search.dropoff} (same location). Fix only what isn't already set (the quick fill missed: ${failed.map((x) => x.field ?? x.text).join(", ")}), then press the Search button. Done when the page lists cars with prices.`,
+          `On Discover Cars' search form, set: pick-up location ${s.airport ? `${s.city || s.location} airport (${s.airport})` : s.location}, same drop-off location; pick-up date ${longDate(s.pickup)}${pickupTime ? ` at ${pickupTime}` : ""}; drop-off date ${longDate(s.dropoff)}${dropoffTime ? ` at ${dropoffTime}` : ""}. The location may already be filled in (check it). Close any open dropdown or popup first. Then press Search. Done when the page lists cars with prices.`,
           { signal, start: p, progress: ctx.progress },
         );
         p = vision.page;

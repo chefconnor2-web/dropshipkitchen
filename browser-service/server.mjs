@@ -27,6 +27,7 @@ import { WebSocketServer } from "ws";
 import { deliver as deliverFrame, stopDelivery } from "./frames.mjs";
 import { runPool } from "./pool.mjs";
 import { SMART, settle, smartAction } from "./forms.mjs";
+import { runBrowserTool } from "./browser-tool.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 const SECRET = process.env.BROWSER_SERVICE_SECRET || "";
@@ -713,6 +714,34 @@ const server = http.createServer(async (req, res) => {
           for (const r of results) if (!r.ok && r.fields) log("act", s.id.slice(0, 6), "fields on page:", JSON.stringify(r.fields).slice(0, 900));
           for (const r of results) if (!r.ok && r.calendar) log("act", s.id.slice(0, 6), "calendar:", r.calendar);
           return snapshot(s, results.length ? { results } : {}, s.page, body.noShot !== true);
+        }));
+      }
+      if (rest === "/browser-tool") {
+        // Claude's browser use toolset: member calls in order, stopping at the first failure (browser-tool.mjs).
+        const calls = (Array.isArray(body.calls) ? body.calls : []).slice(0, 12);
+        return send(res, 200, await withSession(id, async (s) => {
+          const vp = s.mode === "phone" ? PHONE_VIEW : VIEW;
+          const shot = async () => Buffer.from(await s.page.screenshot({ type: "jpeg", quality: 60, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } })).toString("base64");
+          const results = [];
+          const timing = [];
+          const t0 = Date.now();
+          let failed = false;
+          for (const c of calls) {
+            if (failed) {
+              results.push({ content: [{ type: "text", text: "Not executed: an earlier browser action in this turn failed." }], isError: true });
+              continue;
+            }
+            const t = Date.now();
+            const r = await runBrowserTool(s.page, String(c?.name ?? ""), c?.input ?? {}, { goto: (u) => goto(s, u), shot });
+            timing.push(`${c?.name} ${Date.now() - t}ms${r.isError ? " ✗" : ""}`);
+            results.push(r);
+            if (r.isError) failed = true;
+          }
+          let where = hostOf(s.page.url());
+          if (/discovercars/i.test(where)) try { where += new URL(s.page.url()).pathname.slice(0, 80); } catch {}
+          log("tool", s.id.slice(0, 6), where, `${Date.now() - t0}ms:`, timing.join(", "));
+          const needs = await needsShopper(s.page);
+          return { results, url: s.page.url(), title: await s.page.title().catch(() => ""), needsShopper: needs };
         }));
       }
       if (rest === "/amazon/search") return send(res, 200, await withSession(id, (s) => amazonSearch(s, body.domain, body.query ?? "")));
