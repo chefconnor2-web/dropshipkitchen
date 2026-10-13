@@ -354,7 +354,15 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       // A cookie banner may cover the form: accept it if there is one (no harm when there isn't).
       const first = await run([
         { type: "click_text", text: "Accept all" },
-        { type: "fill", field: "pick-up location", value: where, choose: true },
+        {
+          type: "fill",
+          field: "pick-up location",
+          value: where,
+          choose: true,
+          // Always end on one of the site's suggestions: the airport code scores highest, and these are tried
+          // in turn if a search shows no list.
+          ...(s.airport ? { code: s.airport, alternates: [s.airport, `${s.city || s.location} airport`, s.city || s.location] } : { alternates: [s.city || s.location] }),
+        },
         { type: "date", field: "pick-up date", value: s.pickup },
       ]);
       steps.push(...(first.results ?? []).slice(1));
@@ -382,7 +390,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         ctx.progress("Looking at the page to set the dates…");
         vision = await visionAgent(
           ctx.chatId,
-          `On Discover Cars' search form, set: pick-up location ${s.airport ? `${s.city || s.location} airport (${s.airport})` : s.location}, same drop-off location; pick-up date ${longDate(s.pickup)}${pickupTime ? ` at ${pickupTime}` : ""}; drop-off date ${longDate(s.dropoff)}${dropoffTime ? ` at ${dropoffTime}` : ""}. The location may already be filled in (check it). Close any open dropdown or popup first. Then press Search. Done when the page lists cars with prices.`,
+          `On Discover Cars' search form, set: pick-up location ${s.airport ? `${s.city || s.location} airport (${s.airport})` : s.location}, same drop-off location; pick-up date ${longDate(s.pickup)}${pickupTime ? ` at ${pickupTime}` : ""}; drop-off date ${longDate(s.dropoff)}${dropoffTime ? ` at ${dropoffTime}` : ""}. The location must be one of the site's own suggestions: if it isn't already set to the right airport, click the location box, type the airport code or city, and click the matching airport in the dropdown list (never leave typed text). Close any dropdown or popup left open. Then press Search. Done when the page lists cars with prices.`,
           { signal, start: p, progress: ctx.progress },
         );
         p = vision.page;
