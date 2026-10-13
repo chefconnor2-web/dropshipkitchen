@@ -2077,3 +2077,20 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
   .lava-orbit, .lava.is-split .lava-orbit { animation: none; --r: 0; opacity: 0; }
   .lava-lead, .lava.is-split .lava-lead { animation: none; transform: none; }
 }
+
+/* Neon voice orb (components/chat/NeonOrb.tsx). --lvl (0-1) is the live sound level, set every frame. */
+.orb { --lvl: 0; position: relative; display: inline-grid; place-items: center; width: var(--s); height: var(--s); line-height: 0; }
+.orb-halo { position: absolute; inset: -22%; border-radius: 50%; pointer-events: none; background: conic-gradient(from 0deg, #a878ff, #e8ceff, #6fe3c4, #7b5cff, #a878ff); filter: blur(calc(var(--s) * 0.14)); opacity: calc(0.28 + var(--lvl) * 0.55); transform: scale(calc(0.82 + var(--lvl) * 0.42)); animation: orbSpin 9s linear infinite; -webkit-mask-image: radial-gradient(circle, transparent 38%, #000 52%, #000 64%, transparent 72%); mask-image: radial-gradient(circle, transparent 38%, #000 52%, #000 64%, transparent 72%); }
+.orb-halo-2 { inset: -8%; background: radial-gradient(circle, rgb(168 120 255 / 0.55), rgb(111 227 196 / 0.18) 55%, transparent 70%); filter: blur(calc(var(--s) * 0.06)); -webkit-mask-image: none; mask-image: none; animation: none; opacity: calc(0.2 + var(--lvl) * 0.7); transform: scale(calc(0.9 + var(--lvl) * 0.25)); }
+.orb-listening .orb-halo { animation-duration: 5s; }
+.orb-speaking .orb-halo { animation-duration: 3.2s; }
+.orb-thinking .orb-halo { animation-duration: 2.4s; animation-direction: reverse; }
+.orb-idle .orb-halo { opacity: 0.18; }
+.orb-body { position: relative; z-index: 1; line-height: 0; transform-origin: 50% 80%; transform: translateY(calc(var(--lvl) * -5%)) scale(calc(1 + var(--lvl) * 0.12), calc(1 - var(--lvl) * 0.07)); }
+/* The thinking blob is wider (room for the orbit); centre Neon on the orb. */
+.orb-lava { position: absolute; z-index: 1; top: 0; left: calc(var(--s) * -0.55); line-height: 0; }
+@keyframes orbSpin { to { rotate: 360deg; } }
+.vm-orb { width: 220px; height: 220px; }
+.vm-mic-badge { position: absolute; z-index: 3; right: 30px; bottom: 30px; width: 40px; height: 40px; border-radius: 50%; background: #fff; color: var(--ink); display: grid; place-items: center; box-shadow: 0 6px 18px rgba(21, 23, 26, 0.16); }
+.vm-mic-badge svg { width: 20px; height: 20px; }
+@media (prefers-reduced-motion: reduce) { .orb-halo { animation: none; } }
