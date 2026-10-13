@@ -26,9 +26,44 @@ const SECRET = process.env.BROWSER_SERVICE_SECRET || "";
 const CHROME = process.env.CHROME_PATH || "/usr/bin/chromium";
 const MAX_SESSIONS = Number(process.env.MAX_SESSIONS) || 3;
 const IDLE_MS = (Number(process.env.IDLE_MINUTES) || 15) * 60_000;
-const VIEW = { width: 390, height: 780 };
-const UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+// Same browser as workflow-agent-cart's shopping agent (desktop Chrome, 1280×800), which Amazon treats as a
+// normal shopper; a mobile emulation got a different Amazon and stalled at Add to Cart.
+const VIEW = { width: 1280, height: 800 };
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+// While the shopper drives from their phone, the same tab shows Amazon's phone site (same cookies, so the cart
+// and sign-in carry over); handing back returns it to the desktop browser Neon uses.
+const PHONE_VIEW = { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
+const PHONE_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+async function startCast(s) {
+  const phone = s.mode === "phone";
+  await s.cdp.send("Page.stopScreencast").catch(() => {});
+  await s.cdp.send("Page.startScreencast", {
+    format: "jpeg",
+    quality: phone ? 60 : 50,
+    maxWidth: phone ? PHONE_VIEW.width * 2 : VIEW.width,
+    maxHeight: phone ? PHONE_VIEW.height * 2 : VIEW.height,
+    everyNthFrame: 1,
+  });
+}
+
+/** Switches the tab between the desktop browser (Neon) and the phone site (the shopper driving). */
+async function setMode(s, mode) {
+  if (s.mode === mode) return;
+  s.mode = mode;
+  const page = s.page;
+  if (mode === "phone") {
+    await page.setUserAgent(PHONE_UA);
+    await page.setViewport(PHONE_VIEW);
+    await startCast(s);
+    // Reload so Amazon serves its phone layout (not after a form post, which a reload would resend).
+    if (/^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+  } else {
+    await page.setUserAgent(UA);
+    await page.setViewport(VIEW);
+    await startCast(s);
+  }
+}
 // Pages the browser may open. Images, scripts and styles can come from anywhere public.
 const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com)$/i;
 // Tests only: extra hosts the browser may open (e.g. a local fixture server). Never set in production.
@@ -44,7 +79,15 @@ async function getBrowser() {
   browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-blink-features=AutomationControlled", "--lang=en-US"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--no-first-run",
+      "--no-zygote",
+      "--disable-gpu",
+    ],
   });
   browser.on("disconnected", () => {
     browser = null;
@@ -78,18 +121,19 @@ async function createSession() {
   const ctx = await b.createBrowserContext();
   const page = await ctx.newPage();
   await page.setUserAgent(UA);
-  await page.setViewport({ ...VIEW, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
-  await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
-  await page.setRequestInterception(true);
-  page.on("request", (req) => {
-    const url = req.url();
+  await page.setViewport(VIEW);
+  // No request interception (it slows every request down); instead the main page is pulled back if it ever
+  // leaves Amazon, e.g. from a link the shopper taps.
+  let lastOk = "about:blank";
+  page.on("framenavigated", (f) => {
+    if (f !== page.mainFrame()) return;
+    const url = f.url();
     const host = hostOf(url);
-    if (/^(data|blob):/i.test(url)) return req.continue();
-    // Video and audio never matter for shopping; skipping them speeds pages up.
-    if (req.resourceType() === "media") return req.abort("blockedbyclient");
-    if (!/^https?:/i.test(url) || (PRIVATE_HOST.test(host) && !TEST_ALLOW?.test(host))) return req.abort("blockedbyclient");
-    if (req.isNavigationRequest() && req.frame() === page.mainFrame() && !navOk(host)) return req.abort("blockedbyclient");
-    req.continue();
+    if (url === "about:blank" || navOk(host)) {
+      lastOk = url;
+      return;
+    }
+    page.goto(PRIVATE_HOST.test(host) ? "about:blank" : lastOk).catch(() => {});
   });
   // Popups open in the same tab (they can't be shown otherwise).
   page.on("popup", async (p) => {
@@ -99,7 +143,8 @@ async function createSession() {
   });
 
   const id = crypto.randomBytes(12).toString("hex");
-  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, busy: false };
+  // urls: product links from the latest searches, by ASIN (opened exactly as the search result linked them).
+  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, busy: false, urls: new Map(), mode: "desktop" };
   const cdp = await page.createCDPSession();
   s.cdp = cdp;
   cdp.on("Page.screencastFrame", ({ data, sessionId, metadata }) => {
@@ -110,7 +155,7 @@ async function createSession() {
     for (const ws of s.clients) if (ws.readyState === 1 && ws.bufferedAmount < 64 * 1024) ws.send(jpeg, { binary: true });
     cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
   });
-  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: VIEW.width * 2, maxHeight: VIEW.height * 2, everyNthFrame: 1 });
+  await startCast(s);
   page.on("framenavigated", (f) => f === page.mainFrame() && status(s));
   sessions.set(id, s);
   return s;
@@ -154,7 +199,8 @@ async function needsShopper(page) {
 
 /** Where the page is now, and a picture of it for Neon to look at. */
 async function snapshot(s, extra = {}) {
-  const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, ...VIEW, scale: 1 } }).catch(() => null);
+  const vp = s.page.viewport() || VIEW;
+  const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null);
   const needs = await needsShopper(s.page);
   return {
     url: s.page.url(),
@@ -171,8 +217,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function goto(s, url) {
   if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon pages can be opened."), { status: 400 });
-  await s.page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
-  await pause(250);
+  await s.page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 }
 
 async function runAction(s, a) {
@@ -183,8 +228,8 @@ async function runAction(s, a) {
     case "tap": {
       const x = Math.max(0, Math.min(VIEW.width, Number(a.x)));
       const y = Math.max(0, Math.min(VIEW.height, Number(a.y)));
-      await page.touchscreen.tap(x, y);
-      return pause(700);
+      await page.mouse.click(x, y, { delay: 30 });
+      return pause(600);
     }
     case "type":
       return page.keyboard.type(String(a.text ?? "").slice(0, 500), { delay: 25 });
@@ -210,61 +255,118 @@ async function runAction(s, a) {
 const AMAZON = new Set(["amazon.com", "amazon.ca"]);
 const domainOf = (d) => (AMAZON.has(String(d)) ? String(d) : "amazon.com");
 
+const isProductUrl = (url) => /^https?:\/\/(www\.)?amazon\.(com|ca)\/.*(\/dp\/|\/gp\/product\/)[A-Z0-9]{10}/i.test(url);
+
+// The next two follow workflow-agent-cart's searchAmazon and addToCart step for step.
 async function amazonSearch(s, domain, query) {
-  await goto(s, `https://www.${domainOf(domain)}/s?k=${encodeURIComponent(String(query).slice(0, 200))}`);
+  const base = `https://www.${domainOf(domain)}`;
+  await goto(s, `${base}/s?k=${encodeURIComponent(String(query).slice(0, 200))}`);
   if (await isCaptcha(s.page)) return snapshot(s, { results: [] });
-  await s.page.waitForSelector('[data-component-type="s-search-result"], [data-asin]', { timeout: 8000 }).catch(() => null);
-  const results = await s.page.$$eval('[data-component-type="s-search-result"]', (els) =>
-    els.slice(0, 12).flatMap((el) => {
-      const asin = el.getAttribute("data-asin");
-      if (!asin || asin.length !== 10) return [];
-      const title = (el.querySelector("h2 span") || el.querySelector("h2"))?.textContent?.trim() || "";
-      if (!title) return [];
-      const price = el.querySelector(".a-price .a-offscreen")?.textContent?.trim() || null;
-      const rating = el.querySelector(".a-icon-alt")?.textContent?.trim() || null;
-      const reviews = el.querySelector('[aria-label$="ratings"], .s-underline-text')?.textContent?.trim() || null;
-      const sponsored = /sponsored/i.test(el.textContent || "");
-      const img = el.querySelector("img.s-image")?.getAttribute("src") || null;
-      const prime = !!el.querySelector(".a-icon-prime, [aria-label*='Prime']");
-      return [{ asin, title: title.slice(0, 200), price, rating, reviews, sponsored, prime, image: img }];
-    }),
+  const page = s.page;
+  await page.waitForSelector('[data-component-type="s-search-result"]', { timeout: 10000 }).catch(() => null);
+  for (const y of [200, 500, 900, 1300]) {
+    await page.evaluate((yy) => window.scrollTo({ top: yy, behavior: "smooth" }), y);
+    await pause(350);
+  }
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  await pause(250);
+  const results = await page.$$eval(
+    '[data-component-type="s-search-result"]',
+    (items, base) => {
+      const out = [];
+      for (const item of items.slice(0, 8)) {
+        const el = item;
+        const asin = el.getAttribute("data-asin");
+        if (!asin || asin.length !== 10) continue;
+        const titleEl =
+          el.querySelector("h2 span") ??
+          el.querySelector("h2 a span") ??
+          el.querySelector("h2") ??
+          el.querySelector(".a-size-base-plus") ??
+          el.querySelector(".a-size-medium.a-color-base.a-text-normal");
+        const name = titleEl?.textContent?.trim() ?? "";
+        if (!name || /^amazon's choice/i.test(name)) continue;
+        const productHref = Array.from(el.querySelectorAll("a[href]"))
+          .map((a) => a.getAttribute("href") ?? "")
+          .find((h) => /\/dp\/|\/gp\/product\//i.test(h));
+        const url = productHref ? (productHref.startsWith("http") ? productHref : `${base}${productHref}`) : `${base}/dp/${asin}`;
+        const priceWhole = el.querySelector(".a-price-whole")?.textContent?.trim();
+        const priceFrac = el.querySelector(".a-price-fraction")?.textContent?.trim();
+        const price = priceWhole ? `$${priceWhole.replace(/\.$/, "")}.${priceFrac ?? "00"}` : el.querySelector(".a-price .a-offscreen")?.textContent?.trim() || null;
+        const imageUrl = el.querySelector("img.s-image")?.getAttribute("src") ?? null;
+        const rating = el.querySelector(".a-icon-alt")?.textContent?.trim() || null;
+        const sponsored = /sponsored/i.test(el.textContent || "");
+        const prime = !!el.querySelector(".a-icon-prime, [aria-label*='Prime']");
+        out.push({ asin, title: name.slice(0, 200), price, url, image: imageUrl, rating, sponsored, prime });
+      }
+      return out;
+    },
+    base,
   );
-  return snapshot(s, { results });
+  const found = results.filter((p) => /\/dp\/|\/gp\/product\//i.test(p.url));
+  for (const p of found) s.urls.set(p.asin, p.url);
+  return snapshot(s, { results: found.map(({ url, ...rest }) => rest) });
 }
 
 async function amazonAdd(s, domain, asin, quantity) {
   if (!/^[A-Z0-9]{10}$/i.test(String(asin))) throw Object.assign(new Error("That isn't an Amazon product ID (ASIN)."), { status: 400 });
   const page = s.page;
-  await goto(s, `https://www.${domainOf(domain)}/dp/${asin}`);
+  const known = s.urls.get(String(asin).toUpperCase()) || s.urls.get(String(asin));
+  const productUrl = known && isProductUrl(known) ? known : `https://www.${domainOf(domain)}/dp/${asin}`;
+  try {
+    await goto(s, productUrl);
+  } catch (e) {
+    if (e.status) throw e;
+    return snapshot(s, { added: false, reason: "The product page didn't load." });
+  }
   if (await isCaptcha(page)) return snapshot(s, { added: false, reason: "captcha" });
   const title = await page.$eval("#productTitle, #title", (el) => el.textContent.trim()).catch(() => "");
-  const price = await page.$eval(".a-price .a-offscreen, #corePrice_feature_div .a-offscreen", (el) => el.textContent.trim()).catch(() => null);
+  const price = await page.$eval("#corePrice_feature_div .a-offscreen, .a-price .a-offscreen", (el) => el.textContent.trim()).catch(() => null);
+
+  const atc = await page
+    .waitForSelector(['#add-to-cart-button', '#add-to-cart-button-ubb', 'input[name="submit.add-to-cart"]', 'input[name="submit.addToCart"]', "#submit\\.add-to-cart"].join(", "), { visible: true, timeout: 8000 })
+    .catch(() => null);
+  if (!atc) return snapshot(s, { added: false, title, price, reason: "No Add to Cart button on this page (likely a buying-options listing, or it needs an option chosen)." });
+
   const qty = Math.max(1, Math.min(30, Number(quantity) || 1));
   let appliedQty = 1;
   if (qty > 1) {
-    const options = await page.$$eval('select[name="quantity"] option', (els) => els.map((o) => Number(o.value)).filter(Number.isFinite)).catch(() => []);
-    if (options.length) {
-      const pick = Math.max(...options.filter((n) => n <= qty), Math.min(...options));
-      await page.select('select[name="quantity"]', String(pick)).catch(() => {});
-      appliedQty = pick;
+    try {
+      const options = await page
+        .$$eval('select[name="quantity"] option', (els) => els.map((o) => Number(o.value)).filter((n) => Number.isFinite(n)))
+        .catch(() => []);
+      if (options.length > 0) {
+        const eligible = options.filter((n) => n <= qty);
+        const pick = eligible.length > 0 ? Math.max(...eligible) : Math.min(...options);
+        await page.select('select[name="quantity"]', String(pick));
+        appliedQty = pick;
+        await pause(400);
+      }
+    } catch {
+      /* quantity stays 1; reported below */
     }
   }
-  const button = await page
-    .waitForSelector('#add-to-cart-button, #add-to-cart-button-ubb, input[name="submit.add-to-cart"], input[name="submit.addToCart"]', { visible: true, timeout: 5000 })
-    .catch(() => null);
-  if (!button) return snapshot(s, { added: false, title, price, reason: "No Add to Cart button on this page (it may need an option chosen, or only be sold through other sellers)." });
-  const before = await page.$eval("#nav-cart-count, .nav-cart-count", (el) => el.textContent.trim()).catch(() => "");
-  await button.tap().catch(() => button.click());
-  let added = false;
-  for (let i = 0; i < 12 && !added; i++) {
-    await pause(350);
-    // Decline add-on offers (protection plans) that some products show.
-    const noThanks = await page.$('#attachSiNoCoverage, #siNoCoverage-announce, [aria-labelledby="attachSiNoCoverage-announce"]').catch(() => null);
-    if (noThanks) await noThanks.tap().catch(() => {});
-    const now = await page.$eval("#nav-cart-count, .nav-cart-count", (el) => el.textContent.trim()).catch(() => "");
-    const confirm = await page.$("#NATC_SMART_WAGON_CONF_MSG_SUCCESS, #sw-atc-details-single-container, #attachDisplayAddBaseAlert, #huc-v2-order-row-confirm-text, #sw-atc-confirmation").catch(() => null);
-    added = !!confirm || (!!now && now !== before);
+
+  const cartCountBefore = await page.$eval("#nav-cart-count", (el) => el.textContent?.trim() ?? "").catch(() => "");
+  try {
+    await atc.click({ delay: 30 });
+  } catch {
+    return snapshot(s, { added: false, title, price, reason: "Couldn't click Add to Cart." });
   }
+  const added = await Promise.race([
+    page
+      .waitForSelector("#attachDisplayAddBaseAlert, #huc-v2-order-row-confirm-text, #sw-atc-details-single-container, #NATC_SMART_WAGON_CONF_MSG_SUCCESS", { timeout: 6000 })
+      .then(() => true)
+      .catch(() => false),
+    (async () => {
+      for (let i = 0; i < 12; i++) {
+        await pause(500);
+        const now = await page.$eval("#nav-cart-count", (el) => el.textContent?.trim() ?? "").catch(() => "");
+        if (now && now !== cartCountBefore) return true;
+      }
+      return false;
+    })(),
+  ]);
   return snapshot(s, { added, title, price, quantity: appliedQty, requestedQuantity: qty });
 }
 
@@ -311,6 +413,7 @@ async function withSession(id, fn) {
   s.busy = true;
   s.lastUsed = Date.now();
   try {
+    await setMode(s, "desktop");
     return await fn(s);
   } finally {
     s.busy = false;
@@ -387,14 +490,24 @@ server.on("upgrade", (req, socket, head) => {
       try {
         if (m.t === "control") {
           s.userControl = !!m.on;
+          status(s).catch(() => {});
+          await setMode(s, s.userControl ? "phone" : "desktop");
           return status(s);
         }
         if (!s.userControl) return;
         if (m.t === "tap") {
-          const f = s.frame || { w: VIEW.width, h: VIEW.height };
+          const f = s.frame || (s.mode === "phone" ? { w: PHONE_VIEW.width, h: PHONE_VIEW.height } : { w: VIEW.width, h: VIEW.height });
           const x = Math.max(0, Math.min(1, Number(m.x))) * f.w;
           const y = Math.max(0, Math.min(1, Number(m.y))) * f.h;
-          await s.page.touchscreen.tap(x, y);
+          if (s.mode === "phone") await s.page.touchscreen.tap(x, y);
+          else await s.page.mouse.click(x, y, { delay: 30 });
+          // Tell the phone whether a text field now has focus, so it can offer the keyboard.
+          await pause(250);
+          const editing = await s.page.evaluate(() => {
+            const el = document.activeElement;
+            return !!el && (el.isContentEditable || (el.tagName === "INPUT" && !["button", "submit", "checkbox", "radio", "image", "range", "color", "file", "reset", "hidden"].includes(el.type)) || el.tagName === "TEXTAREA");
+          }).catch(() => false);
+          for (const c of s.clients) if (c.readyState === 1) c.send(JSON.stringify({ t: "focus", editing }));
         }
         else if (m.t === "type") await s.page.keyboard.type(String(m.text ?? "").slice(0, 500));
         else if (m.t === "key") await runAction(s, { type: "key", key: m.key });
