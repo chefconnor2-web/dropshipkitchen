@@ -15,6 +15,7 @@ const flightCard = {
 const hotelCard = { kind: "hotel", id: "h_1", offerId: "lite_1", name: "Beach Inn", address: "1 Ocean Dr", city: "Miami", room: "King room", checkin: "2026-10-23", checkout: "2026-10-26", nights: 3 };
 const ui = JSON.stringify([
   { role: "bot", items: [flightCard, { ...hotelCard }] },
+  { role: "bot", items: [{ kind: "car", id: "car_1", location: "Miami Airport (MIA)", pickup: "2026-10-23", dropoff: "2026-10-26", url: "https://www.discovercars.com/?a_aid=x" }] },
   { role: "bot", items: [{ kind: "cart-link", id: "cl_x", url: "https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=B0ABCDEFGH&Quantity.1=1", site: "amazon.com", products: 1, units: 1, items: [{ asin: "B0ABCDEFGH", quantity: 1, title: "Phone charger", delivery: "Wednesday, October 22" }] }] },
   { role: "bot", at: "2026-10-13T19:00:00Z", items: [{ kind: "email-draft", id: "em_1", to: "desk@beachinn.com", cc: [], subject: "Please hold a package", body: "…", from: null, status: "draft" }] },
   { role: "bot", at: "2026-10-13T19:01:00Z", items: [{ kind: "email-draft", id: "em_1", to: "desk@beachinn.com", cc: [], subject: "Please hold a package", body: "…", from: null, status: "sent" }] },
@@ -39,14 +40,15 @@ test("builds the itinerary in time order and a receipt for each booking, the car
   assert.equal(t.end, "2026-10-26");
   assert.equal(t.phase, "upcoming");
   assert.match(t.title, /^Miami · /);
-  assert.deepEqual(t.itinerary.map((i) => i.kind), ["flight", "checkin", "checkout", "package", "email"]);
+  assert.deepEqual(t.itinerary.map((i) => i.kind), ["flight", "car-pickup", "checkin", "car-dropoff", "checkout", "package", "email"]);
   assert.match(t.itinerary[0].detail, /AC 1630 · departs 08:05, arrives 11:20/);
-  assert.deepEqual(t.receipts.map((r) => r.kind), ["flight", "hotel", "amazon", "email"]);
+  assert.deepEqual(t.receipts.map((r) => r.kind), ["flight", "hotel", "car", "amazon", "email"]);
   assert.equal(t.receipts[0].confirmation, "ABC123");
   assert.equal(t.receipts[0].amount, "$412.30 CAD");
   assert.equal(t.receipts[1].confirmation, "HX9");
-  assert.equal(t.receipts[2].href, "https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=B0ABCDEFGH&Quantity.1=1");
-  assert.equal(t.receipts[3].status, "Sent");
+  assert.equal(t.receipts[2].href, "https://www.discovercars.com/?a_aid=x");
+  assert.equal(t.receipts[3].href, "https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=B0ABCDEFGH&Quantity.1=1");
+  assert.equal(t.receipts[4].status, "Sent");
 });
 
 test("no paid booking, no trip; cancelled bookings keep their receipt but leave the itinerary; phases by date", () => {

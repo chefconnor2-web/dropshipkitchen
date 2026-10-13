@@ -7,10 +7,10 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { tripToken } from "@/lib/flight-booking";
 import { stayToken } from "@/lib/hotel-booking";
-import type { CartLinkCard, EmailDraftCard, FlightCard, HotelCard } from "@/lib/flights-shared";
+import type { CarRentalCard, CartLinkCard, EmailDraftCard, FlightCard, HotelCard } from "@/lib/flights-shared";
 
 export interface ItineraryItem {
-  kind: "flight" | "checkin" | "checkout" | "package" | "email";
+  kind: "flight" | "checkin" | "checkout" | "car-pickup" | "car-dropoff" | "package" | "email";
   /** Local date-time "YYYY-MM-DDTHH:MM" or date "YYYY-MM-DD" at the place it happens; null when unknown. */
   when: string | null;
   title: string;
@@ -18,7 +18,7 @@ export interface ItineraryItem {
 }
 
 export interface TripReceipt {
-  kind: "flight" | "hotel" | "amazon" | "email";
+  kind: "flight" | "hotel" | "car" | "amazon" | "email";
   title: string;
   /** Our booking number (flights and hotels). */
   number?: string;
@@ -116,6 +116,7 @@ export function chatShown(uiJson: string) {
   const flights = new Set<string>();
   const hotels = new Set<string>();
   let cart: CartLinkCard | null = null;
+  const cars = new Map<string, CarRentalCard>();
   const emails = new Map<string, { card: EmailDraftCard; at: string | null }>();
   for (const e of Array.isArray(ui) ? ui : [])
     for (const it of Array.isArray(e?.items) ? e.items : []) {
@@ -123,10 +124,11 @@ export function chatShown(uiJson: string) {
       else if (it.kind === "hotel") {
         if (typeof it.id === "string") hotels.add(it.id);
         if (typeof it.offerId === "string") hotels.add(it.offerId);
-      } else if (it.kind === "cart-link") cart = it as unknown as CartLinkCard;
+      } else if (it.kind === "car" && typeof it.id === "string") cars.set(it.id, it as unknown as CarRentalCard);
+      else if (it.kind === "cart-link") cart = it as unknown as CartLinkCard;
       else if (it.kind === "email-draft" && typeof it.id === "string") emails.set(it.id, { card: it as unknown as EmailDraftCard, at: e.at ?? null });
     }
-  return { flights, hotels, cart: cart as CartLinkCard | null, emails: [...emails.values()] };
+  return { flights, hotels, cars: [...cars.values()], cart: cart as CartLinkCard | null, emails: [...emails.values()] };
 }
 
 /** One trip from a chat and the bookings made from it (pure: links are passed in). */
@@ -198,6 +200,21 @@ export function buildTrip(
     });
   }
 
+  // Rental cars are booked on Discover Cars (Neon only links there), so the plan shows; the receipt comes from them.
+  for (const c of shown.cars) {
+    itinerary.push({ kind: "car-pickup", when: c.pickup, title: `Pick up rental car: ${c.location}`, detail: `Until ${niceDate(c.dropoff)} · booked on Discover Cars` });
+    itinerary.push({ kind: "car-dropoff", when: c.dropoff, title: `Return rental car: ${c.location}`, detail: "Check the return time on your Discover Cars confirmation" });
+    receipts.push({
+      kind: "car",
+      title: `Rental car: ${c.location}`,
+      status: "Book on Discover Cars",
+      amount: null,
+      at: null,
+      href: c.url,
+      lines: [`${niceDate(c.pickup)} – ${niceDate(c.dropoff)}`, "You pay Discover Cars directly; your confirmation and receipt come from them."],
+    });
+  }
+
   if (shown.cart) {
     const items = shown.cart.items ?? [];
     for (const it of items)
@@ -232,7 +249,7 @@ export function buildTrip(
 
   // Dated things in time order, then the undated ones (packages, emails) in the order they happened.
   // A date without a time sorts at the usual hour: check-in in the afternoon, check-out in the morning.
-  const key = (i: ItineraryItem) => (i.when!.length > 10 ? i.when! : `${i.when}T${i.kind === "checkin" ? "15:00" : i.kind === "checkout" ? "11:00" : "00:00"}`);
+  const key = (i: ItineraryItem) => (i.when!.length > 10 ? i.when! : `${i.when}T${{ checkin: "15:00", checkout: "11:00", "car-pickup": "12:00", "car-dropoff": "10:00" }[i.kind as string] ?? "00:00"}`);
   const dated = itinerary.filter((i) => i.when).sort((a, b) => key(a).localeCompare(key(b)));
   const undated = itinerary.filter((i) => !i.when);
   const sorted = dates.filter(Boolean).sort();

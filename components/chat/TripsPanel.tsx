@@ -11,6 +11,9 @@ const ICON: Record<ItineraryItem["kind"] | TripReceipt["kind"], string> = {
   flight: "✈️",
   checkin: "🏨",
   checkout: "🧳",
+  "car-pickup": "🚗",
+  "car-dropoff": "🚗",
+  car: "🚗",
   package: "📦",
   email: "✉️",
   hotel: "🏨",
@@ -170,8 +173,8 @@ export default function TripsPanel({ onClose }: { onClose: () => void }) {
                       </p>
                     ))}
                     {r.href && (
-                      <a className="tp-link" href={r.href} target={r.kind === "amazon" ? "_blank" : undefined} rel={r.kind === "amazon" ? "noopener noreferrer" : undefined}>
-                        {r.kind === "amazon" ? "Check out on Amazon" : "View booking & receipt"}
+                      <a className="tp-link" href={r.href} target={r.kind === "amazon" || r.kind === "car" ? "_blank" : undefined} rel={r.kind === "amazon" || r.kind === "car" ? "noopener noreferrer" : undefined}>
+                        {r.kind === "amazon" ? "Check out on Amazon" : r.kind === "car" ? "Find a car on Discover Cars" : "View booking & receipt"}
                       </a>
                     )}
                   </div>
