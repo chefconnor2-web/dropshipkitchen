@@ -43,9 +43,6 @@ const UNWATCHED_MS = (Number(process.env.UNWATCHED_MINUTES) || 3) * 60_000;
 // One input step may take this long before it's reported as failed (a hung page never blocks the queue).
 const STEP_MS = 25_000;
 const log = (...a) => console.log("[browser]", ...a);
-// Tabs one batch may use at once (the watched tab plus helpers). Each extra Amazon tab is ~150-300 MB even
-// without images, so keep this low on a 1 GB service.
-const TABS = Math.max(1, Math.min(6, Number(process.env.BATCH_TABS) || 3));
 const BATCH_MAX = 20;
 const KEYS = ["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 // Same browser as workflow-agent-cart's shopping agent (desktop Chrome, 1280×800), which Amazon treats as a
@@ -486,45 +483,27 @@ async function amazonAdd(s, domain, asin, quantity, page = s.page) {
   return snapshot(s, { added, title, price, quantity: appliedQty, requestedQuantity: qty }, page);
 }
 
-/** A helper tab in the session's browser (same cookies, so the same guest cart): no images, no video. */
-async function openHelper(s) {
-  const page = await s.ctx.newPage();
-  await page.setUserAgent(UA);
-  await page.setViewport(VIEW);
-  page.on("dialog", (d) => d.dismiss().catch(() => {}));
-  page.on("popup", (p) => p.close().catch(() => {}));
-  // Helpers only ever open Amazon pages; anything else is pulled back to a blank page.
-  page.on("framenavigated", (f) => {
-    if (f !== page.mainFrame()) return;
-    const url = f.url();
-    if (/^https?:/i.test(url) && !navOk(hostOf(url))) page.goto("about:blank").catch(() => {});
-  });
-  const cdp = await page.createCDPSession();
-  await cdp.send("Network.enable").catch(() => {});
-  await cdp.send("Network.setBlockedURLs", {
-    urls: ["*.mp4*", "*.m3u8*", "*.webm*", "*.m4s*", "*.mpd*", "*.jpg*", "*.jpeg*", "*.png*", "*.gif*", "*.webp*", "*.avif*", "*.svg*", "*.woff*", "*.woff2*", "*.ttf*"],
-  }).catch(() => {});
-  return page;
-}
+// One batch item may take this long; a page that hangs is reported and the batch moves on.
+const ITEM_MS = 60_000;
 
 /**
- * Runs a batch on the watched tab plus up to TABS-1 helper tabs at once (the helpers close afterwards, so their
- * memory comes straight back). Viewers hear the progress as {t:"tabs", working, done, total}.
+ * Runs a batch one item at a time in the tab the shopper watches (several tabs got stuck and used too much
+ * memory). Viewers hear the progress as {t:"tabs", working, done, total}.
  */
 async function inTabs(s, items, job) {
-  const n = Math.max(1, Math.min(TABS, items.length));
-  const helpers = [];
+  log("session", s.id.slice(0, 6), "batch of", items.length);
+  broadcast(s, { t: "tabs", working: 1, done: 0, total: items.length });
   try {
-    for (let i = 1; i < n; i++) helpers.push(await openHelper(s).catch(() => null));
-    const workers = [s.page, ...helpers.filter(Boolean)];
-    log("session", s.id.slice(0, 6), "batch of", items.length, "on", workers.length, "tabs");
-    broadcast(s, { t: "tabs", working: workers.length, done: 0, total: items.length });
-    return await runPool(items, workers, job, (done, total) => {
-      s.lastUsed = Date.now();
-      broadcast(s, { t: "tabs", working: workers.length, done, total });
-    });
+    return await runPool(
+      items,
+      [s.page],
+      (item, page, i) => Promise.race([job(item, page, i), pause(ITEM_MS).then(() => Promise.reject(new Error("The page took too long.")))]),
+      (done, total) => {
+        s.lastUsed = Date.now();
+        broadcast(s, { t: "tabs", working: 1, done, total });
+      },
+    );
   } finally {
-    for (const p of helpers) await p?.close().catch(() => {});
     broadcast(s, { t: "tabs", working: 0, done: items.length, total: items.length });
   }
 }

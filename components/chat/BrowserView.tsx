@@ -85,7 +85,7 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   const [doneError, setDoneError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [vv, setVv] = useState<{ h: number; top: number } | null>(null);
-  /** Neon is working several products in parallel tabs of this browser. */
+  /** Neon is working through several products in this browser. */
   const [tabs, setTabs] = useState<{ working: number; done: number; total: number } | null>(null);
 
   const releasedByServer = useRef(false);
@@ -430,7 +430,7 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
         <span className="cx-browser-host">{host}</span>
         {tabs && (
           <span className="cx-browser-tabs" aria-live="polite">
-            {tabs.working} tabs · {tabs.done} of {tabs.total} done
+            {tabs.done} of {tabs.total} done
           </span>
         )}
         {!ended && mode !== "required" && (

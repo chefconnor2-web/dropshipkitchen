@@ -155,6 +155,24 @@ export function rebuildChatCart(messages: unknown, domain: string): ChatCart {
   return c;
 }
 
+// Browser sessions that have shown an Amazon page (their live card can appear).
+const loaded = processSingleton("amazon-loaded-sessions", () => new Set<string>());
+
+/**
+ * The first Amazon load in a fresh browser often fails (Amazon's first response to a new browser). Try once
+ * more, quietly, when the step threw or didn't land on an Amazon page; the shopper never sees the failed one.
+ */
+async function firstLoadRetry<T extends { result: PageState; session: { id: string } }>(step: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  try {
+    const r = await step();
+    if (loaded.has(r.session.id) || /^https:\/\/(www\.)?amazon\./i.test(r.result.url)) return r;
+  } catch (e) {
+    if (signal.aborted) throw e;
+  }
+  await new Promise((res) => setTimeout(res, 1500));
+  return step();
+}
+
 // One cart per chat in this process, rebuilt from the chat's history when missing (a restart).
 const carts = processSingleton("amazon-chat-carts", () => new Map<string, ChatCart>());
 const MAX_CARTS = 500;
@@ -210,7 +228,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "amazon_search_many",
     description:
-      "Run several Amazon searches at once, in parallel tabs of the same live browser (faster than one by one). Use it when the shopper wants several different products. Returns the top results for each search, like amazon_search.",
+      "Run several Amazon searches in one go, one after another in the live browser. Use it when the shopper wants several different products. Returns the top results for each search, like amazon_search.",
     input_schema: {
       type: "object",
       properties: { queries: { type: "array", items: { type: "string" }, maxItems: 8, description: "Plain search words, one per product." } },
@@ -220,7 +238,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "amazon_add_many",
     description:
-      "Add several products to the cart at once, in parallel tabs of the same live browser (one guest cart; much faster than one by one). Use ASINs from your searches. Returns, for each, whether it went in.",
+      "Add several products to the cart in one go, one after another in the live browser. Use ASINs from your searches. Returns, for each, whether it went in.",
     input_schema: {
       type: "object",
       properties: {
@@ -318,6 +336,13 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
   const site = domain;
   const signal = ctx.signal;
   const shown = (s: { id: string }, handoff?: string) => ctx.show("Live browser", [card(s.id, site, handoff)]);
+  /** The live card appears only once an Amazon page has actually loaded (the first load often fails). */
+  const showIfLoaded = (s: { id: string }, p: PageState) => {
+    if (/^https:\/\/(www\.)?amazon\./i.test(p.url) || loaded.has(s.id)) {
+      loaded.add(s.id);
+      shown(s);
+    }
+  };
 
   /**
    * Pauses the run on a step only the shopper can do (a robot check, a choice). The card shows the reason while
@@ -354,10 +379,10 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       const query = str(input.query, 200);
       if (!query) return { content: "Give me something to search for.", isError: true };
       ctx.progress(`Searching Amazon: ${query}`);
-      const search = () => inBrowser(ctx.chatId, (id) => browserApi.search(id, domain, query, signal), signal);
+      const search = () => firstLoadRetry(() => inBrowser(ctx.chatId, (id) => browserApi.search(id, domain, query, signal), signal), signal);
       const again = "Run this search once more; if Amazon asks again, move on to the next item.";
       let { result: p, session } = await search();
-      shown(session);
+      showIfLoaded(session, p);
       if (isSignIn(p)) return guestResult(await asGuest(), { site, query, results: [] }, again);
       if (p.needsShopper) {
         const after = await handOver(session, kindOf(p), p.needsShopper);
@@ -386,7 +411,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       };
       ctx.progress(`Adding to the Amazon cart…`);
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.add(id, domain, asin, quantity, signal), signal);
-      shown(session);
+      showIfLoaded(session, p);
       if (p.added) noteAdded(cart, domain, session.id, asin, p.quantity ?? quantity, p.title);
       if (isSignIn(p) && !p.added) return await signedOut(p.title);
       if (p.needsShopper && !p.added) {
@@ -405,9 +430,9 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
     if (tool === "amazon_search_many") {
       const queries = (Array.isArray(input.queries) ? input.queries : []).map((q) => str(q, 200)).filter(Boolean).slice(0, 8);
       if (!queries.length) return { content: "Give me something to search for.", isError: true };
-      ctx.progress(`Searching Amazon for ${queries.length} things at once…`);
-      const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.searchMany(id, domain, queries, signal), signal);
-      shown(session);
+      ctx.progress(`Searching Amazon for ${queries.length} things…`);
+      const { result: p, session } = await firstLoadRetry(() => inBrowser(ctx.chatId, (id) => browserApi.searchMany(id, domain, queries, signal), signal), signal);
+      showIfLoaded(session, p);
       if (isSignIn(p)) await asGuest();
       const searches = (p.searches ?? []).map((x) => ({
         query: x.query,
@@ -425,9 +450,9 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
         .filter((o) => /^[A-Z0-9]{10}$/.test(o.asin));
       if (!items.length) return { content: "Give me ASINs from your searches to add.", isError: true };
       const cart = await chatCart(ctx.chatId, domain);
-      ctx.progress(`Adding ${items.length} items in parallel tabs…`);
+      ctx.progress(`Adding ${items.length} items…`);
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.addMany(id, domain, items, signal), signal);
-      shown(session);
+      showIfLoaded(session, p);
       const results = p.items ?? [];
       for (const r of results) {
         if (r.added) noteAdded(cart, domain, session.id, r.asin, r.quantity ?? r.requestedQuantity, r.title);
@@ -453,10 +478,10 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
     if (tool === "amazon_view_cart") {
       ctx.progress("Checking the Amazon cart…");
       const cart = await chatCart(ctx.chatId, domain);
-      const read = () => inBrowser(ctx.chatId, (id) => browserApi.cart(id, domain, signal), signal);
+      const read = () => firstLoadRetry(() => inBrowser(ctx.chatId, (id) => browserApi.cart(id, domain, signal), signal), signal);
       const skip = "Skip reading the cart: call amazon_checkout_link, which is built from what you added in this chat.";
       let { result: p, session } = await read();
-      shown(session);
+      showIfLoaded(session, p);
       if (isSignIn(p)) return guestResult(await asGuest(), { site, items: [] }, skip);
       if (p.needsShopper) {
         const after = await handOver(session, kindOf(p), p.needsShopper);
@@ -501,7 +526,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       ctx.progress("Working in the browser…");
       const asGuestNext = "Carry on as a guest from this page; don't open sign-in or checkout pages.";
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal), signal);
-      shown(session);
+      showIfLoaded(session, p);
       if (isSignIn(p)) return guestResult(await asGuest(), { done: actions.length }, asGuestNext);
       if (p.needsShopper) {
         const after = await handOver(session, kindOf(p), p.needsShopper);
@@ -563,7 +588,7 @@ export const amazonConnector: Connector = {
 Amazon, in a live browser:
 - When the shopper asks for something from Amazon, or asks you to shop or fill a cart on Amazon, use the Amazon tools. They drive a real browser that appears in the chat, so the shopper watches you search and add things. The browser is never signed in: you fill a guest cart.
 - One amazon_search per product, then pick the best match: relevance and specs first, then ratings and review count, prefer Prime, skip sponsored results unless they're clearly the best fit. Say why in a few words.
-- Several products: search them all at once with amazon_search_many, then add them all at once with amazon_add_many (parallel tabs in the same browser, much faster). One product, or a retry: amazon_search / amazon_add_to_cart.
+- Several products: search them all at once with amazon_search_many, then add them all with amazon_add_many (one call instead of many). One product, or a retry: amazon_search / amazon_add_to_cart.
 - Add what the shopper wants (the right quantities). When everything is added, call amazon_view_cart and tell them what's in it and the subtotal Amazon shows, then call amazon_checkout_link. It shows a "Check out on Amazon" button that puts the same items in the shopper's own Amazon cart, in their Safari or Amazon app where they're already signed in; they check out there.
 - Quote prices only as Amazon shows them in the results or cart, in that site's currency. Never invent them.
 - If a product needs a choice (size, color, voltage) and the shopper said what they want, use browser_act to select it; if they didn't, ask, or hand the page over with browser_hand_over (reason choice).
