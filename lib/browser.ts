@@ -185,6 +185,9 @@ export const browserApi = {
       "POST",
       signal,
     ),
+  /** Claude's browser use toolset: member calls run in order, stopping at the first failure. */
+  tool: (id: string, calls: Array<{ name: string; input: unknown }>, signal?: AbortSignal) =>
+    call<{ results: Array<{ content: unknown[]; isError?: boolean }>; url: string; title: string; needsShopper?: string | null }>(`/sessions/${id}/browser-tool`, { calls }, "POST", signal),
   state: (id: string, signal?: AbortSignal) => call<PageState>(`/sessions/${id}/state`, undefined, "GET", signal),
   search: (id: string, domain: string, query: string, signal?: AbortSignal) =>
     call<PageState & { results?: AmazonResult[] }>(`/sessions/${id}/amazon/search`, { domain, query }, "POST", signal),
