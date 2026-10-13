@@ -2016,11 +2016,16 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .lava { position: relative; display: inline-block; flex: none; line-height: 0; transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .lava-defs { position: absolute; width: 0; height: 0; }
 .lava-goo { position: absolute; inset: 0; pointer-events: none; }
-.lava-goo i { position: absolute; display: block; border-radius: 50%; background: #1b1131; }
-.lava-core { left: calc(var(--s) * 0.68); top: calc(var(--s) * 0.21); width: calc(var(--s) * 0.74); height: calc(var(--s) * 0.6); }
+/* Neon's own body color, so the goo reads as part of him (no separate blob behind). */
+.lava-goo i { position: absolute; display: block; border-radius: 50%; background: #120e1b; }
+.lava-core { left: calc(var(--s) * 0.74); top: calc(var(--s) * 0.3); width: calc(var(--s) * 0.62); height: calc(var(--s) * 0.44); }
+/* Each drop also wears Neon's artwork (his dark body and glowing veins), above the goo. */
+.lava-skin { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.lava-skin i { position: absolute; display: block; border-radius: 50%; background: url(/brand/agents/neon.png) center / 150% no-repeat, #120e1b; box-shadow: 0 0 calc(var(--s) * 0.12) rgb(232 206 255 / 0.35); }
+.lava.is-split .lava-skin i { display: none; }
 .lava-lead { position: absolute; left: calc(var(--s) * 0.55); top: 0; z-index: 2; transition: transform 0.6s ease; animation: lavaLead 12s ease-in-out infinite; }
 /* Drops glow a little brighter than the body, like wax lit from below; colour survives the blur, detail doesn't. */
-.lava-goo .lava-drop { background: #5a35a8; }
+.lava-goo .lava-drop { background: #120e1b; }
 .lava-drop { left: calc(var(--s) * 0.89); top: calc(var(--s) * 0.34); width: calc(var(--s) * 0.32); height: calc(var(--s) * 0.32); transform: scale(0.4); animation: lavaRise 8.3s ease-in-out infinite; }
 .lava-drop.d1 { --dx: -0.08; animation-delay: 1.2s; }
 .lava-drop.d2 { --dx: 0.12; animation-duration: 11.1s; animation-delay: 4.6s; }
@@ -2073,7 +2078,7 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
   60%, 90% { transform: scale(0.84); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lava-drop { display: none; }
+  .lava-drop, .lava-skin i { display: none; }
   .lava-orbit, .lava.is-split .lava-orbit { animation: none; --r: 0; opacity: 0; }
   .lava-lead, .lava.is-split .lava-lead { animation: none; transform: none; }
 }
