@@ -99,3 +99,21 @@ export interface AmazonResult {
   prime: boolean;
   image: string | null;
 }
+
+// ---- Frozen signatures (docs/frontier-port/CONTRACTS.md §3, §5); the browser agent implements them. ----
+
+/**
+ * Gives control back to Neon after the shopper resumed a pending step: POST /sessions/:id/release on the
+ * browser service (shopper control off, desktop mode). Never throws; logs and returns false on failure.
+ */
+export async function releaseShopperControl(sessionId: string): Promise<boolean> {
+  void sessionId;
+  return false;
+}
+
+/** A short-lived live-view address for this session (HMAC token, CONTRACTS.md §3). Server only. */
+export function mintLiveUrl(sessionId: string, ttlSeconds = 600): { url: string; expiresAt: string } {
+  void sessionId;
+  return { url: "", expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString() };
+}
+
