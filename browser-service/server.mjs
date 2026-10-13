@@ -434,6 +434,10 @@ async function amazonAdd(s, domain, asin, quantity, page = s.page) {
   }
   if (await isCaptcha(page)) return snapshot(s, { added: false, reason: "captcha" }, page);
   const title = await page.$eval("#productTitle, #title", (el) => el.textContent.trim()).catch(() => "");
+  // Amazon's delivery estimate for this browser's (guest) location; the real date depends on the address.
+  const delivery = await page
+    .$eval("#mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE, #deliveryBlockMessage, #ddmDeliveryMessage", (el) => el.textContent.replace(/\s+/g, " ").trim().slice(0, 160))
+    .catch(() => null);
   const price = await page.$eval("#corePrice_feature_div .a-offscreen, .a-price .a-offscreen", (el) => el.textContent.trim()).catch(() => null);
 
   const atc = await page
@@ -480,7 +484,7 @@ async function amazonAdd(s, domain, asin, quantity, page = s.page) {
       return false;
     })(),
   ]);
-  return snapshot(s, { added, title, price, quantity: appliedQty, requestedQuantity: qty }, page);
+  return snapshot(s, { added, title, price, delivery, quantity: appliedQty, requestedQuantity: qty }, page);
 }
 
 // One batch item may take this long; a page that hangs is reported and the batch moves on.
@@ -625,7 +629,7 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, await withSession(id, async (s) => {
           const results = await inTabs(s, items, async (it, page) => {
             const r = await amazonAdd(s, body.domain, it.asin, it.quantity, page);
-            return { asin: it.asin, added: !!r.added, title: r.title, price: r.price ?? null, quantity: r.quantity, requestedQuantity: it.quantity, reason: r.reason, captcha: r.captcha, signIn: r.signIn };
+            return { asin: it.asin, added: !!r.added, title: r.title, price: r.price ?? null, delivery: r.delivery ?? null, quantity: r.quantity, requestedQuantity: it.quantity, reason: r.reason, captcha: r.captcha, signIn: r.signIn };
           });
           return snapshot(s, { items: results });
         }));

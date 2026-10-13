@@ -159,7 +159,7 @@ export const browserApi = {
   search: (id: string, domain: string, query: string, signal?: AbortSignal) =>
     call<PageState & { results?: AmazonResult[] }>(`/sessions/${id}/amazon/search`, { domain, query }, "POST", signal),
   add: (id: string, domain: string, asin: string, quantity: number, signal?: AbortSignal) =>
-    call<PageState & { added?: boolean; title?: string; price?: string | null; quantity?: number; requestedQuantity?: number; reason?: string }>(
+    call<PageState & { added?: boolean; title?: string; price?: string | null; delivery?: string | null; quantity?: number; requestedQuantity?: number; reason?: string }>(
       `/sessions/${id}/amazon/add`,
       { domain, asin, quantity },
       "POST",
@@ -178,7 +178,7 @@ export const browserApi = {
   addMany: (id: string, domain: string, items: Array<{ asin: string; quantity: number }>, signal?: AbortSignal) =>
     call<
       PageState & {
-        items?: Array<{ asin: string; added: boolean; title?: string; price?: string | null; quantity?: number; requestedQuantity: number; reason?: string; captcha?: boolean; signIn?: boolean; error?: string }>;
+        items?: Array<{ asin: string; added: boolean; title?: string; price?: string | null; delivery?: string | null; quantity?: number; requestedQuantity: number; reason?: string; captcha?: boolean; signIn?: boolean; error?: string }>;
       }
     >(`/sessions/${id}/amazon/add-many`, { domain, items }, "POST", signal, BATCH_MS),
   cart: (id: string, domain: string, signal?: AbortSignal) =>

@@ -422,7 +422,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
         return pageResult(after, { site, asin, added: "unknown" }, true, `${resumedNote} Check the cart with amazon_view_cart before adding this item again.`);
       }
       ctx.progress(p.added ? `✓ Added ${p.title ? str(p.title, 60) : asin}` : `✗ Couldn't add ${asin}`);
-      const facts = { site, asin, added: !!p.added, title: p.title, price: p.price, quantity: p.quantity, requestedQuantity: p.requestedQuantity, reason: p.reason };
+      const facts = { site, asin, added: !!p.added, title: p.title, price: p.price, delivery: p.delivery ?? null, quantity: p.quantity, requestedQuantity: p.requestedQuantity, reason: p.reason };
       // Added, then Amazon showed a sign-in page anyway: step back off it quietly.
       if (isSignIn(p)) return guestResult(await asGuest(), facts, "The item went in. Carry on.");
       return pageResult(p, facts, !p.added);
@@ -470,7 +470,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       ].filter(Boolean);
       return pageResult(
         p,
-        { site, added, of: items.length, results: results.map((r) => ({ asin: r.asin, added: r.added, title: r.title, price: r.price, quantity: r.quantity, keptForLink: !r.added && !!r.signIn, reason: r.reason ?? r.error })) },
+        { site, added, of: items.length, results: results.map((r) => ({ asin: r.asin, added: r.added, title: r.title, price: r.price, delivery: r.delivery ?? null, quantity: r.quantity, keptForLink: !r.added && !!r.signIn, reason: r.reason ?? r.error })) },
         false,
         notes.join(" ") || undefined,
       );

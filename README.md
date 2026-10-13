@@ -202,3 +202,14 @@ single option rather than inventing values.
 ## Tests
 
 `npm test` runs the unit tests for CJ payload parsing and normalisation. `npm run lint` type-checks.
+
+## Gmail (Neon sends email from the shopper's own address)
+Neon can email on a shopper's behalf (for example asking a hotel's front desk to hold an Amazon package until
+they arrive). Every email is shown in full in the chat and sent only after the shopper taps Approve & next.
+- Google Cloud: create an OAuth client (type "Web application"), enable the Gmail API, add the redirect URI
+  `<SITE_URL>/api/google/callback`, and add the `gmail.send` scope to the consent screen. While the app is in
+  "Testing", add shoppers as test users; publishing it for everyone needs Google's verification of that scope.
+- Railway (storefront): `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Optional `GMAIL_TOKEN_KEY` (tokens are
+  encrypted with a random key kept in the database otherwise).
+- Without Gmail connected, approved emails go out through Resend from the store, with replies going to the
+  shopper and a copy to them.

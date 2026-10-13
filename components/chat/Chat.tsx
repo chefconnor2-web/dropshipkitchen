@@ -1332,6 +1332,7 @@ const KIND_TITLE: Record<string, string> = {
   blocked: "Amazon needs you",
   sign_in: "Amazon wants you to sign in",
   checkout: "Ready to check out",
+  email: "Send this email?",
 };
 const STATUS_LINE: Record<ApprovalRecord["status"], string> = { pending: "Superseded", approved: "Approved", expired: "Timed out", cancelled: "Stopped" };
 
