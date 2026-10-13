@@ -155,8 +155,13 @@ const BATCH_MS = 5 * 60_000;
 
 export const browserApi = {
   /** Runs actions in order; smart form actions (fill / select / date / click_text) each report what they did. */
-  act: (id: string, actions: unknown[], signal?: AbortSignal) =>
-    call<PageState & { results?: Array<{ type: string; field?: string; text?: string; ok: boolean; did?: string; why?: string }> }>(`/sessions/${id}/act`, { actions }, "POST", signal),
+  act: (id: string, actions: unknown[], signal?: AbortSignal, opts: { noShot?: boolean } = {}) =>
+    call<PageState & { results?: Array<{ type: string; field?: string; text?: string; ok: boolean; did?: string; why?: string; fields?: string[] }> }>(
+      `/sessions/${id}/act`,
+      { actions, ...(opts.noShot ? { noShot: true } : {}) },
+      "POST",
+      signal,
+    ),
   state: (id: string, signal?: AbortSignal) => call<PageState>(`/sessions/${id}/state`, undefined, "GET", signal),
   search: (id: string, domain: string, query: string, signal?: AbortSignal) =>
     call<PageState & { results?: AmazonResult[] }>(`/sessions/${id}/amazon/search`, { domain, query }, "POST", signal),

@@ -8,7 +8,7 @@ import { getMemberId } from "@/lib/session";
 import { canCancelStay, completeHotelBooking, HOTEL_STATUS, stayToken } from "@/lib/hotel-booking";
 import CancelStay from "./CancelStay";
 import BackToChat from "@/components/BackToChat";
-import { chatForCard } from "@/lib/chat-session";
+import { chatForCard, findOwnChat } from "@/lib/chat-session";
 import { HotelCard } from "@/components/chat/ui";
 import { stayPrice, uberLink, type HotelCard as Card } from "@/lib/flights-shared";
 
@@ -17,9 +17,9 @@ export const metadata = { title: "Your stay", robots: { index: false } };
 
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-export default async function StayPage({ params, searchParams }: { params: Promise<{ number: string }>; searchParams: Promise<{ s?: string; t?: string }> }) {
+export default async function StayPage({ params, searchParams }: { params: Promise<{ number: string }>; searchParams: Promise<{ s?: string; t?: string; chat?: string }> }) {
   const { number } = await params;
-  const { s, t } = await searchParams;
+  const { s, t, chat: chatQ } = await searchParams;
   const b = await prisma.hotelBooking.findUnique({ where: { number } });
   if (!b) notFound();
   // Back from Stripe (s), the emailed link (t), or signed in as its owner.
@@ -54,7 +54,7 @@ export default async function StayPage({ params, searchParams }: { params: Promi
             ? { title: "We're checking with the hotel", sub: "Your payment went through but the hotel was slow to confirm. We'll email you shortly with your confirmation or a full refund.", tone: "is-warn" }
             : { title: "Payment not completed", sub: "Your card wasn't charged. Go back to book again, or ask the assistant for current rates.", tone: "is-off" };
   // Booked from the chat: back there once it's confirmed, and Neon carries on.
-  const fromChat = status === HOTEL_STATUS.BOOKED || working ? await chatForCard([b.offerId, card.id, card.offerId]) : null;
+  const fromChat = status === HOTEL_STATUS.BOOKED || working || chatQ ? ((chatQ && (await findOwnChat(chatQ))?.id) || (await chatForCard([b.offerId, card.id, card.offerId]))) : null;
   return (
     <div className="wrap page narrow trk">
       {working && <meta httpEquiv="refresh" content="3" />}
@@ -69,7 +69,7 @@ export default async function StayPage({ params, searchParams }: { params: Promi
             <code>{b.confirmationCode}</code>
           </p>
         )}
-        {fromChat && <BackToChat chatId={fromChat} booked={`hotel:${b.number}`} what="stay" done={status === HOTEL_STATUS.BOOKED} />}
+        {fromChat && <BackToChat chatId={fromChat} booked={`hotel:${b.number}`} what="stay" done={status === HOTEL_STATUS.BOOKED} pending={working} />}
       </section>
       <div className="fl-summary">
         <HotelCard h={card} bookable={false} />

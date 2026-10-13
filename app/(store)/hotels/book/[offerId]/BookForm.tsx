@@ -4,12 +4,13 @@ import { useActionState } from "react";
 import { bookHotelAction, type HotelBookState } from "../../actions";
 import { stayPrice } from "@/lib/flights-shared";
 
-export default function BookForm({ offerId, priceCents, currency, prefill }: { offerId: string; priceCents: number; currency: string; prefill?: Record<string, string> }) {
+export default function BookForm({ offerId, priceCents, currency, prefill, chatId }: { offerId: string; priceCents: number; currency: string; prefill?: Record<string, string>; chatId?: string }) {
   const [state, action, pending] = useActionState<HotelBookState, FormData>(bookHotelAction, { shownCents: priceCents, n: 0 });
   const v = (k: string) => state.values?.[k] ?? prefill?.[k] ?? "";
   return (
     <form action={action} className="fl-form" key={state.n}>
       <input type="hidden" name="offerId" value={offerId} />
+      {chatId && <input type="hidden" name="chat" value={chatId} />}
       <fieldset className="fl-pax">
         <legend>Lead guest</legend>
         <p className="muted small">The name the hotel will look for at check-in, as on their ID.</p>

@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 
 const SECONDS = 3;
 
-export default function BackToChat({ chatId, booked, what, done }: { chatId: string; booked: string; what: string; done: boolean }) {
+export default function BackToChat({ chatId, booked, what, done, pending = !done }: { chatId: string; booked: string; what: string; done: boolean; pending?: boolean }) {
   const href = `/c/${encodeURIComponent(chatId)}?booked=${encodeURIComponent(booked)}`;
   const [left, setLeft] = useState(SECONDS);
   const [stay, setStay] = useState(false);
@@ -21,7 +21,16 @@ export default function BackToChat({ chatId, booked, what, done }: { chatId: str
     const t = setTimeout(() => setLeft((n) => n - 1), 1000);
     return () => clearTimeout(t);
   }, [done, stay, left, href]);
-  if (!done) return <p className="b2c-note">Once your {what} is confirmed, we&apos;ll take you back to the chat so Neon can carry on.</p>;
+  if (!done && pending) return <p className="b2c-note">Once your {what} is confirmed, we&apos;ll take you back to the chat so Neon can carry on.</p>;
+  // Not booked (failed, refunded, being checked): just the way back, no automatic message.
+  if (!done)
+    return (
+      <div className="b2c">
+        <a className="btn block" href={`/c/${encodeURIComponent(chatId)}`}>
+          Back to the chat
+        </a>
+      </div>
+    );
   return (
     <div className="b2c">
       <a className="btn primary block" href={href}>

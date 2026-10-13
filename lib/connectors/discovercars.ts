@@ -196,7 +196,7 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_driver_details",
     description:
-      "Before filling Discover Cars' driver form for a booking the shopper asked you to make: shows them the details you'll enter (from their trip bookings, or what they told you) and waits for Approve & next. Only after it returns approved may you type exactly these details with rental_car_act.",
+      "Once the chosen car's driver form is open: shows the shopper the details you'll enter (their saved details, trip bookings, or what they told you), waits for Approve & next, then fills the form itself and returns a screenshot. Fix only fields it couldn't fill.",
     input_schema: {
       type: "object",
       properties: {
@@ -220,7 +220,7 @@ Rental cars (Discover Cars):
 - For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). It fills in Discover Cars' whole search and submits it by itself, and tells you what (if anything) it couldn't fill. Fix only that, with rental_car_act's smart actions (fill / select / date / click_text, several per call); tap by coordinates only as a last resort. Be quick: as few calls as possible.
 - When results show, sort them by price (lowest first) on the page (click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
-- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (the driver's name, email and phone from their trip bookings unless they gave others), and once approved type exactly those into the driver form. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they enter their card and tap Book themselves. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the page shows one (Discover Cars emails the voucher).
+- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they enter their card and tap Book themselves. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the page shows one (Discover Cars emails the voucher).
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`
       : `
@@ -301,40 +301,38 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const search = { location: s.location, pickup: `${s.pickup}${pickupTime ? ` ${pickupTime}` : ""}`, dropoff: `${s.dropoff}${dropoffTime ? ` ${dropoffTime}` : ""}` };
       // Fill the whole search right here (the page finds each field itself): no screenshot round trips.
       ctx.progress("Filling in the search…");
-      const run = async (actions: unknown[]) => (await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal), signal)).result;
-      const steps: Array<{ type: string; field?: string; text?: string; ok: boolean; did?: string; why?: string }> = [];
+      // Steps in a row skip the screenshot; only the last call (after Search) takes one.
+      const run = async (actions: unknown[], noShot = true) => (await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal, { noShot }), signal)).result;
+      const steps: Array<{ type: string; field?: string; text?: string; ok: boolean; did?: string; why?: string; fields?: string[] }> = [];
       const where = s.airport ? `${s.city || s.location} ${s.airport}` : s.location;
       // A cookie banner may cover the form: accept it if there is one (no harm when there isn't).
-      await run([{ type: "click_text", text: "Accept all" }]).catch(() => null);
-      p = await run([
+      const first = await run([
+        { type: "click_text", text: "Accept all" },
         { type: "fill", field: "pick-up location", value: where, choose: true },
         { type: "date", field: "pick-up date", value: s.pickup },
       ]);
-      steps.push(...(p.results ?? []));
+      steps.push(...(first.results ?? []).slice(1));
       // Range calendars stay open for the drop-off day: try the field, then the open calendar.
-      p = await run([{ type: "date", field: "drop-off date", value: s.dropoff }]);
-      let drop = p.results?.[0];
-      if (drop && !drop.ok) {
-        p = await run([{ type: "date", value: s.dropoff }]);
-        drop = p.results?.[0] ?? drop;
-      }
+      let drop = (await run([{ type: "date", field: "drop-off date", value: s.dropoff }])).results?.[0];
+      if (drop && !drop.ok) drop = (await run([{ type: "date", value: s.dropoff }])).results?.[0] ?? drop;
       if (drop) steps.push({ ...drop, field: "drop-off date" });
-      const times = [
-        ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
-        ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
-      ];
-      if (times.length) {
-        p = await run(times);
-        steps.push(...(p.results ?? []));
-      }
-      p = await run([{ type: "click_text", text: "Search" }, { type: "wait", ms: 1500 }]);
+      p = await run(
+        [
+          ...(pickupTime ? [{ type: "select", field: "pick-up time", value: pickupTime }] : []),
+          ...(dropoffTime ? [{ type: "select", field: "drop-off time", value: dropoffTime }] : []),
+          { type: "click_text", text: "Search" },
+          { type: "wait", ms: 1200 },
+        ],
+        false,
+      );
       steps.push(...(p.results ?? []));
       const failed = steps.filter((x) => !x.ok);
+      const fieldsOnPage = failed.find((x) => x.fields?.length)?.fields;
       return shot(
         p,
-        { site: SITE, search, filled: steps.map((x) => `${x.ok ? "✓" : "✗"} ${x.field ?? x.text ?? x.type}: ${x.ok ? x.did : x.why}`) },
+        { site: SITE, search, filled: steps.map((x) => `${x.ok ? "✓" : "✗"} ${x.field ?? x.text ?? x.type}: ${x.ok ? x.did : x.why}`), ...(fieldsOnPage ? { fields_on_page: fieldsOnPage } : {}) },
         failed.length
-          ? `Most of the search was filled in automatically. Fix only what failed (${failed.map((x) => x.field ?? x.text).join(", ")}) with rental_car_act: smart actions first (fill / select / date / click_text, naming the field as the page labels it), taps only as a last resort; then click_text "Search".`
+          ? `Most of the search was filled in automatically. Fix only what failed (${failed.map((x) => x.field ?? x.text).join(", ")}) with rental_car_act: smart actions first (fill / select / date / click_text, naming the field as fields_on_page labels it), taps only as a last resort; then click_text "Search".`
           : "The search is filled in and submitted. If the screenshot shows results, sort by price and pick; if it still shows the form, check it and click_text the search button.",
       );
     }
@@ -388,7 +386,24 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         browser: null,
       });
       if (w.outcome !== "resumed") return { content: "The shopper didn't approve the driver details, so don't type them. Ask what to change." };
-      return { content: JSON.stringify({ approved: true, details, note: "Type exactly these into the driver form with rental_car_act. Leave paid extras (extra insurance, add-ons) unticked unless the shopper asked for them. Stop at the payment step and call rental_car_hand_over with reason payment." }) };
+      // Approved: fill the driver form right away (the page finds each field), one screenshot at the end.
+      ctx.progress("Filling in the driver details…");
+      const [first, ...rest] = name.split(/\s+/);
+      const last = rest.join(" ");
+      const fill = async (actions: unknown[]) => (await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal, { noShot: true }), signal)).result.results ?? [];
+      const done: Array<{ field?: string; ok: boolean; did?: string; why?: string }> = [];
+      // Separate first and last name fields, else one full-name field.
+      const firstR = (await fill([{ type: "fill", field: "first name", value: first }]))[0];
+      if (firstR?.ok && last) done.push(firstR, ...(await fill([{ type: "fill", field: "last name", value: last }])));
+      else done.push(...(await fill([{ type: "fill", field: "full name", value: name }])).map((r) => ({ ...r, field: "name" })));
+      done.push(...(await fill([{ type: "fill", field: "email", value: email }])));
+      if (phone) done.push(...(await fill([{ type: "fill", field: "phone", value: phone }])));
+      if (flightNumber) done.push(...(await fill([{ type: "fill", field: "flight number", value: flightNumber }])));
+      const sid = await chatBrowserId(ctx.chatId);
+      const now = sid ? await browserApi.state(sid, signal).catch(() => null) : null;
+      const report = { approved: true, details, filled: done.map((x) => `${x.ok ? "✓" : "✗"} ${x.field}: ${x.ok ? x.did : x.why}`) };
+      const next = "Already filled where marked ✓; fix only ✗ fields with rental_car_act (exactly these details). Leave paid extras unticked unless the shopper asked. Then go to the payment step (click_text the continue button) and call rental_car_hand_over with reason payment.";
+      return now ? shot(now, report, next, ctx.chatId) : { content: JSON.stringify({ ...report, next }) };
     }
     if (tool === "rental_car_continue") {
       const location = str(input.location, 80);

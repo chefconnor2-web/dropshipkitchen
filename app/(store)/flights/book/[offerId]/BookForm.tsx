@@ -15,6 +15,7 @@ export default function BookForm({
   needPassport,
   tripSlug,
   prefill,
+  chatId,
 }: {
   offerId: string;
   priceCents: number;
@@ -25,12 +26,15 @@ export default function BookForm({
   tripSlug?: string;
   /** From the signed-in shopper's account: fills the first passenger and the contact. */
   prefill?: Record<string, string>;
+  /** The chat the Book button was tapped in: after paying, back to it. */
+  chatId?: string;
 }) {
   const [state, action, pending] = useActionState<BookState, FormData>(bookFlightAction, { shownCents: priceCents, n: 0 });
   const v = (k: string) => state.values?.[k] ?? prefill?.[k] ?? "";
   return (
     <form action={action} className="fl-form" key={state.n}>
       <input type="hidden" name="offerId" value={offerId} />
+      {chatId && <input type="hidden" name="chat" value={chatId} />}
       {tripSlug && <input type="hidden" name="trip" value={tripSlug} />}
       {slots.map((s, i) => (
         <fieldset key={s.id} className="fl-pax">
