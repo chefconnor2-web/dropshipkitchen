@@ -69,3 +69,15 @@ test("an autocomplete takes the suggestion holding every typed word ('Miami MIA'
   assert.equal(r.ok, true);
   assert.equal(await page.$eval("#loc", (e) => e.value), "Miami Airport (MIA)");
 });
+
+test("picks a day from a react-datepicker-style calendar ('Choose Friday, October 23rd, 2026')", async () => {
+  page = await browser.newPage();
+  await page.setContent(`<!doctype html><body>
+  <div><label for=d>Pick-up date</label><input id=d readonly onclick="document.getElementById('cal').style.display='block'"></div>
+  <div id=cal class="react-datepicker" style="display:none"><div class="react-datepicker__month">
+    ${[21, 22, 23, 24].map((n) => `<div role="option" class="react-datepicker__day" aria-label="Choose ${["Wednesday", "Thursday", "Friday", "Saturday"][n - 21]}, October ${n}${n === 21 ? "st" : n === 22 ? "nd" : n === 23 ? "rd" : "th"}, 2026" onclick="d.value='2026-10-${n}'">${n}</div>`).join("")}
+  </div></div></body>`);
+  const r = await smartAction(page, { type: "date", field: "pick-up date", value: "2026-10-23" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(await page.$eval("#d", (e) => e.value), "2026-10-23");
+});

@@ -218,7 +218,8 @@ export const discoverCarsConnector: Connector = {
       ? `
 Rental cars (Discover Cars):
 - For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). It fills in Discover Cars' whole search and submits it by itself, and tells you what (if anything) it couldn't fill. Call it on its own (no other browser tool in the same reply) and wait for its result. Fix only that, with rental_car_act's smart actions (fill / select / date / click_text, several per call); tap by coordinates only as a last resort. Be quick: as few calls as possible.
-- When results show, sort them by price (lowest first) on the page (click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
+- Be fast: a few calls, several actions each. On extras or insurance screens, click_text "Skip", "No, I'll take the risk" or "Continue" (no paid extras unless asked).
+- When results show, sort them by price (lowest first) on the page (select "Sort by" "Price", or click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
 - "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they enter their card and tap Book themselves. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the page shows one (Discover Cars emails the voucher).
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
@@ -353,7 +354,9 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         p,
         { site: SITE, search, filled: steps.map((x) => `${x.ok ? "✓" : "✗"} ${x.field ?? x.text ?? x.type}: ${x.ok ? x.did : x.why}`), ...(fieldsOnPage ? { fields_on_page: fieldsOnPage } : {}) },
         failed.length
-          ? `Most of the search was filled in automatically. Fix only what failed (${failed.map((x) => x.field ?? x.text).join(", ")}) with rental_car_act: smart actions first (fill / select / date / click_text, naming the field as fields_on_page labels it), taps only as a last resort; then click_text "Search".`
+          ? failed.some((x) => /date|time/i.test(String(x.field ?? "")))
+            ? `The dates or times didn't fill (${failed.map((x) => x.field ?? x.text).join(", ")}). Don't tap through the calendar yourself: call rental_car_hand_over once with reason choice and the message "Set ${search.pickup} to ${search.dropoff} (with the times), tap Search, then Approve & next." Then carry on from the results.`
+            : `Most of the search was filled in automatically. Fix only what failed (${failed.map((x) => x.field ?? x.text).join(", ")}) with rental_car_act: smart actions first (fill / select / date / click_text, naming the field as fields_on_page labels it), taps only as a last resort; then click_text "Search".`
           : "The search is filled in and submitted. If the screenshot shows results, sort by price and pick; if it still shows the form, check it and click_text the search button.",
       );
     }

@@ -149,7 +149,24 @@ function dateForms(iso) {
   const y = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(day).padStart(2, "0");
-  return [iso, `${y}/${mm}/${dd}`, `${dd}/${mm}/${y}`, `${mm}/${dd}/${y}`, `${dd}.${mm}.${y}`, `${mon} ${day}, ${y}`, `${day} ${mon} ${y}`, `${mo} ${day}, ${y}`, `${day} ${mo} ${y}`, opt({ weekday: "long", month: "long", day: "numeric", year: "numeric" })];
+  // "23rd": calendar widgets often label days "Choose Friday, October 23rd, 2026".
+  const th = day % 100 >= 11 && day % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][day % 10] || "th";
+  const wd = opt({ weekday: "long" });
+  return [
+    iso,
+    `${y}/${mm}/${dd}`,
+    `${dd}/${mm}/${y}`,
+    `${mm}/${dd}/${y}`,
+    `${dd}.${mm}.${y}`,
+    `${mon} ${day}, ${y}`,
+    `${day} ${mon} ${y}`,
+    `${mo} ${day}, ${y}`,
+    `${day} ${mo} ${y}`,
+    `${mon} ${day}${th}, ${y}`,
+    `${wd}, ${mon} ${day}${th}, ${y}`,
+    `${wd} ${day} ${mon} ${y}`,
+    opt({ weekday: "long", month: "long", day: "numeric", year: "numeric" }),
+  ];
 }
 
 /** Clicks the calendar day for `forms` if it's showing; else "next" when given, to page forward. */
@@ -187,10 +204,24 @@ function calendarStep(forms, goNext) {
   return "missing";
 }
 
+/** Clicks the marked element: a real mouse click, or a script click when it isn't clickable that way. */
+async function clickPicked(page) {
+  const h = await page.$("[data-neon-pick]");
+  if (!h) return false;
+  await h.click().catch(() => h.evaluate((el) => el.click()).catch(() => {}));
+  return true;
+}
+
+/** A short sample of the open calendar's markup, for the logs when a day couldn't be found. */
+function calendarSample() {
+  const cal = document.querySelector("[class*=calend i], [class*=datepicker i], [class*=picker i], [role=dialog], [role=grid]");
+  return cal ? cal.outerHTML.replace(/\s+/g, " ").slice(0, 700) : "";
+}
+
 /** Types into the marked field, replacing what's there (real key presses, so autocompletes react). */
 async function typeInto(page, value) {
   const h = await page.$("[data-neon-pick]");
-  await h.click({ clickCount: 3 }).catch(() => h.focus());
+  await h.click({ clickCount: 3 }).catch(() => h.focus().catch(() => {}));
   await page.keyboard.down("Control").catch(() => {});
   await page.keyboard.press("KeyA").catch(() => {});
   await page.keyboard.up("Control").catch(() => {});
@@ -271,7 +302,7 @@ export async function smartAction(page, a) {
       if (!did) return { ok: false, why: `"${a.field}" has no option "${value}".` };
       return { ok: true, did: `chose "${did}"` };
     }
-    await (await page.$("[data-neon-pick]")).click();
+    await clickPicked(page);
     for (let i = 0; i < 8; i++) {
       await pause(100);
       const did = await page.evaluate(clickMatching, forms, "options");
@@ -291,8 +322,8 @@ export async function smartAction(page, a) {
         await setNative(page, f.type === "date" ? value : `${value}T12:00`);
         return { ok: true, did: `set ${value}` };
       }
-      await (await page.$("[data-neon-pick]")).click();
-      await pause(150);
+      await clickPicked(page);
+      await pause(250);
     }
     const forms = dateForms(value);
     for (let i = 0; i < 14; i++) {
@@ -304,7 +335,7 @@ export async function smartAction(page, a) {
       if (step === "missing") break;
       await pause(120);
     }
-    return { ok: false, why: `Couldn't find ${value} in the calendar.` };
+    return { ok: false, why: `Couldn't find ${value} in the calendar.`, calendar: await page.evaluate(calendarSample).catch(() => "") };
   }
   return { ok: false, why: `Unknown action ${a.type}.` };
 }
