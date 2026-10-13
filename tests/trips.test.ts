@@ -61,3 +61,35 @@ test("no paid booking, no trip; cancelled bookings keep their receipt but leave 
   assert.equal(buildTrip({ id: "c1", title: "x", uiJson: ui }, [flight], [hotel], "2026-10-24")!.phase, "now");
   assert.equal(buildTrip({ id: "c1", title: "x", uiJson: ui }, [flight], [hotel], "2026-11-01")!.phase, "past");
 });
+
+test("a car booked from the shopper's confirmation screenshot replaces the search and fills the itinerary", () => {
+  const booked = JSON.stringify([
+    ...JSON.parse(ui),
+    {
+      role: "bot",
+      items: [
+        {
+          kind: "car",
+          id: "car_2",
+          location: "Miami International Airport",
+          pickup: "2026-10-23",
+          dropoff: "2026-10-26",
+          url: "https://www.discovercars.com/?a_aid=x",
+          booked: { confirmation: "DC-778812", supplier: "Alamo", car: "Economy · Kia Rio or similar", price: "$123.40 USD", pickupAt: "2026-10-23T12:30", dropoffAt: "2026-10-26T10:00", pickupPlace: "MIA Rental Car Center" },
+        },
+      ],
+    },
+  ]);
+  const s = chatShown(booked);
+  assert.equal(s.cars.length, 1);
+  assert.equal(s.cars[0].booked?.confirmation, "DC-778812");
+  const trip = buildTrip({ id: "c1", title: "Miami", uiJson: booked }, [flight], [hotel], "2026-10-13")!;
+  const pick = trip.itinerary.find((i) => i.kind === "car-pickup");
+  assert.equal(pick?.when, "2026-10-23T12:30");
+  assert.match(pick?.title ?? "", /Alamo, MIA Rental Car Center/);
+  assert.match(pick?.detail ?? "", /Confirmation DC-778812/);
+  const r = trip.receipts.find((x) => x.kind === "car");
+  assert.equal(r?.status, "Booked");
+  assert.equal(r?.confirmation, "DC-778812");
+  assert.equal(r?.amount, "$123.40 USD");
+});

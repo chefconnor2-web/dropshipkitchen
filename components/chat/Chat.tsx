@@ -133,6 +133,12 @@ export default function Chat({
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // "Send a screenshot" buttons in the chat open the photo picker (same tap, so iOS allows it).
+  useEffect(() => {
+    const open = () => fileRef.current?.click();
+    window.addEventListener("cx:attach", open);
+    return () => window.removeEventListener("cx:attach", open);
+  }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   // The run answering in this chat (server-owned; this page just follows it). Null when nothing is running.
   const run = useRef<{ id: string; chatId: string; snap: RunSnapshot; sub: RunSubscription | null; resolve: (reply: string | null) => void } | null>(null);

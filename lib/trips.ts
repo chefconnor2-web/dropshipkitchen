@@ -134,7 +134,11 @@ export function chatShown(uiJson: string) {
       else if (it.kind === "cart-link") cart = it as unknown as CartLinkCard;
       else if (it.kind === "email-draft" && typeof it.id === "string") emails.set(it.id, { card: it as unknown as EmailDraftCard, at: e.at ?? null });
     }
-  return { flights, hotels, cars: [...cars.values()], cart: cart as CartLinkCard | null, emails: [...emails.values()] };
+  // A booked car (from the shopper's confirmation) stands in for any unbooked card with the same dates.
+  const all = [...cars.values()];
+  const bookedDates = new Set(all.filter((c) => c.booked).map((c) => `${c.pickup}|${c.dropoff}`));
+  const carList = all.filter((c) => c.booked || !bookedDates.has(`${c.pickup}|${c.dropoff}`));
+  return { flights, hotels, cars: carList, cart: cart as CartLinkCard | null, emails: [...emails.values()] };
 }
 
 /** One trip from a chat and the bookings made from it (pure: links are passed in). */
@@ -145,7 +149,8 @@ export function buildTrip(
   today: string,
 ): Trip | null {
   const shown = chatShown(chat.uiJson);
-  if (!flights.length && !hotels.length) return null;
+  // A trip is something booked: a flight or hotel through us, or a rental car the shopper confirmed (screenshot).
+  if (!flights.length && !hotels.length && !shown.cars.some((c) => c.booked)) return null;
   const itinerary: ItineraryItem[] = [];
   const receipts: TripReceipt[] = [];
   const dates: string[] = [];
@@ -208,6 +213,25 @@ export function buildTrip(
 
   // Rental cars are booked on Discover Cars (Neon only links there), so the plan shows; the receipt comes from them.
   for (const c of shown.cars) {
+    if (c.booked) {
+      const k = c.booked;
+      const where = k.pickupPlace || c.location;
+      itinerary.push({ kind: "car-pickup", when: k.pickupAt || c.pickup, title: `Pick up rental car: ${k.supplier ? `${k.supplier}, ` : ""}${where}`, detail: [k.car, k.confirmation ? `Confirmation ${k.confirmation}` : ""].filter(Boolean).join(" · ") || "Booked on Discover Cars" });
+      itinerary.push({ kind: "car-dropoff", when: k.dropoffAt || c.dropoff, title: `Return rental car: ${k.dropoffPlace || where}`, detail: k.supplier ? `${k.supplier}` : "Booked on Discover Cars" });
+      dates.push((k.pickupAt || c.pickup).slice(0, 10), (k.dropoffAt || c.dropoff).slice(0, 10));
+      destination ??= c.location.replace(/\s*\([A-Z]{3}\)\s*$/, "").replace(/\s+(international\s+)?airport$/i, "") || null;
+      receipts.push({
+        kind: "car",
+        title: `Rental car: ${k.car || c.location}`,
+        confirmation: k.confirmation ?? null,
+        status: "Booked",
+        amount: k.price ?? null,
+        at: null,
+        href: null,
+        lines: [k.supplier ? `Rental company: ${k.supplier}` : "", `${niceDate((k.pickupAt || c.pickup).slice(0, 10))} – ${niceDate((k.dropoffAt || c.dropoff).slice(0, 10))}`, where, "Paid to Discover Cars directly; their email has the voucher."].filter(Boolean),
+      });
+      continue;
+    }
     itinerary.push({ kind: "car-pickup", when: c.pickup, title: `Pick up rental car: ${c.location}`, detail: `Until ${niceDate(c.dropoff)} · booked on Discover Cars` });
     itinerary.push({ kind: "car-dropoff", when: c.dropoff, title: `Return rental car: ${c.location}`, detail: "Check the return time on your Discover Cars confirmation" });
     receipts.push({
