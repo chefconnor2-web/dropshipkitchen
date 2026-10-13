@@ -21,6 +21,39 @@ export interface TravellerProfileData {
   passportNumber?: string;
   passportCountry?: string;
   passportExpiry?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  country?: string;
+}
+
+/**
+ * Test mode only (Stripe test keys): mock details that pass every booking form's checks (Duffel, LiteAPI,
+ * Discover Cars), with the shopper's real email so confirmations reach them. The address is a real, valid one
+ * (Toronto City Hall); the passport is fictional.
+ */
+export function testTravellerDetails(email: string): TravellerProfileData {
+  return {
+    title: "mr",
+    gender: "m",
+    givenName: "Connor",
+    familyName: "Macaulay",
+    bornOn: "1990-04-12",
+    email,
+    // A real, valid number (Toronto City Hall's public line), since airlines reject fictional 555 numbers. Test
+    // mode sends no texts; replace it with your own mobile in My details to get them.
+    phone: "+1 416 392 2489",
+    passportNumber: "TEST1234567",
+    passportCountry: "CA",
+    passportExpiry: "2032-06-30",
+    addressLine1: "100 Queen St W",
+    city: "Toronto",
+    region: "ON",
+    postalCode: "M5H 2N2",
+    country: "CA",
+  };
 }
 
 const FIELDS: Array<[keyof TravellerProfileData, RegExp, number]> = [
@@ -34,6 +67,12 @@ const FIELDS: Array<[keyof TravellerProfileData, RegExp, number]> = [
   ["passportNumber", /^[A-Za-z0-9]{4,20}$/, 20],
   ["passportCountry", /^[A-Za-z]{2}$/, 2],
   ["passportExpiry", /^\d{4}-\d{2}-\d{2}$/, 10],
+  ["addressLine1", /^.{1,100}$/, 100],
+  ["addressLine2", /^.{1,100}$/, 100],
+  ["city", /^.{1,60}$/, 60],
+  ["region", /^.{1,60}$/, 60],
+  ["postalCode", /^[A-Za-z0-9 -]{2,12}$/, 12],
+  ["country", /^[A-Za-z]{2}$/, 2],
 ];
 
 /** Keeps only well-formed fields ("" clears one). */
@@ -42,7 +81,7 @@ export function cleanProfile(input: Record<string, unknown>): Partial<Record<key
   for (const [k, re, max] of FIELDS) {
     if (!(k in input)) continue;
     let v = String(input[k] ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-    if (k === "passportCountry") v = v.toUpperCase();
+    if (k === "passportCountry" || k === "country") v = v.toUpperCase();
     if (k === "title" || k === "gender") v = v.toLowerCase();
     if (v === "" || re.test(v)) out[k] = v;
   }

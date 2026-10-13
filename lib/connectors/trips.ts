@@ -24,7 +24,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "save_my_details",
     description:
-      "Save the shopper's own traveller details they gave you in the chat (My details), so flight, hotel and rental car forms fill themselves next time. Only what they told you about themselves; an empty string clears a field. Never card details.",
+      "Save the shopper's own traveller details (and home address) they gave you in the chat (My details), so flight, hotel and rental car forms fill themselves next time. Only what they told you about themselves; an empty string clears a field. Never card details.",
     input_schema: {
       type: "object",
       properties: {
@@ -38,6 +38,12 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
         passportNumber: { type: "string" },
         passportCountry: { type: "string", description: "2-letter country code" },
         passportExpiry: { type: "string", description: "YYYY-MM-DD" },
+        addressLine1: { type: "string" },
+        addressLine2: { type: "string" },
+        city: { type: "string" },
+        region: { type: "string", description: "Province or state" },
+        postalCode: { type: "string" },
+        country: { type: "string", description: "2-letter country code" },
       },
     },
   },
