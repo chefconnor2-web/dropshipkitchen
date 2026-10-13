@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Live Chrome sessions for the Chit chat: Neon shops Amazon, the shopper watches and takes over.",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "puppeteer-core": "23.11.1",

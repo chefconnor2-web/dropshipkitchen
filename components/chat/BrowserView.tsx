@@ -1,210 +1,412 @@
 "use client";
 // The live browser in the chat: the screen of the Chrome Neon is driving, streamed as JPEG frames over a
-// WebSocket. When a page needs the shopper (a robot check, signing in, checking out) a Take over prompt covers
-// the screen. Taking over opens it full screen on Amazon's phone site, sized for the shopper's phone: tap to
-// click, swipe to scroll, and type in the box at the bottom (each key goes straight to the field they tapped).
-// "Hand back to Neon" returns it to the card. It only connects while it's on screen (or full screen).
+// WebSocket and painted on a canvas (newest frame wins; no React work per frame).
+//
+// Three separate things (docs/frontier-port/CONTRACTS.md §7):
+// - connection: connecting / live / reconnecting / offline / ended (LiveConnection, with a fresh short-lived
+//   token per try from GET /api/assistant/browser);
+// - presentation: inline in the chat, expanded because the shopper chose to take over, or expanded because the
+//   run is waiting on a step only they can do (required);
+// - the run: the server owns the pending step. "Done — continue" asks the server to resume exactly that step,
+//   and the card only goes back into the chat when the server accepts it. Taking over by choice is never approval.
+// The same component (and socket) is used inline and full screen; full screen renders through a portal, so the
+// chat underneath keeps its draft, its scroll position and everything else.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { BrowserCard } from "@/lib/flights-shared";
+import type { ResumeResult } from "@/lib/run-shared";
+import { useRunContext } from "./run-context";
+import { CLOSED_REASON, FrameRenderer, LiveConnection, pageSize, scrollDelta, toFramePoint, type ConnState, type Decoded, type Size, type SocketLike } from "./browser-frames";
 
-type Status = "connecting" | "live" | "ended";
+type Mode = "inline" | "voluntary" | "required";
+type Frame = Decoded & { src: CanvasImageSource; free: () => void };
+
+/** Decodes a JPEG blob for the canvas: createImageBitmap where available, else an <img> (object URL revoked on free). */
+async function decodeFrame(blob: Blob): Promise<Frame> {
+  if (typeof createImageBitmap === "function") {
+    const bmp = await createImageBitmap(blob);
+    return { width: bmp.width, height: bmp.height, src: bmp, free: () => bmp.close() };
+  }
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.decoding = "async";
+  img.src = url;
+  try {
+    await img.decode();
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    throw e;
+  }
+  return { width: img.naturalWidth, height: img.naturalHeight, src: img, free: () => URL.revokeObjectURL(url) };
+}
+
+const connText = (c: ConnState): string =>
+  c.s === "connecting" || c.s === "idle"
+    ? "Connecting…"
+    : c.s === "reconnecting"
+      ? `Reconnecting… (${c.attempt}/${c.of})`
+      : c.s === "offline"
+        ? "Connection lost. Tap to reconnect."
+        : c.s === "ended"
+          ? c.reason
+          : "";
 
 export default function BrowserView({ b }: { b: BrowserCard }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const img = useRef<HTMLImageElement>(null);
-  const ws = useRef<WebSocket | null>(null);
-  const typed = useRef(""); // what's in the typing box, to send only the change
-  const drag = useRef<{ y: number; last: number; moved: boolean; pending: number; timer: number | null } | null>(null);
-  // The latest frame, so the screen isn't blank after moving to or from full screen.
-  const lastFrame = useRef<string | null>(null);
+  const run = useRunContext();
+  const slot = useRef<HTMLDivElement>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const heading = useRef<HTMLParagraphElement>(null);
+  const takeBtn = useRef<HTMLButtonElement>(null);
+  const conn = useRef<LiveConnection | null>(null);
+  const renderer = useRef<FrameRenderer<Blob, Frame> | null>(null);
+  const lastBlob = useRef<Blob | null>(null);
+  const meta = useRef<Size | null>(null);
+  const typed = useRef("");
+  const n = useRef(0);
+  const drag = useRef<{ y: number; acc: number; moved: boolean; raf: number | null } | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const inlineHeight = useRef(0);
+  /** Steps this card already asked the server to resume (the stream may still show them for a moment). */
+  const resumed = useRef(new Set<string>());
+  const pendingRef = useRef(run.pending);
+  pendingRef.current = run.pending;
+
   const [visible, setVisible] = useState(false);
-  const [status, setStatus] = useState<Status>("connecting");
-  const [ended, setEnded] = useState<string | null>(null);
-  const [url, setUrl] = useState("");
-  const [control, setControl] = useState(false);
+  const [state, setState] = useState<ConnState>({ s: "idle" });
+  const [mode, setMode] = useState<Mode>("inline");
+  const [hasFrame, setHasFrame] = useState(false);
+  const [host, setHost] = useState(b.site);
   const [needs, setNeeds] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
-  const [frame, setFrame] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [doneBusy, setDoneBusy] = useState(false);
+  const [doneError, setDoneError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [vv, setVv] = useState<{ h: number; top: number } | null>(null);
 
-  // Connect only while the card is on screen (old cards further up stay quiet).
+  const modeRef = useRef<Mode>("inline");
+  modeRef.current = mode;
+  const expanded = mode !== "inline";
+  const mine = run.pending?.browser?.cardId === b.id && !resumed.current.has(run.pending.id) ? run.pending : null;
+  const ended = state.s === "ended";
+
+  const flash = useCallback((t: string) => {
+    setToast(t);
+    window.setTimeout(() => setToast((x) => (x === t ? null : x)), 2600);
+  }, []);
+  const send = useCallback((m: Record<string, unknown>) => conn.current?.send({ ...m, n: ++n.current }) ?? false, []);
+
+  // Connect only while the card is on screen (old cards further up stay quiet) or full screen.
   useEffect(() => {
-    const el = wrap.current;
+    const el = slot.current;
     if (!el) return;
     const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { rootMargin: "200px" });
     io.observe(el);
     return () => io.disconnect();
   }, []);
 
+  // One renderer and one connection for the life of the card.
   useEffect(() => {
-    if ((!visible && !control) || ended) return;
-    const sock = new WebSocket(b.live);
-    sock.binaryType = "blob";
-    ws.current = sock;
-    sock.onopen = () => {
-      setStatus("live");
-      if (control) sock.send(JSON.stringify({ t: "control", on: true }));
-    };
-    sock.onmessage = (e) => {
-      if (typeof e.data === "string") {
-        try {
-          const m = JSON.parse(e.data);
-          if (m.t === "status") {
-            setUrl(m.url || "");
-            setNeeds(m.needs || null);
-          } else if (m.t === "focus") setEditing(!!m.editing);
-          else if (m.t === "ended") setEnded(m.reason || "This browser has closed.");
-        } catch {}
-        return;
-      }
-      const next = URL.createObjectURL(e.data as Blob);
-      if (img.current) img.current.src = next;
-      if (lastFrame.current) URL.revokeObjectURL(lastFrame.current);
-      lastFrame.current = next;
-      setFrame(true);
-    };
-    sock.onclose = () => {
-      setStatus((s) => (s === "live" ? "ended" : s));
-      ws.current = null;
-    };
-    sock.onerror = () => setEnded((e) => e ?? "This browser has closed.");
-    return () => sock.close();
-    // `control` is read only when (re)connecting; toggling it sends a message instead of reconnecting.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, ended, b.live]);
-
-  // The image element is recreated when the card moves to or from full screen: show the last frame at once.
-  useEffect(() => {
-    if (img.current && lastFrame.current) img.current.src = lastFrame.current;
-  }, [control]);
-  useEffect(() => () => void (lastFrame.current && URL.revokeObjectURL(lastFrame.current)), []);
-
-  // Full screen while the shopper drives: no page scrolling behind it.
-  useEffect(() => {
-    if (!control) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && take(false);
-    window.addEventListener("keydown", onKey);
+    const r = new FrameRenderer<Blob, Frame>({
+      decode: decodeFrame,
+      draw: (f) => {
+        const c = canvas.current;
+        if (!c) return;
+        if (c.width !== f.width || c.height !== f.height) {
+          c.width = f.width;
+          c.height = f.height;
+        }
+        c.getContext("2d", { alpha: false })?.drawImage(f.src, 0, 0);
+      },
+      release: (f) => f.free(),
+      schedule: (cb) => requestAnimationFrame(() => cb()),
+      onFrame: (_size, first) => first && setHasFrame(true),
+    });
+    renderer.current = r;
+    const c = new LiveConnection({
+      getToken: async (signal) => {
+        if (!b.session || !run.chatId) return { ok: false, gone: true };
+        const res = await fetch(`/api/assistant/browser?chat=${encodeURIComponent(run.chatId)}&session=${encodeURIComponent(b.session)}`, { signal, cache: "no-store" });
+        if (res.status === 404) return { ok: false, gone: true };
+        if (!res.ok) return { ok: false, gone: false };
+        const d = (await res.json()) as { url?: string };
+        return d.url ? { ok: true, url: d.url } : { ok: false, gone: false };
+      },
+      open: (url) => new WebSocket(url) as unknown as SocketLike,
+      onState: setState,
+      onFrame: (data) => {
+        if (!(data instanceof Blob)) return;
+        lastBlob.current = data;
+        r.push(data);
+      },
+      onOpen: () => {
+        // Back after a drop while the shopper was driving: take control again.
+        if (modeRef.current !== "inline") c.send({ t: "control", on: true });
+      },
+      onMessage: (m) => {
+        if (m.t === "status") {
+          try {
+            if (typeof m.url === "string" && m.url) setHost(new URL(m.url).hostname.replace(/^www\./, ""));
+          } catch {}
+          setNeeds(typeof m.needs === "string" ? m.needs : null);
+        } else if (m.t === "frame-meta" && typeof m.w === "number" && typeof m.h === "number") meta.current = { w: m.w, h: m.h };
+        else if (m.t === "focus") setEditing(!!m.editing);
+        else if (m.t === "control" && m.on === false) {
+          // The server gave control back to Neon (the step was resumed), or another screen took over.
+          if (modeRef.current === "voluntary" || (modeRef.current === "required" && m.by === "server")) leave();
+        } else if (m.t === "error") {
+          if (m.code === "failed" || m.code === "busy") flash(typeof m.message === "string" ? m.message : "Couldn't do that. Try again.");
+          else if (m.code === "not_in_control" && modeRef.current !== "inline") c.send({ t: "control", on: true });
+        }
+      },
+      isOnline: () => (typeof navigator === "undefined" ? true : navigator.onLine !== false),
+    });
+    conn.current = c;
+    const retry = () => c.retryNow();
+    const onVis = () => document.visibilityState === "visible" && retry();
+    window.addEventListener("online", retry);
+    document.addEventListener("visibilitychange", onVis);
     return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("online", retry);
+      document.removeEventListener("visibilitychange", onVis);
+      c.dispose();
+      r.dispose();
+      conn.current = null;
+      renderer.current = null;
     };
+    // The card's session and chat don't change for its lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [control]);
+  }, []);
 
-  const sendMsg = (m: unknown) => ws.current?.readyState === 1 && ws.current.send(JSON.stringify(m));
-  function take(on: boolean) {
-    sendMsg({ t: "control", on });
-    setControl(on);
+  useEffect(() => {
+    conn.current?.setWanted((visible || expanded) && !!b.session && !!run.chatId);
+  }, [visible, expanded, b.session, run.chatId]);
+
+  // The canvas element is recreated when the card moves to or from full screen: paint the last frame at once.
+  useLayoutEffect(() => {
+    if (lastBlob.current) renderer.current?.push(lastBlob.current);
+  }, [expanded]);
+
+  function enter(next: Mode) {
+    if (modeRef.current === "inline") {
+      inlineHeight.current = slot.current?.offsetHeight ?? 0;
+      returnFocus.current = (document.activeElement as HTMLElement | null) ?? null;
+    }
+    setMode(next);
+    setDoneError(null);
+    setNote(null);
+    conn.current?.send({ t: "control", on: true });
+  }
+  function leave() {
+    setMode("inline");
     setEditing(false);
     setText("");
     typed.current = "";
+    setDoneBusy(false);
+    setDoneError(null);
+  }
+  function handBack() {
+    conn.current?.send({ t: "control", on: false });
+    leave();
   }
 
-  // Tap = click; drag = scroll the page (in the page's own pixels).
-  function onPointerDown(e: React.PointerEvent<HTMLImageElement>) {
-    if (!control) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { y: e.clientY, last: e.clientY, moved: false, pending: 0, timer: null };
+  // The run is waiting on the shopper in this browser: open full screen (same card, same socket).
+  useEffect(() => {
+    if (mine && mode !== "required") enter("required");
+    else if (!mine && mode === "required" && !doneBusy) {
+      // The step went away without this card resuming it (expired, cancelled, the run ended): back to the chat.
+      leave();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mine?.id]);
+
+  async function done() {
+    const step = pendingRef.current;
+    if (!step || doneBusy) return;
+    setDoneBusy(true);
+    setDoneError(null);
+    let r: ResumeResult;
+    try {
+      r = await run.resume(step.id);
+    } catch {
+      r = { accepted: false, reason: "not_waiting", message: "Couldn't reach Neon. Try again.", current: null };
+    }
+    setDoneBusy(false);
+    if (r.accepted && r.stepId === step.id) {
+      resumed.current.add(step.id);
+      // A newer step that arrived meanwhile keeps the browser open (a late answer never hides it).
+      const now = pendingRef.current;
+      if (now && now.id !== step.id && now.browser?.cardId === b.id) return;
+      conn.current?.send({ t: "control", on: false });
+      leave();
+      return;
+    }
+    if (!r.accepted && r.reason === "stale_step") {
+      // Neon moved on to another step; ctx.pending now shows it.
+      resumed.current.add(step.id);
+      setDoneError(r.current?.pending ? null : r.message);
+      return;
+    }
+    if (!r.accepted && r.reason === "not_waiting" && !r.current) {
+      setDoneError(r.message || "Couldn't reach Neon. Try again.");
+      return;
+    }
+    resumed.current.add(step.id);
+    conn.current?.send({ t: "control", on: false });
+    leave();
+    if (!r.accepted) setNote(r.message);
   }
-  function onPointerMove(e: React.PointerEvent<HTMLImageElement>) {
+
+  // Full screen: lock the page behind it, follow the on-screen keyboard, and manage focus.
+  useEffect(() => {
+    if (!expanded) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const v = window.visualViewport;
+    const fit = () => v && setVv({ h: v.height, top: v.offsetTop });
+    fit();
+    v?.addEventListener("resize", fit);
+    v?.addEventListener("scroll", fit);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && modeRef.current === "voluntary") handBack();
+    };
+    window.addEventListener("keydown", onKey);
+    requestAnimationFrame(() => heading.current?.focus({ preventScroll: true }));
+    return () => {
+      document.body.style.overflow = prev;
+      v?.removeEventListener("resize", fit);
+      v?.removeEventListener("scroll", fit);
+      window.removeEventListener("keydown", onKey);
+      setVv(null);
+      // Back in the chat: focus goes where it was (never into a text field on a phone, which pops the keyboard).
+      const back = returnFocus.current;
+      const touch = window.matchMedia?.("(pointer: coarse)").matches;
+      const target = back && document.contains(back) && !(touch && /^(INPUT|TEXTAREA)$/.test(back.tagName)) ? back : takeBtn.current;
+      requestAnimationFrame(() => target?.focus({ preventScroll: true }));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
+
+  // ---- Input: tap = click, drag = scroll (in the page's own pixels), typing mirrored into the focused field ----
+  const box = () => {
+    const c = canvas.current;
+    if (!c || !c.width) return null;
+    const r = c.getBoundingClientRect();
+    return { rect: { left: r.left, top: r.top, width: r.width, height: r.height }, frame: { w: c.width, h: c.height } };
+  };
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!expanded) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { y: e.clientY, acc: 0, moved: false, raf: null };
+  }
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     const d = drag.current;
     if (!d) return;
     if (!d.moved && Math.abs(e.clientY - d.y) < 8) return;
     d.moved = true;
-    const r = e.currentTarget.getBoundingClientRect();
-    // Frames come at the page's own size (or twice it on high-density captures).
-    const nat = e.currentTarget.naturalHeight || r.height;
-    const pagePerPx = (nat > 1000 ? nat / 2 : nat) / r.height;
-    d.pending += (d.last - e.clientY) * pagePerPx;
-    d.last = e.clientY;
-    if (d.timer == null)
-      d.timer = window.setTimeout(() => {
-        if (drag.current === d || drag.current === null) {
-          sendMsg({ t: "scroll", dy: Math.round(d.pending) });
-          d.pending = 0;
-        }
-        d.timer = null;
-      }, 60);
+    d.acc += d.y - e.clientY;
+    d.y = e.clientY;
+    if (d.raf == null)
+      d.raf = requestAnimationFrame(() => {
+        d.raf = null;
+        const g = box();
+        if (!g) return;
+        const dy = Math.round(scrollDelta(d.acc, g.rect, g.frame, pageSize(meta.current, g.frame)));
+        d.acc = 0;
+        if (dy) send({ t: "scroll", dy });
+      });
   }
-  function onPointerUp(e: React.PointerEvent<HTMLImageElement>) {
+  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     const d = drag.current;
     drag.current = null;
-    if (!d || !control) return;
+    if (!d || !expanded) return;
     if (d.moved) {
-      if (d.timer == null && d.pending) sendMsg({ t: "scroll", dy: Math.round(d.pending) });
+      if (d.raf != null) cancelAnimationFrame(d.raf);
+      const g = box();
+      const dy = g ? Math.round(scrollDelta(d.acc, g.rect, g.frame, pageSize(meta.current, g.frame))) : 0;
+      if (dy) send({ t: "scroll", dy });
       return;
     }
-    const r = e.currentTarget.getBoundingClientRect();
-    sendMsg({ t: "tap", x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+    const g = box();
+    const p = g && toFramePoint(e.clientX, e.clientY, g.rect, g.frame);
+    if (p) send({ t: "tap", x: p.x, y: p.y });
   }
-
-  // Mirror the typing box into the page: added characters are typed, removed ones are backspaced.
   function onType(value: string) {
     const prev = typed.current;
     if (value.startsWith(prev)) {
-      if (value.length > prev.length) sendMsg({ t: "type", text: value.slice(prev.length) });
+      if (value.length > prev.length) send({ t: "type", text: value.slice(prev.length) });
     } else if (prev.startsWith(value)) {
-      for (let i = 0; i < prev.length - value.length; i++) sendMsg({ t: "key", key: "Backspace" });
+      for (let i = 0; i < prev.length - value.length; i++) send({ t: "key", key: "Backspace" });
     } else {
-      for (let i = 0; i < prev.length; i++) sendMsg({ t: "key", key: "Backspace" });
-      if (value) sendMsg({ t: "type", text: value });
+      for (let i = 0; i < prev.length; i++) send({ t: "key", key: "Backspace" });
+      if (value) send({ t: "type", text: value });
     }
     typed.current = value;
     setText(value);
   }
 
-  let host = b.site;
-  try {
-    if (url) host = new URL(url).hostname.replace(/^www\./, "");
-  } catch {}
+  const status = connText(state);
+  const ask = !ended && !expanded && !mine ? needs || b.handoff || null : null;
+  const message = mine?.message ?? null;
+  const fullStyle = expanded && vv ? { height: `${vv.h}px`, top: `${vv.top}px` } : undefined;
 
-  const closed = !!ended || status === "ended";
-  // The page itself says it needs the shopper (robot check, sign in), or Neon asked them to take over.
-  const ask = !closed && !control ? needs || b.handoff || null : null;
   const card = (
-    <div className={`cx-browser${control ? " is-control is-full" : ""}${closed ? " is-ended" : ""}${ask ? " is-asking" : ""}`}>
+    <div
+      className={`cx-browser${expanded ? " is-control is-full" : ""}${mode === "required" ? " is-required" : ""}${ended ? " is-ended" : ""}${ask ? " is-asking" : ""}`}
+      style={fullStyle}
+      {...(expanded ? { role: "dialog", "aria-modal": true, "aria-labelledby": `${b.id}-title` } : {})}
+    >
       <div className="cx-browser-bar">
-        <span className={`cx-browser-dot${status === "live" && !closed ? " is-live" : ""}`} aria-hidden />
+        <span className={`cx-browser-dot${state.s === "live" ? " is-live" : ""}`} aria-hidden />
         <span className="cx-browser-host">{host}</span>
-        {!closed && status === "live" && (
-          <button type="button" className={`cx-browser-take${control ? " is-on" : ""}`} onClick={() => take(!control)}>
-            {control ? "Hand back to Neon" : "Take over"}
+        {!ended && mode !== "required" && (
+          <button type="button" ref={takeBtn} className={`cx-browser-take${expanded ? " is-on" : ""}`} onClick={() => (expanded ? handBack() : enter("voluntary"))}>
+            {expanded ? "Hand back to Neon" : "Take over"}
           </button>
         )}
       </div>
+      {expanded && (
+        <div className={`cx-browser-turn${mode === "required" ? " cx-browser-required" : " is-driving"}`}>
+          <p id={`${b.id}-title`} ref={heading} tabIndex={-1}>
+            {mode === "required" ? message || "Neon needs you to finish this step." : "You're driving. Neon waits until you hand back."}
+          </p>
+        </div>
+      )}
       <div className="cx-browser-screen">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          ref={img}
-          alt={`Live view of ${host}`}
-          draggable={false}
+        <canvas
+          ref={canvas}
+          className="cx-browser-canvas"
+          role="img"
+          aria-label={`Live view of ${host}. This is a remote screen; its contents can't be read by screen readers.`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={() => (drag.current = null)}
-          style={{ visibility: frame ? "visible" : "hidden" }}
+          style={{ visibility: hasFrame ? "visible" : "hidden" }}
         />
-        {!frame && <span className="cx-browser-wait">{closed ? ended || "This browser has closed." : "Opening the browser…"}</span>}
-        {closed && frame && <span className="cx-browser-closed">{ended || "This browser has closed."}</span>}
-        {ask && status === "live" && (
+        {(!hasFrame || state.s !== "live") && status && (
+          <button type="button" className="cx-browser-conn" onClick={() => conn.current?.retryNow()} disabled={state.s !== "offline"}>
+            {ended ? state.reason || CLOSED_REASON : status}
+          </button>
+        )}
+        {toast && <span className="cx-browser-toast">{toast}</span>}
+        {ask && state.s === "live" && (
           <div className="cx-browser-ask" role="alert">
             <p>{ask}</p>
-            <button type="button" onClick={() => take(true)}>
+            <button type="button" onClick={() => enter("voluntary")}>
               Take over
             </button>
           </div>
         )}
       </div>
-      {control && !closed && (
+      {expanded && !ended && (
         <div className="cx-browser-keys">
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              sendMsg({ t: "key", key: "Enter" });
+              send({ t: "key", key: "Enter" });
               typed.current = "";
               setText("");
             }}
@@ -223,27 +425,45 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
             />
           </form>
           <div className="cx-browser-row">
-            <button type="button" onClick={() => sendMsg({ t: "back" })}>‹ Back</button>
-            <button type="button" onClick={() => sendMsg({ t: "key", key: "Backspace" })} aria-label="Delete">
+            <button type="button" onClick={() => send({ t: "back" })}>‹ Back</button>
+            <button type="button" onClick={() => send({ t: "key", key: "Backspace" })} aria-label="Delete">
               ⌫
             </button>
-            <button type="button" onClick={() => sendMsg({ t: "key", key: "Enter" })}>Enter</button>
+            <button type="button" onClick={() => send({ t: "key", key: "Enter" })}>Enter</button>
           </div>
+          {mode === "required" && (
+            <>
+              {doneError && (
+                <p className="cx-browser-done-error" role="alert">
+                  {doneError}
+                </p>
+              )}
+              <button type="button" className="cx-browser-done" onClick={done} disabled={doneBusy || !mine} aria-busy={doneBusy}>
+                {doneBusy ? "Telling Neon…" : "Done — continue"}
+              </button>
+            </>
+          )}
         </div>
       )}
+      <span className="sr-only" aria-live="polite">
+        {mode === "required" ? `Neon needs you: ${message ?? ""}` : status}
+      </span>
     </div>
   );
   // Full screen renders at the top of the page so nothing in the chat (scrolling lists) can clip it.
   return (
-    <div ref={wrap} className="cx-browser-slot">
-      {control && typeof document !== "undefined" ? (
+    <div ref={slot} className="cx-browser-slot">
+      {expanded && typeof document !== "undefined" ? (
         <>
-          <div className="cx-browser-placeholder">Browser open full screen</div>
+          <div className="cx-browser-placeholder" style={inlineHeight.current ? { height: inlineHeight.current } : undefined}>
+            Browser open full screen
+          </div>
           {createPortal(card, document.body)}
         </>
       ) : (
         card
       )}
+      {note && !expanded && <p className="cx-browser-note-inline">{note}</p>}
     </div>
   );
 }

@@ -48,6 +48,9 @@ import type { ConnectorItem } from "@/lib/flights-shared";
 import { MAX_DOCS, MAX_PDF_B64, PASTE_AS_DOC_CHARS, TEXT_FILE, docInfo, docLabel, type DocUpload } from "@/lib/docs-shared";
 import { listen, speak, speechInputSupported, speechOutputSupported, stopSpeaking, unlockSpeech, type Recognizer } from "./voice";
 import VoiceMode from "./VoiceMode";
+import { RunContext, type BrowserRunContext } from "./run-context";
+import { cancelRun, createRun, foldRun, newClientRequestId, resumeRun, subscribeRun, type RunConnection, type RunSubscription } from "@/lib/run-client";
+import type { ResumeResult, RunFrame, RunSnapshot } from "@/lib/run-shared";
 
 interface Attachment {
   key: string;
@@ -130,7 +133,10 @@ export default function Chat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const run = useRef<{ ctrl: AbortController; detached: boolean } | null>(null);
+  // The run answering in this chat (server-owned; this page just follows it). Null when nothing is running.
+  const run = useRef<{ id: string; chatId: string; snap: RunSnapshot; sub: RunSubscription | null; resolve: (reply: string | null) => void } | null>(null);
+  const [live, setLive] = useState<RunSnapshot | null>(null);
+  const [runConn, setRunConn] = useState<RunConnection | null>(null);
   const activeId = useRef<string | null | undefined>(undefined);
   const cache = useRef(new Map<string, Entry[]>());
   const stick = useRef(true);
@@ -169,12 +175,8 @@ export default function Chat({
   // Switch conversations when the URL changes. A chat this component just created is already on screen.
   useEffect(() => {
     if (chatId === activeId.current) return;
-    if (run.current) {
-      // Leave the running answer to finish on the server; it'll be there when this chat is reopened.
-      run.current.detached = true;
-      run.current.ctrl.abort();
-      run.current = null;
-    }
+    // Leave a running answer to finish on the server; it'll be there (and followed again) when this chat is reopened.
+    detach();
     activeId.current = chatId;
     stopSpeaking();
     setSpeakingIdx(null);
@@ -206,6 +208,9 @@ export default function Chat({
         if (activeId.current !== chatId) return;
         if (!d.chat) return ev.current.onMissing();
         setEntries(d.entries ?? []);
+        // A reply still being written (e.g. after a refresh, or while Neon waits on the shopper): follow it again.
+        if (d.activeRun) follow(d.activeRun as RunSnapshot, chatId);
+        else showLastRunError(d.lastRun as RunSnapshot | null, d.entries ?? []);
         ev.current.onCart(d.cartCount ?? 0);
         if (d.allowance) setAllowance(d.allowance);
         setPlans(d.plans ?? null);
@@ -238,7 +243,7 @@ export default function Chat({
   // Esc stops a running answer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && run.current && !voiceMode) run.current.ctrl.abort();
+      if (e.key === "Escape" && run.current && !voiceMode && !document.querySelector(".cx-browser.is-full")) stop();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -251,6 +256,151 @@ export default function Chat({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [input, empty]);
+
+  /** The live reply as the chat renders it (the run's partial reply, folded from its frames). */
+  const toTurn = (snap: RunSnapshot): Turn => ({
+    text: snap.partial.text,
+    steps: snap.partial.steps,
+    groups: snap.partial.groups,
+    items: snap.partial.items,
+    trace: snap.partial.trace,
+    started: Date.parse(snap.startedAt ?? snap.createdAt) || Date.now(),
+    chars: snap.partial.chars,
+  });
+
+  /** Stops following the current run on this page (the run itself carries on on the server). */
+  function detach() {
+    const r = run.current;
+    run.current = null;
+    if (!r) return;
+    r.sub?.close();
+    r.resolve(null);
+    setLive(null);
+    setRunConn(null);
+  }
+
+  /** Reloads the transcript (after a run stopped, failed or was interrupted: the server saved what happened). */
+  async function reconcile(cid: string) {
+    const d = await fetch(`/api/assistant?chat=${encodeURIComponent(cid)}`, { cache: "no-store" })
+      .then((x) => x.json())
+      .catch(() => null);
+    if (!d?.chat || activeId.current !== cid) return null;
+    setEntries(d.entries ?? []);
+    if (d.allowance) setAllowance(d.allowance);
+    return d as { entries: Entry[]; lastRun: RunSnapshot | null };
+  }
+
+  function showLastRunError(last: RunSnapshot | null, list: Entry[]) {
+    if (!last || (last.status !== "failed" && last.status !== "interrupted")) return;
+    const u = list[last.userIndex];
+    if (u?.role === "user" && u.failed) setError({ message: last.error || "That message didn't go through.", retryIndex: last.userIndex });
+  }
+
+  /** Follows a run: renders its reply as it's written, and settles the transcript when it ends. */
+  function follow(snap: RunSnapshot, cid: string, resolve: (reply: string | null) => void = () => {}) {
+    detach();
+    const me = { id: snap.id, chatId: cid, snap, sub: null as RunSubscription | null, resolve };
+    run.current = me;
+    stick.current = true;
+    setLive(snap);
+    setTurn(toTurn(snap));
+    if (snap.partial.reaction) patchUserAt(snap.userIndex, { reaction: snap.partial.reaction });
+    const finish = async (status: string) => {
+      if (run.current !== me) return;
+      run.current = null;
+      me.sub?.close();
+      setLive(null);
+      setRunConn(null);
+      const d = await reconcile(cid);
+      setTurn(null);
+      if (status === "failed" || status === "interrupted") setError({ message: me.snap.error || "Something went wrong.", retryIndex: me.snap.userIndex });
+      else if (!d) setError({ message: "The connection dropped before the answer arrived.", retryIndex: me.snap.userIndex });
+      me.resolve(null);
+    };
+    const onFrame = (f: RunFrame) => {
+      if (run.current !== me) return;
+      if (f.type === "title") ev.current.onTitle(f.chatId, f.title);
+      if (f.type === "event" && (f.event.type === "text" || f.event.type === "thinking")) setNudge((x) => x + 1);
+      if (f.type === "event" && f.event.type === "react") patchUserAt(me.snap.userIndex, { reaction: f.event.emoji });
+      if (f.type === "done") {
+        const { entry, reaction, cartCount: count, allowance: after } = f.done;
+        run.current = null;
+        me.sub?.close();
+        const steps = me.snap.partial.steps;
+        const groups = me.snap.partial.groups;
+        setEntries((en) => {
+          const kept = en.filter((x) => !(x.role === "assistant" && x.id === entry.id));
+          const at = Math.min(me.snap.userIndex + 1, kept.length);
+          return [...kept.slice(0, at), { ...(entry as unknown as Entry), steps, groups } as Entry, ...kept.slice(at)];
+        });
+        if (reaction) patchUserAt(me.snap.userIndex, { reaction });
+        if (after) setAllowance(after);
+        if (Array.isArray(entry.added) && entry.added.length) setCheer((c) => c + 1);
+        else cache.current.delete(cid);
+        if (count >= 0) setCart(count);
+        ev.current.onTouched(cid);
+        setTurn(null);
+        setLive(null);
+        setRunConn(null);
+        me.resolve(entry.text);
+        return;
+      }
+      me.snap = foldRun(me.snap, f);
+      setLive(me.snap);
+      setTurn(toTurn(me.snap));
+      if (f.type === "status" && !["queued", "running", "waiting", "completed"].includes(f.status)) void finish(f.status);
+      if (f.type === "snapshot" && ["failed", "cancelled", "interrupted"].includes(f.run.status)) void finish(f.run.status);
+    };
+    me.sub = subscribeRun(snap.id, {
+      after: snap.seq,
+      onFrame,
+      onConnection: (c) => run.current === me && setRunConn(c),
+      onEnd: (reason) => {
+        if (reason === "not_found" || (run.current === me && !isActiveStatus(me.snap.status))) void finish(me.snap.status);
+      },
+    });
+  }
+
+  /** The assistant's tapback (and the server's timestamp) land on the message just sent. */
+  function patchUserAt(index: number, patch: Partial<Entry>) {
+    setEntries((en) => en.map((x, k) => (k === index && x.role === "user" ? ({ ...x, ...patch } as Entry) : x)));
+  }
+
+  /** Stop: the server stops the run and saves what was written; the stream then ends it here. */
+  async function stop() {
+    const r = run.current;
+    if (!r) return;
+    const res = await cancelRun(r.id);
+    if (run.current === r && res && !isActiveStatus(res.run.status)) {
+      r.snap = { ...r.snap, status: res.run.status };
+      run.current = null;
+      r.sub?.close();
+      setLive(null);
+      setRunConn(null);
+      await reconcile(r.chatId);
+      setTurn(null);
+      r.resolve(null);
+    }
+  }
+
+  /** Resume a step the run is waiting on (the live browser's "Done — continue"). Folds in the server's view. */
+  const resume = useCallback(async (stepId: string): Promise<ResumeResult> => {
+    const r = run.current;
+    if (!r) return { accepted: false, reason: "run_finished", message: "Neon has already finished this.", current: null };
+    const res = await resumeRun(r.id, stepId);
+    if (run.current === r && res.accepted === false && res.current) {
+      r.snap = foldRun(r.snap, { type: "snapshot", seq: res.current.seq, run: res.current });
+      setLive(r.snap);
+      setTurn(toTurn(r.snap));
+    }
+    return res;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Only the reply being written answers a pending step: older replies can show the same browser (one per chat),
+  // and must not open it too.
+  const runCtx: BrowserRunContext = { chatId: activeId.current ?? chatId, pending: live?.pending ?? null, runStatus: live?.status ?? null, resume };
+  const savedCtx: BrowserRunContext = { ...runCtx, pending: null };
 
   /** Sends one message; resolves with the reply text (for voice mode), or null if it didn't finish. */
   async function send(text: string, opts: { voice?: boolean; editIndex?: number; images?: string[] } = {}): Promise<string | null> {
@@ -266,12 +416,11 @@ export default function Chat({
     rec.current?.stop();
     stopSpeaking();
     setSpeakingIdx(null);
-    const me = { ctrl: new AbortController(), detached: false };
-    run.current = me;
     let id = activeId.current ?? null;
     stick.current = true;
     setError(null);
     setEditing(null);
+    const draft = { input, attachments, docs };
     if (!opts.images) {
       setInput("");
       setAttachments([]);
@@ -281,120 +430,61 @@ export default function Chat({
     const was = opts.editIndex != null ? entries[opts.editIndex] : undefined;
     const keptDocs = was?.role === "user" ? was.docs : undefined;
     const docMeta = sending.length ? sending.map(docInfo) : keptDocs;
+    const before = entries;
     setEntries((e) => [...e.slice(0, userIndex), { role: "user", text: msg, ...(images.length ? { images } : {}), ...(docMeta?.length ? { docs: docMeta } : {}), at: new Date().toISOString() }]);
-    // The assistant's tapback (and the server's timestamp) land on the message just sent.
-    const patchUser = (patch: Partial<Entry>) =>
-      !me.detached && setEntries((en) => en.map((x, k) => (k === userIndex && x.role === "user" ? ({ ...x, ...patch } as Entry) : x)));
-    const t: Turn = { text: "", steps: [], groups: [], items: [], trace: [], started: Date.now(), chars: 0 };
-    setTurn({ ...t });
-    const update = () =>
-      !me.detached && setTurn({ ...t, steps: [...t.steps], groups: [...t.groups], items: [...t.items], trace: t.trace.map((x) => ({ ...x })) });
-    let reply: string | null = null;
-    try {
-      const r = await fetch("/api/assistant", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: msg, chatId: id ?? undefined, images, voice: !!opts.voice, editIndex: opts.editIndex, ...(sending.length ? { docs: sending.map(({ name, kind, data }) => ({ name, kind, data })) } : {}) }),
-        signal: me.ctrl.signal,
-      });
-      if (!r.ok || !r.body) {
-        const d = await r.json().catch(() => ({}));
-        if (d.limit) {
-          setAllowance((a) => (a ? { ...a, remaining: 0 } : a));
-          // Out of messages: offer the plans right here, without leaving the chat.
-          if (d.plans) {
-            setPlans(d.plans);
-            setShowPlans(true);
-          }
-          throw Object.assign(new Error(d.error), { limit: d.limit });
+    setTurn({ text: "", steps: [], groups: [], items: [], trace: [], started: Date.now(), chars: 0 });
+    const r = await createRun({
+      clientRequestId: newClientRequestId(),
+      message: msg,
+      chatId: id ?? undefined,
+      images,
+      voice: !!opts.voice,
+      editIndex: opts.editIndex,
+      ...(sending.length ? { docs: sending.map(({ name, kind, data }) => ({ name, kind, data })) } : {}),
+    });
+    if (!r.ok) {
+      setTurn(null);
+      const body = r.body as { limit?: { subscriber: boolean; signedIn: boolean }; plans?: PlanOffer | null; activeRun?: RunSnapshot };
+      if (r.status === 409 && body.activeRun && id) {
+        // Neon is still answering here (another tab, or a send that already landed): show that instead.
+        setEntries(before);
+        if (!opts.images) {
+          setInput(draft.input);
+          setAttachments(draft.attachments);
+          setDocs(draft.docs);
         }
-        throw new Error(d.error || "Something went wrong.");
+        await reconcile(id);
+        follow(body.activeRun, id);
+        return null;
       }
-      await readNdjson(r, (e) => {
-        if (e.type === "done" && e.allowance) setAllowance(e.allowance);
-        if (e.type === "chat") {
-          if (!id) {
-            id = e.id as string;
-            if (!me.detached) activeId.current = id;
-            ev.current.onCreated(id, e.title);
-          }
-        } else if (e.type === "title") ev.current.onTitle(e.id, e.title);
-        else if (e.type === "progress") {
-          if (t.steps[t.steps.length - 1] !== e.note) t.steps.push(e.note);
-          if (e.note !== "Thinking…" && t.trace[t.trace.length - 1]?.text !== e.note) t.trace.push({ kind: "step", text: e.note });
-          update();
-        } else if (e.type === "thinking") {
-          const last = t.trace[t.trace.length - 1];
-          if (last?.kind === "think") last.text += e.delta;
-          else t.trace.push({ kind: "think", text: e.delta });
-          t.chars += e.delta.length;
-          setNudge((n) => n + 1);
-          update();
-        } else if (e.type === "text") {
-          t.text += e.delta;
-          t.chars += e.delta.length;
-          setNudge((n) => n + 1);
-          update();
-        } else if (e.type === "break") {
-          if (t.text && !t.text.endsWith("\n\n")) t.text += "\n\n";
-          update();
-        } else if (e.type === "found") {
-          const prev = t.groups.find((x) => x.group === e.group);
-          // While searching, accumulate finds; when the scout is done, show its shortlist.
-          const cards: Card[] = e.done
-            ? e.cards.length ? e.cards : prev?.cards.slice(0, 3) ?? []
-            : [...(prev?.cards ?? []), ...e.cards.filter((c: Card) => !prev?.cards.some((p) => p.pid === c.pid))].slice(0, 8);
-          const next = { group: e.group, cards, done: e.done };
-          t.groups = prev ? t.groups.map((x) => (x.group === e.group ? next : x)) : [...t.groups, next];
-          update();
-        } else if (e.type === "items") {
-          // A card with an id already shown replaces it (e.g. the live browser asking the shopper to take over).
-          const fresh = new Map((e.items as ConnectorItem[]).map((x) => [x.id, x]));
-          t.items = [...t.items.map((y) => fresh.get(y.id) ?? y), ...(e.items as ConnectorItem[]).filter((x) => !t.items.some((y) => y.id === x.id))];
-          update();
-        } else if (e.type === "react") {
-          patchUser({ reaction: e.emoji });
-        } else if (e.type === "error") throw new Error(e.error);
-        else if (e.type === "done") {
-          reply = e.entry.text;
-          if (e.reaction) patchUser({ reaction: e.reaction });
-          if (!me.detached) setEntries((en) => [...en, { ...e.entry, steps: t.steps, groups: t.groups }]);
-          if (e.entry.added?.length) setCheer((c) => c + 1);
-          else if (id) cache.current.delete(id);
-          ev.current.onCart(e.cartCount ?? 0);
+      if (body.limit) {
+        setAllowance((a) => (a ? { ...a, remaining: 0 } : a));
+        // Out of messages: offer the plans right here, without leaving the chat.
+        if (body.plans) {
+          setPlans(body.plans);
+          setShowPlans(true);
         }
-      });
-      if (id) ev.current.onTouched(id);
-      if (reply === null && !me.detached) {
-        // The server finishes the turn even if the connection drops; pick up the saved answer.
-        for (let i = 0; i < 30 && reply === null && id; i++) {
-          await new Promise((res) => setTimeout(res, 2500));
-          if (me.ctrl.signal.aborted) throw new DOMException("Stopped", "AbortError");
-          const d = await fetch(`/api/assistant?chat=${encodeURIComponent(id)}`).then((x) => x.json()).catch(() => null);
-          const n = d?.entries?.length ?? 0;
-          if (n >= 2 && d.entries[n - 1].role === "assistant" && d.entries[n - 2].text === msg) {
-            reply = d.entries[n - 1].text;
-            setEntries(d.entries);
-          }
-        }
-        if (reply === null) throw new Error("The connection dropped before the answer arrived.");
       }
-    } catch (e) {
-      if (me.detached) return null;
-      if (me.ctrl.signal.aborted) {
-        // Keep what was written so far, like stopping a reply in ChatGPT.
-        setEntries((en) => [
-          ...en,
-          { role: "assistant", text: t.text, cards: [], added: [], items: t.items, steps: t.steps, groups: t.groups, stopped: true, trace: t.trace, thoughtMs: Date.now() - t.started },
-        ]);
-      } else {
-        setError({ message: e instanceof Error ? e.message : "Something went wrong.", retryIndex: userIndex, limit: (e as { limit?: { subscriber: boolean; signedIn: boolean } }).limit });
+      // Nothing was sent: put the draft back.
+      if (!opts.images && !body.limit) {
+        setInput(draft.input);
+        setAttachments(draft.attachments);
+        setDocs(draft.docs);
+        setEntries(before);
       }
-    } finally {
-      if (run.current === me) run.current = null;
-      if (!me.detached) setTurn(null);
+      setError({ message: r.error, retryIndex: userIndex, limit: body.limit });
+      return null;
     }
-    return reply;
+    const { run: snap, chat, user } = r.accepted;
+    if (!id) {
+      id = chat.id;
+      activeId.current = id;
+      ev.current.onCreated(id, chat.title);
+    }
+    // The saved message (with its id) replaces the one shown while sending.
+    setEntries((en) => [...en.slice(0, snap.userIndex), user as unknown as Entry, ...en.slice(snap.userIndex + 1)]);
+    const cid = id;
+    return new Promise<string | null>((resolve) => follow(snap, cid, resolve));
   }
 
   function regenerate(userIndex: number) {
@@ -700,7 +790,7 @@ export default function Chat({
             disabled={!configured}
           />
           {busy ? (
-            <button type="button" className="cx-send cx-stop" onClick={() => run.current?.ctrl.abort()} aria-label="Stop" title="Stop (Esc)">
+            <button type="button" className="cx-send cx-stop" onClick={() => void stop()} aria-label="Stop" title="Stop (Esc)">
               <StopIcon />
             </button>
           ) : canSend ? (
@@ -808,6 +898,7 @@ export default function Chat({
             </div>
           </div>
         ) : (
+          <RunContext.Provider value={savedCtx}>
           <div className="cx-col" aria-live="polite">
             {loading && entries.length === 0 && (
               <div className="cx-loading">
@@ -880,6 +971,14 @@ export default function Chat({
                         </div>
                       )}
                       {e.text && <UserText text={e.text} />}
+                      {e.failed && (
+                        <div className="cx-failed">
+                          Not delivered ·{" "}
+                          <button type="button" className="cx-failed-retry" onClick={() => regenerate(i)} disabled={busy}>
+                            Retry
+                          </button>
+                        </div>
+                      )}
                       {receipt(i)}
                       {!busy && e.text && (
                         <div className="cx-actions cx-actions-user">
@@ -970,6 +1069,7 @@ export default function Chat({
             )}
 
             {turn && (
+              <RunContext.Provider value={runCtx}>
               <div className="cx-msg cx-bot">
                 <div className="cx-bot-body">
                   <LiveTrace trace={turn.trace} started={turn.started} chars={turn.chars} writing={!!turn.text} nudge={nudge} helpers={helpersAt(turn)} />
@@ -987,6 +1087,14 @@ export default function Chat({
                   )}
                 </div>
               </div>
+              </RunContext.Provider>
+            )}
+
+            {runConn === "reconnecting" && <div className="cx-run-conn">Reconnecting…</div>}
+            {runConn === "offline" && (
+              <button type="button" className="cx-run-conn is-offline" onClick={() => run.current?.sub?.reconnect()}>
+                Connection lost. Tap to reconnect.
+              </button>
             )}
 
             {error && (
@@ -1013,6 +1121,7 @@ export default function Chat({
               </div>
             )}
           </div>
+          </RunContext.Provider>
         )}
       </div>
 
@@ -1117,3 +1226,5 @@ function helpersAt(turn: { trace: Array<{ kind: string; text: string }>; groups:
   }
   return 0;
 }
+
+const isActiveStatus = (s: string) => s === "queued" || s === "running" || s === "waiting";

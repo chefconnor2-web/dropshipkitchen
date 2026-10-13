@@ -49,6 +49,8 @@ export interface TraceItem {
 }
 export type BotEntry = {
   role: "assistant";
+  /** The run that wrote it. */
+  id?: string;
   text: string;
   cards: Card[];
   added: string[];
@@ -78,7 +80,18 @@ export function costLine(c: NonNullable<BotEntry["cost"]>): string {
     .join(" · ");
 }
 /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
-export type UserEntry = { role: "user"; text: string; images?: string[]; docs?: DocInfo[]; reaction?: string; at?: string };
+export type UserEntry = {
+  role: "user";
+  text: string;
+  images?: string[];
+  docs?: DocInfo[];
+  reaction?: string;
+  at?: string;
+  /** "u_" + the run that sent it; failed: that run didn't finish (shown with Retry). */
+  id?: string;
+  runId?: string;
+  failed?: boolean;
+};
 export type Entry = UserEntry | BotEntry;
 export interface Turn {
   text: string;

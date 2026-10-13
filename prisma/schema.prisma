@@ -489,11 +489,47 @@ model AssistantChat {
   userTurns    Int      @default(0)
   inputTokens  Int      @default(0)
   outputTokens Int      @default(0)
+  /// The live browser (browser service session id) this chat drives; only this chat's owner gets view tokens for it.
+  browserSessionId String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([visitorId, updatedAt])
   @@index([customerId, updatedAt])
+}
+
+/// One shopper turn executed in the background by the server process (see lib/runs.ts and
+/// docs/frontier-port/CONTRACTS.md). The chat row stays the source of truth for the transcript; this row is the
+/// run's durable state: status, the reply written so far (for reconnects), and the step waiting on the shopper.
+model AssistantRun {
+  id              String    @id @default(cuid())
+  chatId          String
+  /// Client-generated id for the send; the same id again returns the same run (no duplicate work).
+  clientRequestId String
+  /// queued | running | waiting | completed | failed | cancelled | interrupted
+  status          String    @default("queued")
+  /// Index of the shopper's message in the chat transcript.
+  userIndex       Int
+  /// Last event sequence number folded into partialJson.
+  seq             Int       @default(0)
+  /// The reply written so far (PartialEntry JSON), saved a few times a second while running.
+  partialJson     String    @default("{}")
+  /// The PendingStep JSON while waiting on the shopper, else null.
+  pendingJson     String?
+  /// The id of the last step the shopper resumed (so a repeated resume of it is answered as a duplicate).
+  lastResumedStep String?
+  /// For edits: the transcript before the edit, restored if the run doesn't complete.
+  priorUiJson     String?
+  error           String?
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([chatId, clientRequestId])
+  @@index([clientRequestId])
+  @@index([chatId, createdAt])
+  @@index([status])
 }
 
 /// A photo a shopper attached in the assistant chat (resized in the browser, so small enough for SQLite).

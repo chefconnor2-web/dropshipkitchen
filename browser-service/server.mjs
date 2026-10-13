@@ -3,15 +3,19 @@
 // WebSocket and can take over to solve a captcha, sign in and check out.
 //
 // HTTP (header x-browser-secret: BROWSER_SERVICE_SECRET):
-//   POST   /sessions                       → { id, viewToken }
-//   DELETE /sessions/:id
+//   POST   /sessions                       → { id }
+//   DELETE /sessions/:id                   end it (clients get {t:"ended"})
+//   GET    /sessions/:id/state             page state + screenshot
+//   POST   /sessions/:id/release           shopper control off (the run resumed), back to desktop
 //   POST   /sessions/:id/act               { actions: [...] } → page state + screenshot
 //   POST   /sessions/:id/amazon/search     { domain, query }
 //   POST   /sessions/:id/amazon/add        { domain, asin, quantity }
 //   POST   /sessions/:id/amazon/cart       { domain }
 //   GET    /health
-// WebSocket /live?id=…&token=… : binary JPEG frames out; JSON status out; JSON input in (only while the
-// shopper has control).
+// WebSocket /live?id=…&exp=…&token=… (token = HMAC of "live.<id>.<exp>", minted by the storefront for the
+// chat's owner, valid until exp): binary JPEG frames out, newest first (a slow phone skips frames, never
+// replays old ones); JSON status out; JSON input in, only from the socket that has control, run one at a
+// time in order and acked. Protocol: docs/frontier-port/CONTRACTS.md §8 in the storefront repo.
 //
 // Top-level navigation is limited to Amazon, so the browser can't be pointed at anything else (including this
 // service's private network). Nothing the shopper types is logged.
@@ -20,12 +24,19 @@ import http from "node:http";
 import crypto from "node:crypto";
 import puppeteer from "puppeteer-core";
 import { WebSocketServer } from "ws";
+import { deliver as deliverFrame, stopDelivery } from "./frames.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 const SECRET = process.env.BROWSER_SERVICE_SECRET || "";
 const CHROME = process.env.CHROME_PATH || "/usr/bin/chromium";
 const MAX_SESSIONS = Number(process.env.MAX_SESSIONS) || 3;
 const IDLE_MS = (Number(process.env.IDLE_MINUTES) || 15) * 60_000;
+// Per live-view client: never queue more than this in the socket before sending another frame.
+const FRAME_QUEUE_BYTES = Number(process.env.FRAME_QUEUE_BYTES) || 48 * 1024;
+const QUALITY = Math.max(20, Math.min(90, Number(process.env.SCREENCAST_QUALITY) || 60));
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
+const INPUT_QUEUE = 64;
+const KEYS = ["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 // Same browser as workflow-agent-cart's shopping agent (desktop Chrome, 1280×800), which Amazon treats as a
 // normal shopper; a mobile emulation got a different Amazon and stalled at Add to Cart.
 const VIEW = { width: 1280, height: 800 };
@@ -40,29 +51,32 @@ async function startCast(s) {
   await s.cdp.send("Page.stopScreencast").catch(() => {});
   await s.cdp.send("Page.startScreencast", {
     format: "jpeg",
-    quality: phone ? 60 : 50,
+    quality: QUALITY,
     maxWidth: phone ? PHONE_VIEW.width * 2 : VIEW.width,
     maxHeight: phone ? PHONE_VIEW.height * 2 : VIEW.height,
     everyNthFrame: 1,
   });
 }
 
-/** Switches the tab between the desktop browser (Neon) and the phone site (the shopper driving). */
+/**
+ * Switches the tab between the desktop browser (Neon) and the phone site (the shopper driving). Done with the
+ * DevTools emulation calls directly, never page.setViewport: that reloads the page whenever the mobile/touch
+ * emulation changes, which would throw away what the shopper just did. Puppeteer's own viewport stays the
+ * desktop one throughout (screenshots use s.mode).
+ */
 async function setMode(s, mode) {
   if (s.mode === mode) return;
   s.mode = mode;
   const page = s.page;
-  if (mode === "phone") {
-    await page.setUserAgent(PHONE_UA);
-    await page.setViewport(PHONE_VIEW);
-    await startCast(s);
-    // Reload so Amazon serves its phone layout (not after a form post, which a reload would resend).
-    if (/^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
-  } else {
-    await page.setUserAgent(UA);
-    await page.setViewport(VIEW);
-    await startCast(s);
-  }
+  const phone = mode === "phone";
+  const v = phone ? PHONE_VIEW : VIEW;
+  await page.setUserAgent(phone ? PHONE_UA : UA);
+  await s.cdp.send("Emulation.setDeviceMetricsOverride", { width: v.width, height: v.height, deviceScaleFactor: v.deviceScaleFactor ?? 1, mobile: phone });
+  await s.cdp.send("Emulation.setTouchEmulationEnabled", phone ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+  await startCast(s);
+  // Going to the phone site: reload so Amazon serves its phone layout (not after a form post, which a reload
+  // would resend, nor on sign-in or robot-check pages). Back to desktop: no reload; Neon's next step navigates.
+  if (phone && /^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
 }
 // Pages the browser may open. Images, scripts and styles can come from anywhere public.
 const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com)$/i;
@@ -87,6 +101,8 @@ async function getBrowser() {
       "--no-first-run",
       "--no-zygote",
       "--disable-gpu",
+      // Internal and private names never resolve (the pages can't reach this service's private network).
+      "--host-resolver-rules=MAP *.internal ~NOTFOUND, MAP *.railway.internal ~NOTFOUND, MAP *.local ~NOTFOUND" + (TEST_ALLOW ? "" : ", MAP localhost ~NOTFOUND"),
     ],
   });
   browser.on("disconnected", () => {
@@ -98,8 +114,15 @@ async function getBrowser() {
 
 /** @type {Map<string, any>} */
 const sessions = new Map();
-const viewToken = (id) => crypto.createHmac("sha256", SECRET).update(`view:${id}`).digest("hex").slice(0, 40);
-const safeEq = (a, b) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const safeEq = (a, b) => {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+/** Live-view tokens: minted by the storefront for the chat's owner, expiring (CONTRACTS.md §3). */
+function liveTokenOk(id, exp, token) {
+  if (!SECRET || !/^\d{9,11}$/.test(exp) || Number(exp) < Date.now() / 1000) return false;
+  return safeEq(token, crypto.createHmac("sha256", SECRET).update(`live.${id}.${exp}`).digest("base64url"));
+}
 
 function hostOf(url) {
   try {
@@ -113,13 +136,19 @@ async function createSession() {
   for (const s of sessions.values()) if (Date.now() - s.lastUsed > IDLE_MS) await endSession(s, "Closed after being idle.");
   if (sessions.size >= MAX_SESSIONS) {
     // Make room by closing the session idle longest, unless the shopper is using it.
-    const oldest = [...sessions.values()].filter((s) => !s.userControl).sort((a, b) => a.lastUsed - b.lastUsed)[0];
+    const oldest = [...sessions.values()].filter((s) => !s.userControl && !s.busy).sort((a, b) => a.lastUsed - b.lastUsed)[0];
     if (!oldest) throw Object.assign(new Error("All browsers are busy. Try again in a few minutes."), { status: 503 });
     await endSession(oldest, "Closed to make room for another shopper.");
   }
   const b = await getBrowser();
   const ctx = await b.createBrowserContext();
-  const page = await ctx.newPage();
+  let page;
+  try {
+    page = await ctx.newPage();
+  } catch (e) {
+    await ctx.close().catch(() => {});
+    throw e;
+  }
   await page.setUserAgent(UA);
   await page.setViewport(VIEW);
   // No request interception (it slows every request down); instead the main page is pulled back if it ever
@@ -144,17 +173,34 @@ async function createSession() {
 
   const id = crypto.randomBytes(12).toString("hex");
   // urls: product links from the latest searches, by ASIN (opened exactly as the search result linked them).
-  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, busy: false, urls: new Map(), mode: "desktop" };
+  // controller: the one socket allowed to send input while the shopper has control. queue: their input, run in order.
+  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, controller: null, busy: false, urls: new Map(), mode: "desktop", queue: [], draining: false };
+  page.on("error", () => endSession(s, "The page crashed. Ask Neon to try again."));
   const cdp = await page.createCDPSession();
   s.cdp = cdp;
   cdp.on("Page.screencastFrame", ({ data, sessionId, metadata }) => {
+    cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
     // The frame covers the visible page; taps from the live view are mapped with its real size.
-    if (metadata?.deviceWidth) s.frame = { w: metadata.deviceWidth, h: metadata.deviceHeight };
+    if (metadata?.deviceWidth && (s.frame?.w !== metadata.deviceWidth || s.frame?.h !== metadata.deviceHeight)) {
+      s.frame = { w: metadata.deviceWidth, h: metadata.deviceHeight };
+      broadcast(s, { t: "frame-meta", w: s.frame.w, h: s.frame.h });
+    }
     const jpeg = Buffer.from(data, "base64");
     s.lastFrame = jpeg;
-    for (const ws of s.clients) if (ws.readyState === 1 && ws.bufferedAmount < 64 * 1024) ws.send(jpeg, { binary: true });
-    cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+    for (const ws of s.clients) deliverFrame(ws, jpeg, FRAME_QUEUE_BYTES);
   });
+  if (process.env.NAV_INTERCEPT !== "off") {
+    // Check every page load (main page and frames) before it's requested: the main page may only be Amazon,
+    // and nothing may load from a private address. Only documents are intercepted, so images, scripts and
+    // Amazon's own requests are untouched.
+    cdp.on("Fetch.requestPaused", ({ requestId, request, frameId }) => {
+      const host = hostOf(request.url);
+      const main = frameId === (page.mainFrame()._id ?? page.target()._targetId);
+      const blocked = !navOk(host) && (PRIVATE_HOST.test(host) || main);
+      cdp.send(blocked ? "Fetch.failRequest" : "Fetch.continueRequest", blocked ? { requestId, errorReason: "BlockedByClient" } : { requestId }).catch(() => {});
+    });
+    await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
+  }
   await startCast(s);
   page.on("framenavigated", (f) => f === page.mainFrame() && status(s));
   sessions.set(id, s);
@@ -164,6 +210,7 @@ async function createSession() {
 async function endSession(s, reason = "Closed.") {
   if (!sessions.has(s.id)) return;
   sessions.delete(s.id);
+  for (const it of s.queue.splice(0)) it.resolve?.();
   for (const ws of s.clients) {
     try {
       ws.send(JSON.stringify({ t: "ended", reason }));
@@ -176,7 +223,14 @@ async function endSession(s, reason = "Closed.") {
 async function status(s) {
   if (!s.clients.size) return;
   const needs = await needsShopper(s.page).catch(() => null);
-  const msg = JSON.stringify({ t: "status", url: s.page.url(), title: await s.page.title().catch(() => ""), control: s.userControl, needs });
+  broadcast(s, { t: "status", url: s.page.url(), title: await s.page.title().catch(() => ""), control: s.userControl, mode: s.mode, needs });
+}
+
+function reply(ws, m) {
+  if (ws?.readyState === 1) ws.send(JSON.stringify(m));
+}
+function broadcast(s, m) {
+  const msg = JSON.stringify(m);
   for (const ws of s.clients) if (ws.readyState === 1) ws.send(msg);
 }
 
@@ -192,14 +246,14 @@ async function isCaptcha(page) {
 
 /** What on the page only the shopper can get past, if anything (said to them in the chat). */
 async function needsShopper(page) {
-  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Tap Take over and get past it.";
-  if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon is asking you to sign in. Tap Take over to sign in yourself.";
+  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Get past it, then tap Done.";
+  if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon wants you to sign in. Sign in yourself (Neon never sees it), then tap Done.";
   return null;
 }
 
 /** Where the page is now, and a picture of it for Neon to look at. */
 async function snapshot(s, extra = {}) {
-  const vp = s.page.viewport() || VIEW;
+  const vp = s.mode === "phone" ? PHONE_VIEW : VIEW;
   const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null);
   const needs = await needsShopper(s.page);
   return {
@@ -226,6 +280,7 @@ async function runAction(s, a) {
     case "goto":
       return goto(s, String(a.url));
     case "tap": {
+      if (!Number.isFinite(Number(a.x)) || !Number.isFinite(Number(a.y))) throw Object.assign(new Error("Bad tap."), { status: 400 });
       const x = Math.max(0, Math.min(VIEW.width, Number(a.x)));
       const y = Math.max(0, Math.min(VIEW.height, Number(a.y)));
       await page.mouse.click(x, y, { delay: 30 });
@@ -239,9 +294,12 @@ async function runAction(s, a) {
       await page.keyboard.press(key);
       return pause(500);
     }
-    case "scroll":
-      await page.evaluate((dy) => window.scrollBy({ top: dy, behavior: "instant" }), Math.max(-3000, Math.min(3000, Number(a.dy) || 600)));
+    case "scroll": {
+      const dy = a.dy == null ? 600 : Number(a.dy);
+      if (!Number.isFinite(dy)) throw Object.assign(new Error("Bad scroll."), { status: 400 });
+      if (dy) await page.evaluate((d) => window.scrollBy({ top: d, behavior: "instant" }), Math.max(-3000, Math.min(3000, dy)));
       return pause(400);
+    }
     case "back":
       await page.goBack({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
       return pause(500);
@@ -433,11 +491,23 @@ const server = http.createServer(async (req, res) => {
     const [, id, rest = ""] = m;
     if (!id && req.method === "POST") {
       const s = await createSession();
-      return send(res, 200, { id: s.id, viewToken: viewToken(s.id) });
+      return send(res, 200, { id: s.id });
     }
     if (id && !rest && req.method === "DELETE") {
       const s = sessions.get(id);
       if (s) await endSession(s);
+      return send(res, 200, { ok: true });
+    }
+    if (id && rest === "/state" && req.method === "GET") {
+      const s = sessions.get(id);
+      if (!s) return send(res, 404, { error: "That browser session has closed." });
+      s.lastUsed = Date.now();
+      return send(res, 200, await snapshot(s));
+    }
+    if (id && rest === "/release" && req.method === "POST") {
+      const s = sessions.get(id);
+      if (!s) return send(res, 404, { error: "That browser session has closed." });
+      await releaseControl(s, "server");
       return send(res, 200, { ok: true });
     }
     if (id && req.method === "POST") {
@@ -455,70 +525,203 @@ const server = http.createServer(async (req, res) => {
     }
     send(res, 404, { error: "Not found" });
   } catch (e) {
-    send(res, e.status || 500, { error: e.status ? e.message : "The browser hit a problem." });
-    if (!e.status) console.error("[browser]", e);
+    if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : "The browser hit a problem." });
+    // Never log page contents or what the shopper typed: just the kind of failure.
+    if (!e.status) console.error("[browser]", e?.name || "Error", String(e?.message || "").replace(/https?:\/\/\S+/g, "<url>").slice(0, 200));
   }
 });
 
-// ---------- Live view ----------
+// ---------- Live view: shopper control and input ----------
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
+/** Validates one input message from the live view. Returns the step to run, or an error code. */
+function parseInput(m) {
+  switch (m?.t) {
+    case "tap": {
+      const { x, y } = m;
+      if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return null;
+      return { t: "tap", x, y };
+    }
+    case "scroll": {
+      const dy = m.dy;
+      if (typeof dy !== "number" || !Number.isFinite(dy)) return null;
+      return { t: "scroll", dy: Math.max(-4000, Math.min(4000, Math.round(dy))) };
+    }
+    case "type":
+      if (typeof m.text !== "string" || !m.text || m.text.length > 2000) return null;
+      return { t: "type", text: m.text };
+    case "key":
+      return KEYS.includes(m.key) ? { t: "key", key: m.key } : null;
+    case "back":
+      return { t: "back" };
+    default:
+      return null;
+  }
+}
+
+/** Queues shopper input: run one at a time in arrival order; consecutive scrolls not yet started are merged. */
+function enqueue(s, ws, item, n) {
+  const last = s.queue[s.queue.length - 1];
+  if (item.t === "scroll" && last?.t === "scroll" && last.ws === ws && !last.started) {
+    last.dy = Math.max(-4000, Math.min(4000, last.dy + item.dy));
+    last.ns.push(n);
+    return;
+  }
+  if (s.queue.length >= INPUT_QUEUE && item.t !== "mode") return reply(ws, { t: "error", n, code: "busy", message: "Slow down a little: the page is catching up." });
+  s.queue.push({ ...item, ws, ns: [n] });
+  drain(s);
+}
+
+/** Runs queued steps in order. A step that fails is reported, never retried (taps and typing aren't safe to repeat). */
+async function drain(s) {
+  if (s.draining) return;
+  s.draining = true;
+  try {
+    while (s.queue.length && sessions.has(s.id)) {
+      const it = s.queue[0];
+      it.started = true;
+      try {
+        await runInput(s, it);
+        for (const n of it.ns) if (it.ws && n !== undefined) reply(it.ws, { t: "ack", n });
+      } catch {
+        for (const n of it.ns) if (it.ws) reply(it.ws, { t: "error", n, code: "failed", message: "That didn't work on the page. Try again." });
+      } finally {
+        s.queue.shift();
+        it.resolve?.();
+      }
+    }
+  } finally {
+    s.draining = false;
+  }
+}
+
+async function runInput(s, it) {
+  const page = s.page;
+  s.lastUsed = Date.now();
+  if (it.t === "mode") return setMode(s, it.mode);
+  if (it.t === "tap") {
+    const f = s.frame || (s.mode === "phone" ? { w: PHONE_VIEW.width, h: PHONE_VIEW.height } : { w: VIEW.width, h: VIEW.height });
+    const x = it.x * f.w, y = it.y * f.h;
+    if (s.mode === "phone") await page.touchscreen.tap(x, y);
+    else await page.mouse.click(x, y, { delay: 30 });
+    // Tell the phone whether a text field now has focus, so it can offer the keyboard.
+    await pause(250);
+    const editing = await page
+      .evaluate(() => {
+        const el = document.activeElement;
+        return !!el && (el.isContentEditable || (el.tagName === "INPUT" && !["button", "submit", "checkbox", "radio", "image", "range", "color", "file", "reset", "hidden"].includes(el.type)) || el.tagName === "TEXTAREA");
+      })
+      .catch(() => false);
+    if (it.ws) reply(it.ws, { t: "focus", editing });
+    return;
+  }
+  if (it.t === "type") return page.keyboard.type(it.text);
+  if (it.t === "key") {
+    await page.keyboard.press(it.key);
+    return pause(120);
+  }
+  if (it.t === "scroll") {
+    if (it.dy) await page.evaluate((d) => window.scrollBy({ top: d, behavior: "instant" }), it.dy);
+    return pause(60);
+  }
+  if (it.t === "back") {
+    // Waits for the page to load inside this step, so the next tap lands on the new page.
+    await page.goBack({ waitUntil: "domcontentloaded", timeout: 20000 });
+    return pause(200);
+  }
+}
+
+/** The shopper takes control from this socket: their phone gets Amazon's phone site. */
+function takeControl(s, ws) {
+  if (s.controller && s.controller !== ws) reply(s.controller, { t: "control", on: false, by: "shopper" });
+  s.userControl = true;
+  s.controller = ws;
+  broadcast(s, { t: "control", on: true, by: "shopper" });
+  enqueue(s, null, { t: "mode", mode: "phone" }, undefined);
+  status(s).catch(() => {});
+}
+
+/** Control goes back to Neon (hand back, the socket closed, or the run resumed): drop pending input, desktop again. */
+async function releaseControl(s, by) {
+  const had = s.userControl;
+  s.userControl = false;
+  s.controller = null;
+  // Input still waiting is dropped (it was meant for the shopper's turn); the step running now finishes.
+  for (const it of s.queue.splice(s.queue[0]?.started ? 1 : 0)) {
+    for (const n of it.ns ?? []) if (it.ws && n !== undefined) reply(it.ws, { t: "error", n, code: "not_in_control", message: "Neon has the browser now." });
+    it.resolve?.();
+  }
+  if (had || s.mode !== "desktop") {
+    broadcast(s, { t: "control", on: false, by });
+    await new Promise((resolve) => {
+      s.queue.push({ t: "mode", mode: "desktop", ws: null, ns: [], resolve });
+      drain(s);
+    });
+  }
+  status(s).catch(() => {});
+}
+
+const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024, perMessageDeflate: false });
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, "http://x");
   const id = url.searchParams.get("id") || "";
-  const token = url.searchParams.get("token") || "";
   const s = url.pathname === "/live" ? sessions.get(id) : null;
-  if (!s || !SECRET || !safeEq(token.padEnd(40).slice(0, 40), viewToken(id))) {
-    socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-    return socket.destroy();
-  }
+  const deny = (code, text) => {
+    socket.write(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    socket.destroy();
+  };
+  if (!liveTokenOk(id, url.searchParams.get("exp") || "", url.searchParams.get("token") || "")) return deny(401, "Unauthorized");
+  if (ALLOWED_ORIGINS.length && !ALLOWED_ORIGINS.includes(String(req.headers.origin || ""))) return deny(403, "Forbidden");
+  if (!s) return deny(404, "Not Found");
   wss.handleUpgrade(req, socket, head, (ws) => {
     s.clients.add(ws);
     s.lastUsed = Date.now();
-    if (s.lastFrame) ws.send(s.lastFrame, { binary: true });
+    ws.alive = true;
+    ws.on("pong", () => (ws.alive = true));
+    if (s.frame) reply(ws, { t: "frame-meta", w: s.frame.w, h: s.frame.h });
+    if (s.lastFrame) deliverFrame(ws, s.lastFrame, FRAME_QUEUE_BYTES);
     status(s).catch(() => {});
-    ws.on("close", () => s.clients.delete(ws));
-    ws.on("message", async (raw, isBinary) => {
+    ws.on("close", () => {
+      s.clients.delete(ws);
+      stopDelivery(ws);
+      // The shopper's phone went away: give control back so the session isn't stuck in their hands.
+      if (s.controller === ws && sessions.has(s.id)) releaseControl(s, "shopper").catch(() => {});
+    });
+    ws.on("message", (raw, isBinary) => {
       if (isBinary || !sessions.has(s.id)) return;
       let m;
       try {
         m = JSON.parse(String(raw));
       } catch {
-        return;
+        return reply(ws, { t: "error", code: "invalid", message: "Couldn't read that." });
       }
       s.lastUsed = Date.now();
-      try {
-        if (m.t === "control") {
-          s.userControl = !!m.on;
-          status(s).catch(() => {});
-          await setMode(s, s.userControl ? "phone" : "desktop");
-          return status(s);
-        }
-        if (!s.userControl) return;
-        if (m.t === "tap") {
-          const f = s.frame || (s.mode === "phone" ? { w: PHONE_VIEW.width, h: PHONE_VIEW.height } : { w: VIEW.width, h: VIEW.height });
-          const x = Math.max(0, Math.min(1, Number(m.x))) * f.w;
-          const y = Math.max(0, Math.min(1, Number(m.y))) * f.h;
-          if (s.mode === "phone") await s.page.touchscreen.tap(x, y);
-          else await s.page.mouse.click(x, y, { delay: 30 });
-          // Tell the phone whether a text field now has focus, so it can offer the keyboard.
-          await pause(250);
-          const editing = await s.page.evaluate(() => {
-            const el = document.activeElement;
-            return !!el && (el.isContentEditable || (el.tagName === "INPUT" && !["button", "submit", "checkbox", "radio", "image", "range", "color", "file", "reset", "hidden"].includes(el.type)) || el.tagName === "TEXTAREA");
-          }).catch(() => false);
-          for (const c of s.clients) if (c.readyState === 1) c.send(JSON.stringify({ t: "focus", editing }));
-        }
-        else if (m.t === "type") await s.page.keyboard.type(String(m.text ?? "").slice(0, 500));
-        else if (m.t === "key") await runAction(s, { type: "key", key: m.key });
-        else if (m.t === "scroll") await runAction(s, { type: "scroll", dy: m.dy });
-        else if (m.t === "back") await runAction(s, { type: "back" });
-      } catch {
-        // Shopper input that fails (a blocked page, a stale element) is ignored; the next frame shows the result.
+      const n = Number.isInteger(m?.n) ? m.n : undefined;
+      if (m?.t === "control") {
+        if (m.on) takeControl(s, ws);
+        else if (s.controller === ws) releaseControl(s, "shopper").catch(() => {});
+        return n !== undefined ? reply(ws, { t: "ack", n }) : undefined;
       }
+      if (!s.userControl || s.controller !== ws) return reply(ws, { t: "error", n, code: "not_in_control", message: "Tap Take over first." });
+      const item = parseInput(m);
+      if (!item) return reply(ws, { t: "error", n, code: "invalid", message: "That input wasn't valid." });
+      enqueue(s, ws, item, n);
     });
   });
 });
+
+// Drop live-view sockets that stopped answering (a phone that went to sleep mid-connection).
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.alive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.alive = false;
+    try {
+      ws.ping();
+    } catch {}
+  }
+}, 30_000).unref();
 
 setInterval(() => {
   for (const s of sessions.values()) if (Date.now() - s.lastUsed > IDLE_MS && !s.clients.size) endSession(s, "Closed after being idle.");
