@@ -2,8 +2,9 @@
 // anything a dropshipping catalog won't have), Neon searches the web for real suppliers and shows them as
 // cards. The shopper contacts those suppliers themselves; nothing from outside goes in our cart.
 //
-// Web search runs on Anthropic's servers ($10 per 1,000 searches, plus the tokens the results add), so each
-// request is capped, and supplier cards may only link to pages the searches actually returned.
+// Web search runs on Anthropic's servers ($10 per 1,000 searches, plus the tokens the results add). Limits are
+// generous so a full brief gets sourced end to end; every reply shows what it cost. Supplier cards may only
+// link to pages the searches actually returned.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { SupplierCard } from "@/lib/flights-shared";
@@ -13,16 +14,17 @@ export function webSourcingEnabled(): boolean {
   return (process.env.SOURCING_WEB?.trim().toLowerCase() || "on") !== "off";
 }
 
-// Per API request. A big brief takes one or two requests, so a turn stays around a dozen searches.
-const MAX_SEARCHES = 6;
-const MAX_FETCHES = 4;
-const MAX_SUPPLIERS = 12;
+// Per API request (a turn can run several). Override with SOURCING_MAX_SEARCHES / SOURCING_MAX_FETCHES.
+const num = (v: string | undefined, d: number) => (Number(v) > 0 ? Math.floor(Number(v)) : d);
+const MAX_SEARCHES = num(process.env.SOURCING_MAX_SEARCHES, 25);
+const MAX_FETCHES = num(process.env.SOURCING_MAX_FETCHES, 15);
+const MAX_SUPPLIERS = 30;
 
 /** Anthropic's web tools, for planner models that support dynamic filtering (Sonnet/Opus 4.6 and later). */
 export function webTools(): Anthropic.Beta.BetaToolUnion[] {
   return [
     { type: "web_search_20260209", name: "web_search", max_uses: MAX_SEARCHES },
-    { type: "web_fetch_20260209", name: "web_fetch", max_uses: MAX_FETCHES, max_content_tokens: 8000 },
+    { type: "web_fetch_20260209", name: "web_fetch", max_uses: MAX_FETCHES, max_content_tokens: 20000 },
   ];
 }
 
@@ -59,8 +61,8 @@ export const SUPPLIER_TOOL: Anthropic.Beta.BetaTool = {
 export function sourcingPrompt(): string {
   return `
 Sourcing outside the catalog:
-- Always search this catalog first with find_products. If it has nothing that fits, or the request is something a dropshipping catalog won't carry (industrial machinery, custom tooling or dies, raw materials by the tonne, made-to-order parts), find real suppliers on the web with web_search, then call show_suppliers with the best ones. Prefer manufacturers and factories (company sites, Alibaba, Made-in-China, Global Sources, 1688) over resellers, and look for 2-3 per item.
-- Use web_fetch only to read a promising supplier or spec page from your results. Keep searches focused: one or two per item, in English, adding the Chinese keyword the shopper gives when it helps.
+- Always search this catalog first with find_products. If it has nothing that fits, or the request is something a dropshipping catalog won't carry (industrial machinery, custom tooling or dies, raw materials by the tonne, made-to-order parts), find real suppliers on the web with web_search, then call show_suppliers with the best ones. Prefer manufacturers and factories (company sites, Alibaba, Made-in-China, Global Sources, 1688) over resellers, and find 2-3 per item.
+- Source the whole request, not a sample: every machine, tool, material, consumable and service it lists gets its own suppliers. Search as much as you need, in English and with the Chinese keyword the shopper gives, and use web_fetch to read supplier and spec pages for the details that matter (specs, price, MOQ, lead time, location). Call show_suppliers once per item as you go.
 - Only show suppliers and facts the pages actually state: name, what they make, specs, location, price and MOQ as listed. Never invent prices, stock, specs, lead times or contact details. If a spec the shopper needs (tonnage, stroke, daylight, voltage) isn't on the page, say it has to be confirmed with the supplier.
 - Make clear these are outside suppliers we haven't vetted: the shopper contacts them for a quote and buys from them directly; they can't go in this cart. For large purchases, suggest a sample or video call, third-party inspection before shipping, a trade-assurance or escrow payment and clear Incoterms (FOB or CIF).
 - For a full brief (a production line, a bill of materials), answer item by item: suppliers per item, then a short request-for-quote message the shopper can send (the exact specs to ask for), then anything else they asked for. When you estimate weight, volume (CBM) or which container fits, show your assumptions and call it an estimate; say heavy presses usually ship on a flat rack or open top and that the supplier quotes the packed size.
