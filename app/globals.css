@@ -2160,3 +2160,30 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-browser.is-full .cx-browser-screen img { touch-action: none; }
 .cx-browser.is-full .cx-browser-bar { padding: 10px 12px; }
 .cx-browser-keys input.is-editing { border-color: #7b4dff; box-shadow: 0 0 0 3px rgb(123 77 255 / 0.3); }
+/* Live browser on a canvas (newest frame wins), connection state, and the required take-over (Done — continue). */
+.cx-browser-canvas { display: block; width: 100%; height: auto; max-height: min(62vh, 520px); object-fit: contain; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.cx-browser.is-full .cx-browser-canvas { width: 100%; height: 100%; max-height: none; object-fit: contain; touch-action: none; cursor: pointer; }
+.cx-browser.is-ended .cx-browser-canvas { filter: grayscale(0.6) brightness(0.7); }
+.cx-browser-conn { position: absolute; inset: auto 12px 12px; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: rgb(15 13 22 / 0.85); color: #eeeaf7; font: 500 13px/1.3 var(--im-font, inherit); text-align: center; }
+.cx-browser-conn:disabled { cursor: default; }
+.cx-browser-conn:not(:disabled) { cursor: pointer; text-decoration: underline; }
+.cx-browser-toast { position: absolute; inset: 12px 12px auto; padding: 8px 10px; border-radius: 10px; background: rgb(23 20 31 / 0.92); color: #fff; font: 600 13px/1.3 var(--im-font, inherit); text-align: center; pointer-events: none; }
+.cx-browser-turn p { margin: 0; outline: none; }
+.cx-browser-turn.cx-browser-required { background: #fff4d6; color: #5a4300; }
+.cx-browser.is-required { border-color: #f5b400; }
+.cx-browser.is-full { top: 0; }
+.cx-browser-done { min-height: 48px; border: 0; border-radius: 12px; background: #f5b400 !important; color: #17141f !important; font: 700 16px/1 var(--im-font, inherit) !important; cursor: pointer; }
+.cx-browser-done:disabled { opacity: 0.7; cursor: progress; }
+.cx-browser-done-error { margin: 0; color: #ffb4b4; font: 600 13px/1.35 var(--im-font, inherit); text-align: center; }
+.cx-browser-row button, .cx-browser-take { min-height: 44px; }
+.cx-browser-take { min-height: 36px; }
+.cx-browser-note-inline { margin: 6px 2px 0; color: var(--im-muted, #6b6578); font: 500 13px/1.35 var(--im-font, inherit); }
+@media (prefers-reduced-motion: reduce) { .cx-browser, .cx-browser * { transition: none !important; animation: none !important; } }
+@media (orientation: landscape) and (max-height: 500px) { .cx-browser.is-full .cx-browser-keys { grid-template-columns: 1fr auto; align-items: center; } .cx-browser.is-full .cx-browser-turn { padding: 6px 10px; } }
+
+/* ---- run states (chat) ---- */
+.cx-failed { margin-top: 4px; color: var(--err); font-size: 12.5px; text-align: right; }
+.cx-failed-retry { border: 0; background: none; padding: 6px 2px; min-height: 32px; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.cx-failed-retry:disabled { opacity: 0.5; cursor: default; }
+.cx-run-conn { align-self: center; border: 0; border-radius: 99px; padding: 8px 14px; min-height: 36px; background: var(--im-gray, #E9E9EB); color: var(--im-muted, #6b6578); font: 500 13px/1.2 var(--im-font, inherit); }
+.cx-run-conn.is-offline { cursor: pointer; color: var(--err); text-decoration: underline; }

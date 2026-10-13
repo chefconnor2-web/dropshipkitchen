@@ -70,8 +70,11 @@ async function setMode(s, mode) {
     // Reload so Amazon serves its phone layout (not after a form post, which a reload would resend).
     if (/^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
   } else {
+    // Back to the desktop browser without a reload (page.setViewport reloads when the mobile/touch emulation
+    // changes, which would throw away what the shopper just did on the page). Neon's next step navigates anyway.
     await page.setUserAgent(UA);
-    await page.setViewport(VIEW);
+    await s.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false }).catch(() => {});
+    await s.cdp.send("Emulation.setDeviceMetricsOverride", { width: VIEW.width, height: VIEW.height, deviceScaleFactor: 1, mobile: false });
     await startCast(s);
   }
 }
@@ -250,7 +253,7 @@ async function needsShopper(page) {
 
 /** Where the page is now, and a picture of it for Neon to look at. */
 async function snapshot(s, extra = {}) {
-  const vp = s.page.viewport() || VIEW;
+  const vp = s.mode === "phone" ? PHONE_VIEW : VIEW;
   const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null);
   const needs = await needsShopper(s.page);
   return {

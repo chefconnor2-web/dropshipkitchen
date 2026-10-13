@@ -83,10 +83,15 @@ function follow(fetchImpl: FetchLike, extra: { after?: number; backoffMs?: numbe
 }
 
 test("frames split at awkward boundaries arrive once, in order", async () => {
-  const frames: RunFrame[] = [snap(), text(1, "Hé"), text(2, "llo 🔥 "), { type: "event", seq: 3, event: { type: "react", emoji: "👍" } }, text(4, "world"), { type: "status", seq: 5, status: "completed", error: null }, done(6, "Héllo 🔥 world")].map(
-    (f) => (f.type === "snapshot" ? { type: "snapshot", seq: 0, run: f as unknown as RunSnapshot } : f),
-  ) as RunFrame[];
-  frames[0] = { type: "snapshot", seq: 0, run: snap() };
+  const frames: RunFrame[] = [
+    { type: "snapshot", seq: 0, run: snap() },
+    text(1, "Hé"),
+    text(2, "llo 🔥 "),
+    { type: "event", seq: 3, event: { type: "react", emoji: "👍" } },
+    text(4, "world"),
+    { type: "status", seq: 5, status: "completed", error: null },
+    done(6, "Héllo 🔥 world"),
+  ];
   // A ping comment and CRLF line endings in the middle, as proxies sometimes rewrite them.
   const wire = formatSse(frames[0]) + ": ping\n\n" + frames.slice(1, 3).map(formatSse).join("").replace(/\n/g, "\r\n") + frames.slice(3).map(formatSse).join("");
   const urls: string[] = [];
