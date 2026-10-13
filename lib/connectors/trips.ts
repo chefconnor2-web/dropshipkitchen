@@ -160,11 +160,17 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
     }
     // They may have connected Gmail while it waited.
     card = await draft();
+    // A test send (the shopper had it sent to themselves): the received copy says where it would really go.
+    const test = card.foundAddress ? `[Test: real recipient ${card.foundAddress}] ` : "";
+    const outSubject = test ? `${test}${subject}` : subject;
+    const outBody = test
+      ? `TEST COPY. In real use this email goes to the hotel's front desk: ${card.foundAddress}${card.foundAt ? ` (found on ${card.foundAt})` : ""}.\n\n${body}`
+      : body;
     try {
       if (card.from) {
-        await sendFromGmail(owner, { to: [to], subject, text: body });
+        await sendFromGmail(owner, { to: [to], subject: outSubject, text: outBody });
       } else {
-        const log = await sendEmail({ to, cc: card.cc, replyTo: shopperEmail ?? undefined, subject, text: body, html: body.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!).replace(/\n/g, "<br>"), kind: "neon_email" });
+        const log = await sendEmail({ to, cc: card.cc, replyTo: shopperEmail ?? undefined, subject: outSubject, text: outBody, html: outBody.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!).replace(/\n/g, "<br>"), kind: "neon_email" });
         if (log.status !== "sent") throw new Error("The store's email couldn't send it.");
       }
     } catch (e) {
