@@ -337,7 +337,17 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function goto(s, url, page = s.page) {
   if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon and Discover Cars pages can be opened."), { status: 400 });
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  // Amazon gets the long wait (its first load is slow); other sites fail fast so Neon can fall back.
+  const amazon = /(^|\.)amazon\./i.test(hostOf(url));
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: amazon ? 30000 : 15000 });
+  } catch (e) {
+    log("goto failed:", hostOf(url), e?.name || "Error");
+    // Stop the half-loaded page, so the next look at it (a screenshot, the title) answers at once.
+    if (page === s.page) await s.cdp?.send("Page.stopLoading").catch(() => {});
+    else await page.evaluate(() => window.stop()).catch(() => {});
+    throw e;
+  }
 }
 
 async function runAction(s, a) {

@@ -291,7 +291,28 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const dropoffTime = TIME.test(str(input.dropoff_time, 5)) ? str(input.dropoff_time, 5) : "";
       ctx.progress("Opening Discover Cars…");
       const url = discoverCarsUrl({ countryCode: s.countryCode, city: s.city, airport: s.airport });
-      let { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "goto", url }, { type: "wait", ms: 600 }], signal), signal);
+      // If Discover Cars won't load in our browser (slow, or blocking it), don't struggle: show the link card.
+      const fallback = async (why: string): Promise<ToolResult> => {
+        const card: CarRentalCard = { kind: "car", id: carId(s.location, s.pickup, s.dropoff), location: s.location, pickup: s.pickup, dropoff: s.dropoff, url };
+        ctx.show("", [card]);
+        return {
+          content: JSON.stringify({
+            shown_as_card: "Find a car",
+            why,
+            tell_the_shopper: `Discover Cars didn't load in your browser just now, so tap Find a car: it opens Discover Cars in their own browser for ${s.location}, where they enter ${s.pickup} to ${s.dropoff}, pick the cheapest car with full-to-full fuel, and book. Don't try the live browser again for this car.`,
+          }),
+        };
+      };
+      let opened: { result: Awaited<ReturnType<typeof browserApi.act>>; session: { id: string } };
+      try {
+        opened = await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "goto", url }, { type: "wait", ms: 600 }], signal), signal);
+      } catch (e) {
+        if (signal.aborted) throw e;
+        return fallback(e instanceof Error ? e.message : "it didn't load");
+      }
+      let { result: p } = opened;
+      const { session } = opened;
+      if (!/discovercars/i.test(p.url) && !/^http:\/\/127\.0\.0\.1/.test(p.url)) return fallback("the page didn't open");
       ctx.show("Live browser", [liveCard(session.id)]);
       if (p.needsShopper) {
         const after = await handOver(session.id, "captcha", "Discover Cars wants to check you're not a robot. Get past it, then tap Approve & next.");
@@ -411,7 +432,8 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       const dropoff = str(input.dropoff_date, 10);
       if (!location || !isDate(pickup) || !isDate(dropoff) || dropoff < pickup) return { content: "Give the place and the pick-up and drop-off dates (YYYY-MM-DD).", isError: true };
       const sessionId = await chatBrowserId(ctx.chatId);
-      const page = sessionId ? await browserApi.state(sessionId, signal).catch(() => null) : null;
+      // A quick look only: if the page is stuck, fall back to Discover Cars' own page for the link.
+      const page = sessionId ? await Promise.race([browserApi.state(sessionId, signal).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 6000))]) : null;
       const url = continueUrl(page?.url, discoverCarsUrl());
       const pk = input.pick && typeof input.pick === "object" ? (input.pick as Record<string, unknown>) : null;
       const pick = pk && str(pk.car, 80) && str(pk.price, 60) ? { car: str(pk.car, 80), price: str(pk.price, 60), ...(str(pk.supplier, 60) ? { supplier: str(pk.supplier, 60) } : {}), ...(str(pk.why, 140) ? { why: str(pk.why, 140) } : {}) } : undefined;
