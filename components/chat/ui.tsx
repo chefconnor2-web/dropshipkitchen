@@ -126,9 +126,9 @@ export const EXAMPLES = [
 
 /** A one-tap test of the trip + hotel-hold email flow: Neon finds the front desk's address but emails the tester. */
 export const HOTEL_EMAIL_TEST = {
-  label: "🧪 Test: flight + hotel + package held at the front desk",
+  label: "🧪 Test: Prime package, flight + hotel, front desk holds it",
   prompt:
-    "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land. Also find a phone charger on Amazon and have it shipped to that hotel. Once I've booked, find the hotel's front desk email on the hotel's own website, then write them an email with my flight number, arrival time and the package's estimated delivery date, asking them to hold it at the front desk until I check in. This is a test: don't send it to the hotel. Send it to chefconnor2@gmail.com instead, and show me the front desk address you found and where you found it.",
+    "First find a phone charger on Amazon with Prime and add it to the cart, and tell me its estimated delivery date. Then book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land. Once I've booked, give me the Check out on Amazon link with the hotel as the shipping address. Then find the hotel's front desk email on the hotel's own website and write them an email with my flight number, arrival time and the package's estimated delivery date, asking them to hold it at the front desk until I check in. This is a test: don't send it to the hotel. Send it to chefconnor2@gmail.com instead, and show me the front desk address you found and where you found it.",
 };
 
 /** iMessage-style timestamp: "Today 2:14 PM", "Yesterday 9:02 AM", "Monday 9:02 AM", "Oct 3, 2026 at 9:02 AM". */
