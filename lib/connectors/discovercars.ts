@@ -68,7 +68,6 @@ Rental cars:
     {
       name: "rental_car_link",
       description: "Show a rental car card for a pickup place and dates, with a button to compare and book cars on Discover Cars.",
-      strict: true,
       input_schema: {
         type: "object",
         properties: {

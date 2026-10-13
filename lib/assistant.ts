@@ -218,12 +218,13 @@ export async function pickReaction(text: string, hasImage: boolean): Promise<{ e
   }
 }
 
+// No `strict` on the planner's tools: with connectors (flights, hotels, cars, Amazon) the combined grammar grows
+// past the API's limit ("compiled grammar is too large"). Every tool checks its own input instead.
 const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "find_products",
     description:
       "Send scouts to search the live catalog (millions of products shipped from China) for several parts at once, in parallel. Returns up to 3 shortlisted products per part, each with pid, title, starting price in USD and a note on fit.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -253,7 +254,6 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "get_product",
     description: "Load one product's purchasable options (variants) with each option's variant_id, price, stock and the description. Call before add_to_cart.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { pid: { type: "string", description: "The pid from find_products" } },
@@ -264,7 +264,6 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "add_to_cart",
     description: "Add a product option to the shopper's cart. Stock is re-checked live; the result says whether it worked.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -278,7 +277,6 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "propose_kit",
     description: "Show the shopper a kit card: one recommended product per part, with quantities and an 'Add entire kit' button. Use pids from find_products only.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -305,7 +303,6 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "add_kit",
     description: "Add several products to the cart in one go (the whole kit). Each item's best-matching option is picked from its option hint; stock is checked live. Returns what was added and what failed.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { items: {
@@ -330,13 +327,11 @@ const PLANNER_TOOLS: Anthropic.Beta.BetaTool[] = [
     name: "show_personalized_products",
     description:
       "List the products this store prints with the shopper's own photo or text, and show them as cards the shopper taps to design. Returns each product's pid, title, starting price and whether it takes a photo, text or both.",
-    strict: true,
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   {
     name: "view_cart",
     description: "Show what is in the shopper's cart now, with quantities and the subtotal.",
-    strict: true,
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
 ];

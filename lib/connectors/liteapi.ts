@@ -74,7 +74,6 @@ Hotels:
     {
       name: "find_hotels",
       description: "Search live hotel rates in a city for the dates. Returns up to 6 picks (cheapest, best rated, good value) with offer_id, total for the stay (our fee included), per-night price, room, meals and refundability. The shopper sees them as hotel cards with a Book button.",
-      strict: true,
       input_schema: {
         type: "object",
         properties: {
