@@ -27,7 +27,8 @@ import { SUPPLIER_TOOL, parseSuppliers, seenPages, sourcingPrompt, webSourcingEn
 export const MODEL = process.env.ASSISTANT_MODEL?.trim() || "claude-sonnet-5-5";
 const SCOUT_MODEL = process.env.ASSISTANT_SCOUT_MODEL?.trim() || "claude-haiku-4-5";
 export const EFFORT = (process.env.ASSISTANT_EFFORT?.trim() || "medium") as "low" | "medium" | "high";
-const MAX_TOOL_ROUNDS = 8;
+// A full sourcing brief needs many search-and-show rounds; ASSISTANT_MAX_ROUNDS overrides.
+const MAX_TOOL_ROUNDS = Number(process.env.ASSISTANT_MAX_ROUNDS) > 0 ? Math.floor(Number(process.env.ASSISTANT_MAX_ROUNDS)) : 24;
 const MAX_SCOUT_ROUNDS = 3;
 // CJ answers one search at a time (~1 req/s), so every extra search is felt by the shopper.
 const MAX_SCOUT_SEARCHES = 2;
@@ -39,6 +40,11 @@ export const MAX_MESSAGE_CHARS = 8000;
 
 /** The planner can search the web for suppliers (dynamic-filtering web tools need Sonnet/Opus 4.6 or later). */
 const webSourcing = () => webSourcingEnabled() && !MODEL.startsWith("claude-haiku");
+
+/** Each reply shows its cost underneath unless SHOW_AI_COST=off (e.g. once real customers use it). */
+export function showAiCost(): boolean {
+  return (process.env.SHOW_AI_COST?.trim().toLowerCase() || "on") !== "off";
+}
 
 export function assistantConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY?.trim();
@@ -64,7 +70,17 @@ export type UiEntry =
       /** What the agent thought and did on the way to this reply, and how long it took (the chat's "Thought for 6s"). */
       trace?: TraceItem[];
       thoughtMs?: number;
+      /** What this reply cost us (all models, web searches), shown under it while SHOW_AI_COST isn't "off". */
+      cost?: ReplyCost;
     };
+
+export interface ReplyCost {
+  micros: number;
+  inputTokens: number;
+  outputTokens: number;
+  webSearches: number;
+  webFetches: number;
+}
 
 /** One line of the agent's visible work: a summary of its reasoning, or a step it took. */
 export interface TraceItem {
@@ -715,6 +731,7 @@ export async function chatTurn(
   };
   const client = new Anthropic();
   const usage = { in: 0, out: 0, micros: 0 };
+  const webUse = { searches: 0, fetches: 0 };
   const known = new Map<string, ProductCard>();
   for (const e of ui) if (e.role === "assistant") for (const c of e.cards) known.set(c.pid, c);
   const seen = new Set<string>();
@@ -730,7 +747,7 @@ export async function chatTurn(
     // Stream so the shopper sees the answer being written; finalMessage() gives the complete turn.
     const stream = client.beta.messages.stream({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 32000,
       system: systemPrompt() + (input.voice ? VOICE_NOTE : ""),
       tools: [...PLANNER_TOOLS, ...connectorTools(), ...(web ? [SUPPLIER_TOOL, ...webTools()] : [])],
       cache_control: { type: "ephemeral" },
@@ -758,6 +775,8 @@ export async function chatTurn(
     const response = await stream.finalMessage();
     usage.in += response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0);
     usage.out += response.usage.output_tokens;
+    webUse.searches += response.usage.server_tool_use?.web_search_requests ?? 0;
+    webUse.fetches += response.usage.server_tool_use?.web_fetch_requests ?? 0;
     // Priced by the model that actually answered (a refusal fallback can switch it).
     usage.micros += costMicros(response.model, response.usage);
     messages.push({ role: "assistant", content: response.content });
@@ -807,10 +826,11 @@ export async function chatTurn(
     cards: ctx.cards.slice(0, 30),
     added: ctx.added,
     ...(ctx.kit ? { kit: ctx.kit } : {}),
-    ...(ctx.items.length ? { items: ctx.items.slice(0, 18) } : {}),
+    ...(ctx.items.length ? { items: ctx.items.slice(0, 90) } : {}),
     ...(trace.length ? { trace: trace.map((t) => ({ kind: t.kind, text: t.text.trim() })).filter((t) => t.text) } : {}),
     thoughtMs: Date.now() - startedAt,
     at: new Date().toISOString(),
+    ...(showAiCost() ? { cost: { micros: usage.micros, inputTokens: usage.in, outputTokens: usage.out, webSearches: webUse.searches, webFetches: webUse.fetches } } : {}),
   };
   ui.push(
     { role: "user", text, ...(images.length ? { images: images.map((i) => i.id) } : {}), ...(reaction.emoji ? { reaction: reaction.emoji } : {}), at: sentAt },

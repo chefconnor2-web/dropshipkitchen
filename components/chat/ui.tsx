@@ -59,7 +59,22 @@ export type BotEntry = {
   /** Saved with the reply: what the agent thought and did, and for how long. */
   trace?: TraceItem[];
   thoughtMs?: number;
+  cost?: { micros: number; inputTokens: number; outputTokens: number; webSearches: number; webFetches: number };
 };
+
+/** "$0.142 · 38.2k in / 4.1k out · 9 searches · 3 pages", what one reply cost. */
+export function costLine(c: NonNullable<BotEntry["cost"]>): string {
+  const usd = c.micros / 1_000_000;
+  const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+  return [
+    `$${usd < 0.01 ? usd.toFixed(4) : usd < 1 ? usd.toFixed(3) : usd.toFixed(2)}`,
+    `${k(c.inputTokens)} in / ${k(c.outputTokens)} out`,
+    c.webSearches ? `${c.webSearches} search${c.webSearches === 1 ? "" : "es"}` : "",
+    c.webFetches ? `${c.webFetches} page${c.webFetches === 1 ? "" : "s"} read` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
 export type UserEntry = { role: "user"; text: string; images?: string[]; reaction?: string; at?: string };
 export type Entry = UserEntry | BotEntry;

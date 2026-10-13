@@ -30,6 +30,7 @@ import {
   StopIcon,
   WaveIcon,
   XIcon,
+  costLine,
   groupCards,
   readNdjson,
   showStamp,
@@ -830,6 +831,7 @@ export default function Chat({
                         )}
                       </div>
                     </div>
+                    {e.cost && <div className="cx-cost">{costLine(e.cost)}</div>}
                   </div>
                 </div>
               ),
