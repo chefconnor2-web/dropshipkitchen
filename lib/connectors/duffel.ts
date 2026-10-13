@@ -77,7 +77,6 @@ Flights:
     {
       name: "find_places",
       description: "Look up airports and cities by name. Returns IATA codes (airports and city codes covering several airports).",
-      strict: true,
       input_schema: {
         type: "object",
         properties: { query: { type: "string", description: "A city or airport name, e.g. 'Vancouver', 'Tokyo Haneda'" } },
@@ -88,7 +87,6 @@ Flights:
     {
       name: "find_flights",
       description: `Search live flights, several searches at once in parallel (up to ${MAX_SEARCHES}). Returns up to 3 picks per search (best, cheapest, fastest) with offer_id, airline, price (our fee included), times, stops and bags. The shopper sees them as flight cards.`,
-      strict: true,
       input_schema: {
         type: "object",
         properties: {
@@ -132,7 +130,6 @@ Flights:
     {
       name: "get_flight",
       description: "Re-check one flight offer now: current price, refund and change rules, and extra bag prices.",
-      strict: true,
       input_schema: {
         type: "object",
         properties: { offer_id: { type: "string", description: "offer_id from find_flights" } },
