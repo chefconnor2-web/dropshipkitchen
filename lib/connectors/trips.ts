@@ -186,8 +186,12 @@ export const tripsConnector: Connector = {
   enabled: () => gmailConfigured() || emailConfigured(),
   prompt: () => `
 Trips and email:
-- When the shopper wants a package sent to where they're staying (e.g. "send this to my hotel" alongside a flight and hotel), do it in order: find the flight; find a hotel whose check-in date is on or before the flight's arrival date (and that's open when they land); find the Amazon item and finish with the Check out on Amazon link, telling them to ship it to the hotel's address as "<their name>, guest arriving <date>, c/o <hotel name>, <hotel address>" and noting Amazon's estimated delivery date from your add results (say it's an estimate; it depends on the address they enter).
-- They book and pay for the flight and hotel themselves with the cards' Book buttons. When they say they've booked, call trip_bookings, then find the hotel's front desk email on the hotel's own website (web search), and call send_email with a short, polite note from them: their name, booking confirmation, flight number and arrival time, that a package from Amazon is due around <date>, and a request to hold it at the front desk until they check in. It's sent only after they approve it in the chat.
+- When the shopper wants a package sent to where they're staying (e.g. "send this to my hotel" alongside a flight and hotel), do it in this order:
+  1. Amazon first: find the item (Prime only, unless nothing fits) and add it to the cart, so you have Amazon's estimated delivery date from your add results (say it's an estimate; it depends on the address they enter).
+  2. Then the flight.
+  3. Then a hotel whose check-in date is on or before the flight's arrival date (and that's open when they land).
+  4. They book and pay for the flight and hotel themselves with the cards' Book buttons. When they say they've booked, call trip_bookings, then finish the Amazon order with the Check out on Amazon link, telling them to ship it to the hotel's address as "<their name>, guest arriving <date>, c/o <hotel name>, <hotel address>".
+  5. Last, the email: find the hotel's front desk email on the hotel's own website (web search) and call send_email with a short, polite note from them: their name, booking confirmation, flight number and arrival time, that a package from Amazon is due around <date>, and a request to hold it at the front desk until they check in. It's sent only after they approve it in the chat.
 - If the shopper asks you to send it to another address instead (say, their own, to test), still find the front desk's address first, then call send_email with to = their address, found_address = the front desk's and found_at = the site you found it on; the draft shows both. Mention the front desk address in your reply too.
 - Never invent an email address, a booking, a time or a delivery date: use only what the tools returned.`,
   tools: TOOLS,
