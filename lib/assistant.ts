@@ -909,6 +909,7 @@ export async function chatTurn(
       calls.map(async (c) => {
         try {
           const r = await runTool(c.name, c.input as Record<string, unknown>, ctx);
+          if (r.micros) usage.micros += r.micros;
           return { type: "tool_result" as const, tool_use_id: c.id, content: r.content, ...(r.isError ? { is_error: true } : {}) };
         } catch (e) {
           if (signal.aborted) throw e;
