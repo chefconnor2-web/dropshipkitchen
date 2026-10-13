@@ -21,6 +21,7 @@ import { costMicros } from "@/lib/ai-cost";
 import { warehouseLabel, warehousesFrom } from "@/lib/warehouses";
 import { connectorFor, connectorPrompt, connectorTools } from "@/lib/connectors";
 import type { ConnectorItem } from "@/lib/flights-shared";
+import { MAX_MESSAGE_CHARS } from "@/lib/limits";
 import { SUPPLIER_TOOL, parseSuppliers, seenPages, sourcingPrompt, webSourcingEnabled, webTools } from "@/lib/sourcing";
 
 // Planner: Claude Sonnet 5.5 ($2 / $10 per MTok) at medium effort. Scouts: Claude Haiku 4.5 ($1 / $5).
@@ -35,8 +36,8 @@ const MAX_SCOUT_SEARCHES = 2;
 const MAX_PARTS = 8;
 const SCOUT_CONCURRENCY = 5;
 const MAX_USER_TURNS = 40;
-// Room for a pasted brief (a bill of materials, a sourcing spec), not just a chat line.
-export const MAX_MESSAGE_CHARS = 8000;
+// Room for a pasted brief, spec sheet or whole document, not just a chat line.
+export { MAX_MESSAGE_CHARS };
 
 /** The planner can search the web for suppliers (dynamic-filtering web tools need Sonnet/Opus 4.6 or later). */
 const webSourcing = () => webSourcingEnabled() && !MODEL.startsWith("claude-haiku");
