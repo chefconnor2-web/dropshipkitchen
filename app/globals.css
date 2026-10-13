@@ -2113,3 +2113,30 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-add-menu small { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--im-sub, var(--muted)); }
 .cx-add-ic { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #5a35a8; color: #fff; font-size: 17px; }
 @media (prefers-reduced-motion: reduce) { .cx-add-menu { animation: none; } }
+/* Live browser card (components/chat/BrowserView.tsx). */
+.cx-browser { flex: 0 0 auto; width: min(100%, 330px); display: grid; gap: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--im-line, #E4DFD5); background: #0f0d16; box-shadow: 0 10px 30px rgba(21, 23, 26, 0.12); }
+.cx-browser.is-control { border-color: #7b4dff; box-shadow: 0 0 0 2px rgb(123 77 255 / 0.35), 0 10px 30px rgba(21, 23, 26, 0.12); }
+.cx-browser-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #17141f; color: #eeeaf7; font: 500 13px/1 var(--im-font, inherit); }
+.cx-browser-dot { width: 8px; height: 8px; border-radius: 50%; background: #6b6578; flex: none; }
+.cx-browser-dot.is-live { background: #ff4d6d; box-shadow: 0 0 0 0 rgb(255 77 109 / 0.6); animation: cx-live 1.6s ease-out infinite; }
+@keyframes cx-live { 70% { box-shadow: 0 0 0 7px rgb(255 77 109 / 0); } 100% { box-shadow: 0 0 0 0 rgb(255 77 109 / 0); } }
+.cx-browser-host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
+.cx-browser-take { flex: none; border: 0; border-radius: 99px; padding: 6px 11px; background: #fff; color: #17141f; font: 600 12.5px/1 var(--im-font, inherit); cursor: pointer; }
+.cx-browser-take.is-on { background: #7b4dff; color: #fff; }
+.cx-browser-turn { padding: 8px 10px; background: #fff4d6; color: #5a4300; font: 600 13px/1.35 var(--im-font, inherit); }
+.cx-browser-screen { position: relative; min-height: 220px; background: #0f0d16; display: grid; place-items: center; overflow: hidden; }
+/* The image keeps the frame's own shape so a tap lands where the finger is. */
+.cx-browser-screen img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-select: none; }
+.cx-browser.is-control .cx-browser-screen img { cursor: pointer; }
+.cx-browser-wait, .cx-browser-closed { position: absolute; inset: auto 12px 12px; color: #eeeaf7; font: 500 13px/1.3 var(--im-font, inherit); text-align: center; }
+.cx-browser-closed { padding: 8px; border-radius: 10px; background: rgb(15 13 22 / 0.8); }
+.cx-browser.is-ended .cx-browser-screen img { filter: grayscale(0.6) brightness(0.7); }
+.cx-browser-keys { display: grid; gap: 8px; padding: 10px; background: #17141f; }
+.cx-browser-keys form { display: flex; gap: 6px; }
+.cx-browser-keys input { flex: 1; min-width: 0; border: 1px solid #3a3448; border-radius: 10px; padding: 9px 10px; background: #0f0d16; color: #eeeaf7; font: 16px/1.2 var(--im-font, inherit); }
+.cx-browser-keys button { border: 0; border-radius: 10px; padding: 9px 11px; background: #2a2537; color: #eeeaf7; font: 600 13px/1 var(--im-font, inherit); cursor: pointer; }
+.cx-browser-keys form button { background: #7b4dff; color: #fff; }
+.cx-browser-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.cx-browser-row button { flex: 1; }
+.cx-browser-note { margin: 0; color: #a49eb5; font-size: 11.5px; line-height: 1.35; }
+@media (prefers-reduced-motion: reduce) { .cx-browser-dot.is-live { animation: none; } }
