@@ -3,8 +3,9 @@
 // in. Every so often while he thinks, and the whole time he's searching, he splits into three little copies of
 // himself that circle him like planets, then melt back in.
 //
-// The goo is an SVG filter on a layer of plain dark shapes under the drawings: blur, then a sharp alpha cutoff,
-// so shapes that come close melt together. The drawings sit on top and hide the shapes under them.
+// One character: the drops are pieces of Neon himself. The goo is an SVG filter on a layer of shapes in his own
+// body color under him (blur, then a sharp alpha cutoff, so shapes that come close melt together); each drop
+// also wears his artwork on top, so what leaves him looks like him, not a separate purple blob.
 
 import { useId } from "react";
 import AgentBlob from "./AgentBlob";
@@ -27,7 +28,7 @@ export default function LavaBlob({ size = 30, split = false, nudge = 0, label }:
           <feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -9" />
         </filter>
       </svg>
-      <span className="lava-goo" style={{ filter: `url(#goo${id}) drop-shadow(0 0 ${Math.max(2, Math.round(size / 9))}px rgb(168 120 255 / 0.8))` }}>
+      <span className="lava-goo" style={{ filter: `url(#goo${id})` }}>
         <i className="lava-core" />
         <i className="lava-drop d1" />
         <i className="lava-drop d2" />
@@ -37,6 +38,11 @@ export default function LavaBlob({ size = 30, split = false, nudge = 0, label }:
             <i className="lava-moon" />
           </span>
         ))}
+      </span>
+      <span className="lava-skin" aria-hidden>
+        <i className="lava-drop d1" />
+        <i className="lava-drop d2" />
+        <i className="lava-drop d3" />
       </span>
       <span className="lava-lead">
         <AgentBlob size={size} mood="thinking" nudge={nudge} />
