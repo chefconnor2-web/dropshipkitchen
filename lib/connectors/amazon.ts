@@ -17,10 +17,24 @@ import type { Connector, ConnectorContext, ToolResult } from "./types";
 
 const str = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
-async function amazonDomain(): Promise<string> {
-  const to = await getShipTo().catch(() => ({ country: "CA" }));
-  return to.country === "CA" ? "amazon.ca" : "amazon.com";
+/**
+ * Where this chat's Amazon order goes: a place Neon set for it (e.g. the hotel, with amazon_set_location), else
+ * the shopper's ship-to (their saved address). Picks the Amazon site and the "Deliver to" postal code.
+ */
+const chatPlaces = processSingleton("amazon-chat-places", () => new Map<string, { postal: string; country: string; label?: string }>());
+async function deliverPlace(chatId: string): Promise<{ postal: string; country: string; label?: string }> {
+  const set = chatPlaces.get(chatId);
+  if (set) return set;
+  const to = await getShipTo().catch(() => ({ country: "CA", zip: "" }));
+  return { postal: to.zip ?? "", country: to.country };
 }
+async function amazonDomain(chatId: string): Promise<string> {
+  return (await deliverPlace(chatId)).country === "CA" ? "amazon.ca" : "amazon.com";
+}
+// Browser sessions whose "Deliver to" is already set, and to what (session id → postal code).
+const locatedTo = processSingleton("amazon-located", () => new Map<string, string>());
+// Tries per chat and place: Amazon's first load in a new browser often fails, so one more, then leave it.
+const locateTries = processSingleton("amazon-locate-tries", () => new Map<string, number>());
 
 /* ---------- The cart link (pure; unit-tested in tests/amazon-cart-link.test.ts) ---------- */
 
@@ -252,6 +266,20 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     },
   },
   {
+    name: "amazon_set_location",
+    description:
+      "Set where this Amazon order is delivered (Amazon's \"Deliver to\"), so prices, Prime availability and delivery estimates are for that place: e.g. the shopper's hotel when shipping there. Also picks the Amazon site that ships there (amazon.ca for Canada, amazon.com otherwise). Their saved address is used automatically otherwise; call this only for somewhere else, before searching.",
+    input_schema: {
+      type: "object",
+      properties: {
+        postal_code: { type: "string", description: "e.g. 33139 or M5H 2N2" },
+        country_code: { type: "string", description: "2-letter, e.g. US" },
+        label: { type: "string", description: "Short name shown to the shopper, e.g. 'The Beach Inn, Miami Beach'" },
+      },
+      required: ["postal_code", "country_code"],
+    },
+  },
+  {
     name: "amazon_checkout_link",
     description:
       'Show the shopper a "Check out on Amazon" button: one link that puts everything you added to the Amazon cart in this chat (same products and quantities) into the shopper\'s OWN Amazon cart, in their Safari or Amazon app where they\'re already signed in. They check out there. Call it once everything is added and you\'ve read the cart with amazon_view_cart. It never places an order.',
@@ -332,7 +360,28 @@ const AS_GUEST =
   "Amazon asked to sign in. Your browser never signs in and you never ask the shopper to sign in or check out in it (they check out in their own Amazon with amazon_checkout_link), so you went back and carried on as a guest.";
 
 async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorContext): Promise<ToolResult> {
-  const domain = await amazonDomain();
+  const domain = await amazonDomain(ctx.chatId);
+  /** Sets Amazon's "Deliver to" for this chat's place once per browser, before the first search or add. */
+  const locate = async (force = false): Promise<{ located: boolean; deliverTo: string } | null> => {
+    const place = await deliverPlace(ctx.chatId);
+    if (!place.postal) return null;
+    const sid = await chatBrowserId(ctx.chatId);
+    if (!force && sid && locatedTo.get(sid) === place.postal) return null;
+    const key = `${ctx.chatId}|${place.postal}`;
+    const tries = locateTries.get(key) ?? 0;
+    if (!force && tries >= 2) return null;
+    locateTries.set(key, tries + 1);
+    if (locateTries.size > 1000) locateTries.delete(locateTries.keys().next().value!);
+    try {
+      ctx.progress(`Setting Amazon's delivery location to ${place.label ?? place.postal}…`);
+      const { result, session } = await inBrowser(ctx.chatId, (id) => browserApi.location(id, domain, place.postal, signal), signal);
+      locatedTo.set(session.id, place.postal);
+      return { located: !!result.located, deliverTo: result.deliverTo ?? "" };
+    } catch (e) {
+      if (signal.aborted) throw e;
+      return null;
+    }
+  };
   const site = domain;
   const signal = ctx.signal;
   const shown = (s: { id: string }, handoff?: string) => ctx.show("Live browser", [card(s.id, site, handoff)]);
@@ -375,7 +424,28 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
     back ? pageResult(back, facts, false, `${AS_GUEST} ${next}`) : { content: JSON.stringify({ ...facts, important: `${AS_GUEST} ${next}` }) };
 
   try {
+    if (tool === "amazon_set_location") {
+      const postal = str(input.postal_code, 12).toUpperCase();
+      const country = str(input.country_code, 2).toUpperCase();
+      if (postal.length < 3 || !/^[A-Z]{2}$/.test(country)) return { content: "Give the postal code and the 2-letter country code.", isError: true };
+      chatPlaces.set(ctx.chatId, { postal, country, label: str(input.label, 60) || undefined });
+      const now = await amazonDomain(ctx.chatId);
+      const r = await (async () => {
+        const place = await deliverPlace(ctx.chatId);
+        const { result } = await inBrowser(ctx.chatId, (id) => browserApi.location(id, now, place.postal, signal), signal);
+        const sid = await chatBrowserId(ctx.chatId);
+        if (sid) locatedTo.set(sid, place.postal);
+        return result;
+      })();
+      return pageResult(
+        r,
+        { site: now, deliverTo: r.deliverTo ?? "", located: !!r.located },
+        false,
+        now !== domain ? `Amazon site for this order is now ${now} (it ships to ${country}). Search and add on ${now}.` : r.located ? undefined : "Amazon didn't show the new location; delivery estimates may be for another place. Carry on.",
+      );
+    }
     if (tool === "amazon_search") {
+      await locate();
       const query = str(input.query, 200);
       if (!query) return { content: "Give me something to search for.", isError: true };
       ctx.progress(`Searching Amazon: ${query}`);
@@ -395,6 +465,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       return pageResult(p, { site, query, results, note: results.length ? "Prices are as Amazon shows them right now, in the site's currency." : "No results read from the page." }, !results.length);
     }
     if (tool === "amazon_add_to_cart") {
+      await locate();
       const asin = str(input.asin, 10).toUpperCase();
       const quantity = Math.max(1, Math.min(30, Number(input.quantity) || 1));
       const cart = await chatCart(ctx.chatId, domain);
@@ -428,6 +499,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       return pageResult(p, facts, !p.added);
     }
     if (tool === "amazon_search_many") {
+      await locate();
       const queries = (Array.isArray(input.queries) ? input.queries : []).map((q) => str(q, 200)).filter(Boolean).slice(0, 8);
       if (!queries.length) return { content: "Give me something to search for.", isError: true };
       ctx.progress(`Searching Amazon for ${queries.length} things…`);
@@ -444,6 +516,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
       return pageResult(p, { site, searches, note: "Prices are as Amazon shows them right now, in the site's currency." }, false, note);
     }
     if (tool === "amazon_add_many") {
+      await locate();
       const items = (Array.isArray(input.items) ? input.items : [])
         .slice(0, 20)
         .map((o) => ({ asin: str((o as { asin?: unknown })?.asin, 10).toUpperCase(), quantity: Math.max(1, Math.min(30, Number((o as { quantity?: unknown })?.quantity) || 1)) }))
@@ -591,6 +664,7 @@ export const amazonConnector: Connector = {
   prompt: () => `
 Amazon, in a live browser:
 - When the shopper asks for something from Amazon, or asks you to shop or fill a cart on Amazon, use the Amazon tools. They drive a real browser that appears in the chat, so the shopper watches you search and add things. The browser is never signed in: you fill a guest cart.
+- Amazon's delivery location is set to the shopper's saved address automatically. When the order ships somewhere else (their hotel), call amazon_set_location with that place's postal code and country first (look the postal code up if you don't have it), so prices and delivery estimates are for it.
 - One amazon_search per product, then pick the best match: relevance and specs first, then ratings and review count, prefer Prime, skip sponsored results unless they're clearly the best fit. Say why in a few words.
 - Several products: search them all at once with amazon_search_many, then add them all with amazon_add_many (one call instead of many). One product, or a retry: amazon_search / amazon_add_to_cart.
 - Add what the shopper wants (the right quantities). When everything is added, call amazon_view_cart and tell them what's in it and the subtotal Amazon shows, then call amazon_checkout_link. It shows a "Check out on Amazon" button that puts the same items in the shopper's own Amazon cart, in their Safari or Amazon app where they're already signed in; they check out there.

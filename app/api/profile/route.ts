@@ -3,6 +3,15 @@
 import { NextResponse } from "next/server";
 import { currentProfileOwner, deleteProfile, getProfile, saveProfile, testTravellerDetails } from "@/lib/traveller";
 import { stripeKeyProblem } from "@/lib/config";
+import { getShipTo, setShipTo } from "@/lib/cart";
+import type { TravellerProfileData } from "@/lib/traveller";
+
+/** Saved an address: the store's shipping (prices, delivery, Amazon's site and Deliver to) follows it. */
+async function followAddress(p: TravellerProfileData | null) {
+  if (!p?.country) return;
+  const now = await getShipTo();
+  await setShipTo({ country: p.country, zip: (p.postalCode ?? "").slice(0, 12), tier: now.tier });
+}
 
 // Test details are offered only while payments are in Stripe test mode.
 const testMode = () => !stripeKeyProblem();
@@ -23,9 +32,13 @@ export async function PUT(req: Request) {
   if (body.useTestDetails === true) {
     if (!testMode()) return NextResponse.json({ error: "Test details are only available in test mode." }, { status: 403 });
     await deleteProfile(owner);
-    return NextResponse.json({ profile: await saveProfile(owner, { ...testTravellerDetails(process.env.TEST_TRAVELLER_EMAIL?.trim() || "chefconnor2@gmail.com") }) }, noStore);
+    const profile = await saveProfile(owner, { ...testTravellerDetails(process.env.TEST_TRAVELLER_EMAIL?.trim() || "chefconnor2@gmail.com") });
+    await followAddress(profile);
+    return NextResponse.json({ profile }, noStore);
   }
-  return NextResponse.json({ profile: await saveProfile(owner, body) }, noStore);
+  const profile = await saveProfile(owner, body);
+  await followAddress(profile);
+  return NextResponse.json({ profile }, noStore);
 }
 
 export async function DELETE() {
