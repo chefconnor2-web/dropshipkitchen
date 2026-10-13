@@ -30,6 +30,40 @@ const IDLE_MS = (Number(process.env.IDLE_MINUTES) || 15) * 60_000;
 // normal shopper; a mobile emulation got a different Amazon and stalled at Add to Cart.
 const VIEW = { width: 1280, height: 800 };
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+// While the shopper drives from their phone, the same tab shows Amazon's phone site (same cookies, so the cart
+// and sign-in carry over); handing back returns it to the desktop browser Neon uses.
+const PHONE_VIEW = { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
+const PHONE_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+async function startCast(s) {
+  const phone = s.mode === "phone";
+  await s.cdp.send("Page.stopScreencast").catch(() => {});
+  await s.cdp.send("Page.startScreencast", {
+    format: "jpeg",
+    quality: phone ? 60 : 50,
+    maxWidth: phone ? PHONE_VIEW.width * 2 : VIEW.width,
+    maxHeight: phone ? PHONE_VIEW.height * 2 : VIEW.height,
+    everyNthFrame: 1,
+  });
+}
+
+/** Switches the tab between the desktop browser (Neon) and the phone site (the shopper driving). */
+async function setMode(s, mode) {
+  if (s.mode === mode) return;
+  s.mode = mode;
+  const page = s.page;
+  if (mode === "phone") {
+    await page.setUserAgent(PHONE_UA);
+    await page.setViewport(PHONE_VIEW);
+    await startCast(s);
+    // Reload so Amazon serves its phone layout (not after a form post, which a reload would resend).
+    if (/^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+  } else {
+    await page.setUserAgent(UA);
+    await page.setViewport(VIEW);
+    await startCast(s);
+  }
+}
 // Pages the browser may open. Images, scripts and styles can come from anywhere public.
 const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com)$/i;
 // Tests only: extra hosts the browser may open (e.g. a local fixture server). Never set in production.
@@ -110,7 +144,7 @@ async function createSession() {
 
   const id = crypto.randomBytes(12).toString("hex");
   // urls: product links from the latest searches, by ASIN (opened exactly as the search result linked them).
-  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, busy: false, urls: new Map() };
+  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, busy: false, urls: new Map(), mode: "desktop" };
   const cdp = await page.createCDPSession();
   s.cdp = cdp;
   cdp.on("Page.screencastFrame", ({ data, sessionId, metadata }) => {
@@ -121,7 +155,7 @@ async function createSession() {
     for (const ws of s.clients) if (ws.readyState === 1 && ws.bufferedAmount < 64 * 1024) ws.send(jpeg, { binary: true });
     cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
   });
-  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 50, maxWidth: VIEW.width, maxHeight: VIEW.height, everyNthFrame: 1 });
+  await startCast(s);
   page.on("framenavigated", (f) => f === page.mainFrame() && status(s));
   sessions.set(id, s);
   return s;
@@ -165,7 +199,8 @@ async function needsShopper(page) {
 
 /** Where the page is now, and a picture of it for Neon to look at. */
 async function snapshot(s, extra = {}) {
-  const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, ...VIEW, scale: 1 } }).catch(() => null);
+  const vp = s.page.viewport() || VIEW;
+  const shot = await s.page.screenshot({ type: "jpeg", quality: 55, captureBeyondViewport: false, clip: { x: 0, y: 0, width: vp.width, height: vp.height, scale: 1 } }).catch(() => null);
   const needs = await needsShopper(s.page);
   return {
     url: s.page.url(),
@@ -378,6 +413,7 @@ async function withSession(id, fn) {
   s.busy = true;
   s.lastUsed = Date.now();
   try {
+    await setMode(s, "desktop");
     return await fn(s);
   } finally {
     s.busy = false;
@@ -454,14 +490,24 @@ server.on("upgrade", (req, socket, head) => {
       try {
         if (m.t === "control") {
           s.userControl = !!m.on;
+          status(s).catch(() => {});
+          await setMode(s, s.userControl ? "phone" : "desktop");
           return status(s);
         }
         if (!s.userControl) return;
         if (m.t === "tap") {
-          const f = s.frame || { w: VIEW.width, h: VIEW.height };
+          const f = s.frame || (s.mode === "phone" ? { w: PHONE_VIEW.width, h: PHONE_VIEW.height } : { w: VIEW.width, h: VIEW.height });
           const x = Math.max(0, Math.min(1, Number(m.x))) * f.w;
           const y = Math.max(0, Math.min(1, Number(m.y))) * f.h;
-          await s.page.mouse.click(x, y, { delay: 30 });
+          if (s.mode === "phone") await s.page.touchscreen.tap(x, y);
+          else await s.page.mouse.click(x, y, { delay: 30 });
+          // Tell the phone whether a text field now has focus, so it can offer the keyboard.
+          await pause(250);
+          const editing = await s.page.evaluate(() => {
+            const el = document.activeElement;
+            return !!el && (el.isContentEditable || (el.tagName === "INPUT" && !["button", "submit", "checkbox", "radio", "image", "range", "color", "file", "reset", "hidden"].includes(el.type)) || el.tagName === "TEXTAREA");
+          }).catch(() => false);
+          for (const c of s.clients) if (c.readyState === 1) c.send(JSON.stringify({ t: "focus", editing }));
         }
         else if (m.t === "type") await s.page.keyboard.type(String(m.text ?? "").slice(0, 500));
         else if (m.t === "key") await runAction(s, { type: "key", key: m.key });
