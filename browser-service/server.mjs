@@ -36,6 +36,12 @@ const FRAME_QUEUE_BYTES = Number(process.env.FRAME_QUEUE_BYTES) || 48 * 1024;
 const QUALITY = Math.max(20, Math.min(90, Number(process.env.SCREENCAST_QUALITY) || 60));
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
 const INPUT_QUEUE = 64;
+// A session nobody is watching and Neon isn't using is closed after this (Chrome is the memory hog: the
+// service has 1 GB, and each Amazon tab takes 250-450 MB).
+const UNWATCHED_MS = (Number(process.env.UNWATCHED_MINUTES) || 3) * 60_000;
+// One input step may take this long before it's reported as failed (a hung page never blocks the queue).
+const STEP_MS = 25_000;
+const log = (...a) => console.log("[browser]", ...a);
 const KEYS = ["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 // Same browser as workflow-agent-cart's shopping agent (desktop Chrome, 1280×800), which Amazon treats as a
 // normal shopper; a mobile emulation got a different Amazon and stalled at Add to Cart.
@@ -52,8 +58,8 @@ async function startCast(s) {
   await s.cdp.send("Page.startScreencast", {
     format: "jpeg",
     quality: QUALITY,
-    maxWidth: phone ? PHONE_VIEW.width * 2 : VIEW.width,
-    maxHeight: phone ? PHONE_VIEW.height * 2 : VIEW.height,
+    maxWidth: phone ? phoneView(s).width * 2 : VIEW.width,
+    maxHeight: phone ? phoneView(s).height * 2 : VIEW.height,
     everyNthFrame: 1,
   });
 }
@@ -69,15 +75,38 @@ async function setMode(s, mode) {
   s.mode = mode;
   const page = s.page;
   const phone = mode === "phone";
-  const v = phone ? PHONE_VIEW : VIEW;
+  const v = phone ? phoneView(s) : VIEW;
   await page.setUserAgent(phone ? PHONE_UA : UA);
   await s.cdp.send("Emulation.setDeviceMetricsOverride", { width: v.width, height: v.height, deviceScaleFactor: v.deviceScaleFactor ?? 1, mobile: phone });
   await s.cdp.send("Emulation.setTouchEmulationEnabled", phone ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   await startCast(s);
   // Going to the phone site: reload so Amazon serves its phone layout (not after a form post, which a reload
   // would resend, nor on sign-in or robot-check pages). Back to desktop: no reload; Neon's next step navigates.
-  if (phone && /^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+  if (phone && /^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url()) && !(await cameFromForm(s)))
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
 }
+/** The phone viewport: the shopper's own full-screen browser area when their phone told us, else 390×844. */
+function phoneView(s) {
+  const w = Math.round(Math.max(320, Math.min(600, s.screen?.w || PHONE_VIEW.width)));
+  const h = Math.round(Math.max(400, Math.min(1100, s.screen?.h || PHONE_VIEW.height)));
+  return { ...PHONE_VIEW, width: w, height: h };
+}
+
+/** The shopper's screen changed size (rotation, keyboard): resize the phone page without a reload. */
+async function resizePhone(s) {
+  if (s.mode !== "phone") return;
+  const v = phoneView(s);
+  await s.cdp.send("Emulation.setDeviceMetricsOverride", { width: v.width, height: v.height, deviceScaleFactor: v.deviceScaleFactor, mobile: true });
+  await startCast(s);
+}
+
+/** Was the current page reached by submitting a form? (Reloading it would send the form again.) */
+async function cameFromForm(s) {
+  const h = await s.cdp.send("Page.getNavigationHistory").catch(() => null);
+  const entry = h?.entries?.[h.currentIndex];
+  return entry?.transitionType === "form_submit";
+}
+
 // Pages the browser may open. Images, scripts and styles can come from anywhere public.
 const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com)$/i;
 // Tests only: extra hosts the browser may open (e.g. a local fixture server). Never set in production.
@@ -101,6 +130,15 @@ async function getBrowser() {
       "--no-first-run",
       "--no-zygote",
       "--disable-gpu",
+      // Memory: one renderer per site instead of per frame, fewer background services, small JS heaps.
+      "--disable-features=site-per-process,IsolateOrigins,Translate,MediaRouter,BackForwardCache,OptimizationHints",
+      "--renderer-process-limit=2",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-default-apps",
+      "--disable-extensions",
+      "--mute-audio",
+      "--js-flags=--max-old-space-size=256",
       // Internal and private names never resolve (the pages can't reach this service's private network).
       "--host-resolver-rules=MAP *.internal ~NOTFOUND, MAP *.railway.internal ~NOTFOUND, MAP *.local ~NOTFOUND" + (TEST_ALLOW ? "" : ", MAP localhost ~NOTFOUND"),
     ],
@@ -142,13 +180,17 @@ async function createSession() {
   }
   const b = await getBrowser();
   const ctx = await b.createBrowserContext();
-  let page;
   try {
-    page = await ctx.newPage();
+    return await setUpSession(ctx);
   } catch (e) {
+    // Nothing half-made is left behind.
     await ctx.close().catch(() => {});
     throw e;
   }
+}
+
+async function setUpSession(ctx) {
+  const page = await ctx.newPage();
   await page.setUserAgent(UA);
   await page.setViewport(VIEW);
   // No request interception (it slows every request down); instead the main page is pulled back if it ever
@@ -162,6 +204,8 @@ async function createSession() {
       lastOk = url;
       return;
     }
+    // Chrome's own error page (a load that failed or was blocked) stays put; pulling back from it could loop.
+    if (!/^https?:/i.test(url)) return;
     page.goto(PRIVATE_HOST.test(host) ? "about:blank" : lastOk).catch(() => {});
   });
   // Popups open in the same tab (they can't be shown otherwise).
@@ -175,7 +219,12 @@ async function createSession() {
   // urls: product links from the latest searches, by ASIN (opened exactly as the search result linked them).
   // controller: the one socket allowed to send input while the shopper has control. queue: their input, run in order.
   const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, controller: null, busy: false, urls: new Map(), mode: "desktop", queue: [], draining: false };
-  page.on("error", () => endSession(s, "The page crashed. Ask Neon to try again."));
+  page.on("error", () => {
+    log("session", s.id.slice(0, 6), "page crashed");
+    endSession(s, "The page crashed. Ask Neon to try again.");
+  });
+  // A native alert/confirm would freeze every step: dismiss it.
+  page.on("dialog", (d) => d.dismiss().catch(() => {}));
   const cdp = await page.createCDPSession();
   s.cdp = cdp;
   cdp.on("Page.screencastFrame", ({ data, sessionId, metadata }) => {
@@ -189,6 +238,9 @@ async function createSession() {
     s.lastFrame = jpeg;
     for (const ws of s.clients) deliverFrame(ws, jpeg, FRAME_QUEUE_BYTES);
   });
+  // Video and audio streams are the heaviest thing on Amazon pages and nobody needs them here.
+  await cdp.send("Network.enable").catch(() => {});
+  await cdp.send("Network.setBlockedURLs", { urls: ["*.mp4*", "*.m3u8*", "*.webm*", "*.m4s*", "*.mpd*", "*/videos/*.ts*"] }).catch(() => {});
   if (process.env.NAV_INTERCEPT !== "off") {
     // Check every page load (main page and frames) before it's requested: the main page may only be Amazon,
     // and nothing may load from a private address. Only documents are intercepted, so images, scripts and
@@ -204,12 +256,14 @@ async function createSession() {
   await startCast(s);
   page.on("framenavigated", (f) => f === page.mainFrame() && status(s));
   sessions.set(id, s);
+  log("session", id.slice(0, 6), "opened;", sessions.size, "open");
   return s;
 }
 
 async function endSession(s, reason = "Closed.") {
   if (!sessions.has(s.id)) return;
   sessions.delete(s.id);
+  log("session", s.id.slice(0, 6), "closed:", reason, sessions.size, "open");
   for (const it of s.queue.splice(0)) it.resolve?.();
   for (const ws of s.clients) {
     try {
@@ -533,6 +587,13 @@ const server = http.createServer(async (req, res) => {
 
 // ---------- Live view: shopper control and input ----------
 
+/** The shopper's full-screen browser area in CSS px, from a control or viewport message, or null. */
+function screenOf(m) {
+  const w = m?.w, h = m?.h;
+  if (typeof w !== "number" || typeof h !== "number" || !Number.isFinite(w) || !Number.isFinite(h) || w < 200 || h < 200 || w > 3000 || h > 3000) return null;
+  return { w, h };
+}
+
 /** Validates one input message from the live view. Returns the step to run, or an error code. */
 function parseInput(m) {
   switch (m?.t) {
@@ -549,8 +610,12 @@ function parseInput(m) {
     case "type":
       if (typeof m.text !== "string" || !m.text || m.text.length > 2000) return null;
       return { t: "type", text: m.text };
-    case "key":
-      return KEYS.includes(m.key) ? { t: "key", key: m.key } : null;
+    case "key": {
+      if (!KEYS.includes(m.key)) return null;
+      const count = m.count === undefined ? 1 : m.count;
+      if (!Number.isInteger(count) || count < 1 || count > 200) return null;
+      return { t: "key", key: m.key, count };
+    }
     case "back":
       return { t: "back" };
     default:
@@ -580,7 +645,9 @@ async function drain(s) {
       const it = s.queue[0];
       it.started = true;
       try {
-        await runInput(s, it);
+        // Switching to the phone site waits for a step Neon is in the middle of (it would change the page under it).
+        if (it.t === "mode") for (let i = 0; i < 600 && s.busy && sessions.has(s.id); i++) await pause(100);
+        await Promise.race([runInput(s, it), pause(STEP_MS).then(() => Promise.reject(new Error("step timed out")))]);
         for (const n of it.ns) if (it.ws && n !== undefined) reply(it.ws, { t: "ack", n });
       } catch {
         for (const n of it.ns) if (it.ws) reply(it.ws, { t: "error", n, code: "failed", message: "That didn't work on the page. Try again." });
@@ -598,6 +665,7 @@ async function runInput(s, it) {
   const page = s.page;
   s.lastUsed = Date.now();
   if (it.t === "mode") return setMode(s, it.mode);
+  if (it.t === "resize") return resizePhone(s);
   if (it.t === "tap") {
     const f = s.frame || (s.mode === "phone" ? { w: PHONE_VIEW.width, h: PHONE_VIEW.height } : { w: VIEW.width, h: VIEW.height });
     const x = it.x * f.w, y = it.y * f.h;
@@ -616,7 +684,7 @@ async function runInput(s, it) {
   }
   if (it.t === "type") return page.keyboard.type(it.text);
   if (it.t === "key") {
-    await page.keyboard.press(it.key);
+    for (let i = 0; i < (it.count || 1); i++) await page.keyboard.press(it.key);
     return pause(120);
   }
   if (it.t === "scroll") {
@@ -631,7 +699,8 @@ async function runInput(s, it) {
 }
 
 /** The shopper takes control from this socket: their phone gets Amazon's phone site. */
-function takeControl(s, ws) {
+function takeControl(s, ws, screen) {
+  if (screen) s.screen = screen;
   if (s.controller && s.controller !== ws) reply(s.controller, { t: "control", on: false, by: "shopper" });
   s.userControl = true;
   s.controller = ws;
@@ -645,13 +714,14 @@ async function releaseControl(s, by) {
   const had = s.userControl;
   s.userControl = false;
   s.controller = null;
+  // Everyone hears that control ended before any dropped input is answered, so no screen takes it back.
+  if (had || s.mode !== "desktop") broadcast(s, { t: "control", on: false, by });
   // Input still waiting is dropped (it was meant for the shopper's turn); the step running now finishes.
   for (const it of s.queue.splice(s.queue[0]?.started ? 1 : 0)) {
-    for (const n of it.ns ?? []) if (it.ws && n !== undefined) reply(it.ws, { t: "error", n, code: "not_in_control", message: "Neon has the browser now." });
+    for (const n of it.ns ?? []) if (it.ws && n !== undefined) reply(it.ws, { t: "error", n, code: "dropped", message: "Neon has the browser now." });
     it.resolve?.();
   }
   if (had || s.mode !== "desktop") {
-    broadcast(s, { t: "control", on: false, by });
     await new Promise((resolve) => {
       s.queue.push({ t: "mode", mode: "desktop", ws: null, ns: [], resolve });
       drain(s);
@@ -697,11 +767,17 @@ server.on("upgrade", (req, socket, head) => {
       s.lastUsed = Date.now();
       const n = Number.isInteger(m?.n) ? m.n : undefined;
       if (m?.t === "control") {
-        if (m.on) takeControl(s, ws);
+        if (m.on) takeControl(s, ws, screenOf(m));
         else if (s.controller === ws) releaseControl(s, "shopper").catch(() => {});
         return n !== undefined ? reply(ws, { t: "ack", n }) : undefined;
       }
       if (!s.userControl || s.controller !== ws) return reply(ws, { t: "error", n, code: "not_in_control", message: "Tap Take over first." });
+      if (m?.t === "viewport") {
+        const sc = screenOf(m);
+        if (!sc) return reply(ws, { t: "error", n, code: "invalid", message: "That input wasn't valid." });
+        s.screen = sc;
+        return enqueue(s, ws, { t: "resize" }, n);
+      }
       const item = parseInput(m);
       if (!item) return reply(ws, { t: "error", n, code: "invalid", message: "That input wasn't valid." });
       enqueue(s, ws, item, n);
@@ -723,9 +799,16 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
-setInterval(() => {
-  for (const s of sessions.values()) if (Date.now() - s.lastUsed > IDLE_MS && !s.clients.size) endSession(s, "Closed after being idle.");
-}, 60_000).unref();
+setInterval(async () => {
+  for (const s of [...sessions.values()]) {
+    if (s.busy || s.userControl) continue;
+    const idle = Date.now() - s.lastUsed;
+    if (idle > IDLE_MS) endSession(s, "Closed after being idle.");
+    // Unwatched: close early, unless the page is waiting on the shopper (a robot check they'll come back to).
+    else if (!s.clients.size && idle > UNWATCHED_MS && !(await needsShopper(s.page).catch(() => null)))
+      endSession(s, "Closed while nobody was watching (Neon reopens it when needed).");
+  }
+}, 30_000).unref();
 
 server.listen(PORT, () => console.log(`[browser] listening on ${PORT}, up to ${MAX_SESSIONS} sessions`));
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, async () => {

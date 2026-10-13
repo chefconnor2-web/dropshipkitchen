@@ -120,8 +120,24 @@ export interface BrowserCard {
   group?: string;
 }
 
+/**
+ * The Amazon cart Neon filled, as one link the shopper opens in their own Safari or Amazon app (where they're
+ * already signed in): Amazon's add-to-cart URL puts every item in THEIR cart. Neon never signs in for them.
+ */
+export interface CartLinkCard {
+  kind: "cart-link";
+  /** "cl_" + the browser session id; updated in place as items are added. */
+  id: string;
+  url: string;
+  site: string;
+  /** Distinct products and total units in the link. */
+  products: number;
+  units: number;
+  group?: string;
+}
+
 /** Anything a connector shows in the chat, told apart by `kind`. New connectors add their own card here. */
-export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard | BrowserCard;
+export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCard | BrowserCard | CartLinkCard;
 
 /** "$1,240" for a stay, in its own currency. */
 export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {

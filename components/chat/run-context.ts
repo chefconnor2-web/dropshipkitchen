@@ -19,6 +19,8 @@ export interface BrowserRunContext {
    * failures resolve as `{ accepted: false, reason: "not_waiting", ... }` with current: null).
    */
   resume: (stepId: string) => Promise<ResumeResult>;
+  /** Stops the active run (the same as the chat's Stop button). Available while a take-over covers the chat. */
+  stop: () => Promise<void>;
 }
 
 export const RunContext = createContext<BrowserRunContext>({
@@ -26,6 +28,7 @@ export const RunContext = createContext<BrowserRunContext>({
   pending: null,
   runStatus: null,
   resume: async () => ({ accepted: false, reason: "not_waiting", message: "Nothing is waiting on you.", current: null }),
+  stop: async () => {},
 });
 
 export const useRunContext = () => useContext(RunContext);

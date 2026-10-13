@@ -232,3 +232,22 @@ Agent steps while the shopper has control → 409 (unchanged).
 | input queue | 64 | browser |
 | WS maxPayload | 16 KiB | browser |
 | view token TTL | 10 min | storefront mints, browser checks |
+
+
+## 11. Changes after the first deploy (frozen for the fix round)
+- **No Amazon sign-in in Neon's browser, ever.**
+  - Neon fills the cart as a guest. When a page asks to sign in during a step, the connector goes back and carries on as a guest; it never hands over for sign-in.
+  - At the end Neon shows a `CartLinkCard` (`lib/flights-shared.ts`, kind `"cart-link"`): Amazon's add-to-cart URL, `https://www.amazon.<ca|com>/gp/aws/cart/add.html?ASIN.1=…&Quantity.1=…`, which the shopper opens in their own browser or app, already signed in.
+  - Take-overs remain for robot checks and choices only.
+- **The browser size follows the phone.**
+  - `{t:"control", on:true, w, h}` carries the CSS size of the shopper's full-screen browser area. `{t:"viewport", w, h}` updates it on rotate or resize.
+  - The service uses it as the phone viewport, clamped to 320–600 × 400–1100, at DPR 2, with no reload.
+- **Input.**
+  - `{t:"key", key:"Backspace", count}` (count 1–200) replaces Backspace floods.
+  - Input dropped because control ended is answered `{t:"error", n, code:"dropped"}`, after `{t:"control", on:false}` has been sent. Clients ignore `dropped`; it is not a reason to take control again.
+- **`RunContext.stop()`** cancels the active run, so a required take-over offers "Stop Neon".
+- **Memory (1 GB limit on the service).**
+  - Lighter Chrome flags.
+  - Media (video and audio streams) is blocked.
+  - A session with no viewer and no step for 3 minutes is closed.
+  - Session lifecycle is logged: no URLs, no page content.
