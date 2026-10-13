@@ -26,6 +26,7 @@ import puppeteer from "puppeteer-core";
 import { WebSocketServer } from "ws";
 import { deliver as deliverFrame, stopDelivery } from "./frames.mjs";
 import { runPool } from "./pool.mjs";
+import { SMART, settle, smartAction } from "./forms.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 const SECRET = process.env.BROWSER_SERVICE_SECRET || "";
@@ -341,6 +342,8 @@ async function goto(s, url, page = s.page) {
 
 async function runAction(s, a) {
   const page = s.page;
+  // Smart form actions (fill / select / date / click_text): the page finds the field itself. forms.mjs.
+  if (SMART.has(a?.type)) return smartAction(page, a);
   switch (a?.type) {
     case "goto":
       return goto(s, String(a.url));
@@ -348,26 +351,29 @@ async function runAction(s, a) {
       if (!Number.isFinite(Number(a.x)) || !Number.isFinite(Number(a.y))) throw Object.assign(new Error("Bad tap."), { status: 400 });
       const x = Math.max(0, Math.min(VIEW.width, Number(a.x)));
       const y = Math.max(0, Math.min(VIEW.height, Number(a.y)));
-      await page.mouse.click(x, y, { delay: 30 });
-      return pause(600);
+      await page.mouse.click(x, y, { delay: 20 });
+      // Done as soon as the page settles (most taps change nothing on the network), not after a fixed wait.
+      await pause(60);
+      return settle(page, 600);
     }
     case "type":
-      return page.keyboard.type(String(a.text ?? "").slice(0, 500), { delay: 25 });
+      return page.keyboard.type(String(a.text ?? "").slice(0, 500), { delay: 6 });
     case "key": {
       const key = String(a.key);
       if (!["Enter", "Backspace", "Tab", "Escape", "ArrowDown", "ArrowUp"].includes(key)) throw Object.assign(new Error("Unsupported key."), { status: 400 });
       await page.keyboard.press(key);
-      return pause(500);
+      await pause(40);
+      return settle(page, 500);
     }
     case "scroll": {
       const dy = a.dy == null ? 600 : Number(a.dy);
       if (!Number.isFinite(dy)) throw Object.assign(new Error("Bad scroll."), { status: 400 });
       if (dy) await page.evaluate((d) => window.scrollBy({ top: d, behavior: "instant" }), Math.max(-3000, Math.min(3000, dy)));
-      return pause(400);
+      return pause(150);
     }
     case "back":
       await page.goBack({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
-      return pause(500);
+      return settle(page, 500);
     case "wait":
       return pause(Math.max(0, Math.min(5000, Number(a.ms) || 1000)));
     default:
@@ -676,8 +682,13 @@ const server = http.createServer(async (req, res) => {
       if (rest === "/act") {
         const actions = Array.isArray(body.actions) ? body.actions.slice(0, 12) : [];
         return send(res, 200, await withSession(id, async (s) => {
-          for (const a of actions) await runAction(s, a);
-          return snapshot(s);
+          // What each smart action did (or why it couldn't), so Neon knows which field to fix by hand.
+          const results = [];
+          for (const a of actions) {
+            const r = await runAction(s, a);
+            if (SMART.has(a?.type)) results.push({ type: a.type, ...(a.field ? { field: String(a.field).slice(0, 60) } : {}), ...(a.text ? { text: String(a.text).slice(0, 60) } : {}), ...r });
+          }
+          return snapshot(s, results.length ? { results } : {});
         }));
       }
       if (rest === "/amazon/search") return send(res, 200, await withSession(id, (s) => amazonSearch(s, body.domain, body.query ?? "")));
