@@ -838,7 +838,7 @@ export default function Chat({
             {turn && (
               <div className="cx-msg cx-bot">
                 <div className="cx-bot-body">
-                  <LiveTrace trace={turn.trace} started={turn.started} chars={turn.chars} writing={!!turn.text} nudge={nudge} />
+                  <LiveTrace trace={turn.trace} started={turn.started} chars={turn.chars} writing={!!turn.text} nudge={nudge} helpers={helpersAt(turn)} />
                   {turn.groups.length > 0 && <Steps steps={turn.steps} groups={turn.groups} live />}
                   <ConnectorCards items={turn.items} />
                   {turn.text && (
@@ -967,4 +967,19 @@ function UserText({ text }: { text: string }) {
       )}
     </div>
   );
+}
+
+/**
+ * How many of Aurora's scouts are still out: the last "Sending N scouts" step, less the parts already done.
+ * A web search counts as one helper too.
+ */
+function helpersAt(turn: { trace: Array<{ kind: string; text: string }>; groups: Array<{ done: boolean }> }): number {
+  const steps = turn.trace.filter((t) => t.kind === "step");
+  const last = steps[steps.length - 1]?.text ?? "";
+  if (/^(Searching the web|Reading )/.test(last)) return 1;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const m = steps[i].text.match(/^Sending (\d+) scouts?/);
+    if (m) return Math.max(0, Math.min(3, Number(m[1]) - turn.groups.filter((g) => g.done).length));
+  }
+  return 0;
 }

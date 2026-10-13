@@ -4,7 +4,7 @@
 // takes. Once he answers, it folds into "Thought for 8s", which opens to show the whole trace again.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import AgentBlob from "./AgentBlob";
+import LavaBlob from "./LavaBlob";
 import type { TraceItem } from "./ui";
 
 // Shown while he's thinking with no step to report, a new one every few seconds.
@@ -40,8 +40,11 @@ function Lines({ trace }: { trace: TraceItem[] }) {
   );
 }
 
-/** While the turn runs. `writing`: the answer has started, so the trace tucks itself away above it. */
-export function LiveTrace({ trace, started, chars, writing, nudge }: { trace: TraceItem[]; started: number; chars: number; writing: boolean; nudge: number }) {
+/**
+ * While the turn runs. `writing`: the answer has started, so the trace tucks itself away above it.
+ * `helpers`: other agents working with Neon right now (Aurora's scouts), shown melting into him.
+ */
+export function LiveTrace({ trace, started, chars, writing, nudge, helpers = 0 }: { trace: TraceItem[]; started: number; chars: number; writing: boolean; nudge: number; helpers?: number }) {
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
   const [overflow, setOverflow] = useState(false);
@@ -79,7 +82,7 @@ export function LiveTrace({ trace, started, chars, writing, nudge }: { trace: Tr
   return (
     <div className="cx-trace is-live">
       <div className="cx-trace-head">
-        <AgentBlob size={30} mood="thinking" label="Neon is thinking" nudge={nudge} />
+        <LavaBlob size={30} helpers={helpers} label={helpers ? "Neon and Aurora are working" : "Neon is thinking"} nudge={nudge} />
         <span className="cx-trace-status">{status}…</span>
         <span className="cx-trace-meta">{meta}</span>
       </div>
