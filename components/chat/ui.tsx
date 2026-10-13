@@ -1,6 +1,7 @@
 "use client";
 // Shared pieces of the assistant chat: types, markdown, icons, step log, product and kit cards.
 
+import type { DocInfo } from "@/lib/docs-shared";
 import { Fragment, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
@@ -76,7 +77,7 @@ export function costLine(c: NonNullable<BotEntry["cost"]>): string {
     .join(" · ");
 }
 /** reaction: the assistant's emoji tapback on this message; at: when it was sent (ISO). */
-export type UserEntry = { role: "user"; text: string; images?: string[]; reaction?: string; at?: string };
+export type UserEntry = { role: "user"; text: string; images?: string[]; docs?: DocInfo[]; reaction?: string; at?: string };
 export type Entry = UserEntry | BotEntry;
 export interface Turn {
   text: string;

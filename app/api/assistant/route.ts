@@ -10,6 +10,7 @@ import { getMemberId } from "@/lib/session";
 import { aiAllowance, limitMessage, recordAiUse } from "@/lib/membership";
 import { planOffer } from "@/lib/plan-offer";
 import { formatMoney } from "@/lib/money";
+import { cleanDocs } from "@/lib/docs-shared";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -42,10 +43,13 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   if (!assistantConfigured()) return Response.json({ error: "The assistant isn't switched on yet." }, { status: 503 });
-  const body = (await req.json().catch(() => ({}))) as { message?: unknown; chatId?: unknown; images?: unknown; voice?: unknown; editIndex?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { message?: unknown; chatId?: unknown; images?: unknown; voice?: unknown; editIndex?: unknown; docs?: unknown };
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const imageIds = (Array.isArray(body.images) ? body.images : []).filter((x): x is string => typeof x === "string").slice(0, 4);
-  if (!message && !imageIds.length) return Response.json({ error: "Type a message first." }, { status: 400 });
+  const { docs, error: docError } = cleanDocs(body.docs);
+  if (docError) return Response.json({ error: docError }, { status: 400 });
+  const editing = typeof body.editIndex === "number";
+  if (!message && !imageIds.length && !docs.length && !editing) return Response.json({ error: "Type a message first." }, { status: 400 });
   const h = await headers();
   const ip = (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || "local";
   if (!allow(ip)) return Response.json({ error: "You've sent a lot of messages. Please wait a bit and try again." }, { status: 429 });
@@ -66,7 +70,7 @@ export async function POST(req: Request) {
   let chat = typeof body.chatId === "string" ? await findOwnChat(body.chatId) : null;
   if (typeof body.chatId === "string" && !chat) return Response.json({ error: "That chat isn't available. Start a new one." }, { status: 404 });
   const isNew = !chat;
-  chat ??= await prisma.assistantChat.create({ data: { visitorId, customerId: memberId, title: message.replace(/\s+/g, " ").slice(0, 48) || "Photo search" } });
+  chat ??= await prisma.assistantChat.create({ data: { visitorId, customerId: memberId, title: message.replace(/\s+/g, " ").slice(0, 48) || docs[0]?.name.slice(0, 48) || "Photo search" } });
   const images = imageIds.length
     ? await prisma.assistantImage.findMany({ where: { id: { in: imageIds }, ...ownedBy(memberId, visitorId) }, select: { id: true, mime: true } })
     : [];
@@ -94,13 +98,13 @@ export async function POST(req: Request) {
       // Name new chats (and chats whose first message was edited) while the answer is being written.
       const titling =
         isNew || editIndex === 0
-          ? generateTitle(message, images.length > 0).then(async (title) => {
+          ? generateTitle(message || (docs[0]?.kind === "text" ? docs[0].data.slice(0, 500) : docs[0]?.name ?? ""), images.length > 0).then(async (title) => {
               await prisma.assistantChat.update({ where: { id: chatRow.id }, data: { title } });
               send({ type: "title", id: chatRow.id, title });
             })
           : null;
       try {
-        const { entry, costMicros, reaction } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex }, (ev) => send(ev));
+        const { entry, costMicros, reaction } = await chatTurn(chatRow.id, cartId, { text: message, images, voice: body.voice === true, editIndex, docs }, (ev) => send(ev));
         await recordAiUse({ customerId: memberId, visitorId, chatId: chatRow.id, costMicros });
         await Promise.race([titling, new Promise((r) => setTimeout(r, 4000))]);
         const after = await aiAllowance({ customerId: memberId, visitorId });
