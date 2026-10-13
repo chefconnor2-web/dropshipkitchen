@@ -42,7 +42,7 @@ function Lines({ trace }: { trace: TraceItem[] }) {
 
 /**
  * While the turn runs. `writing`: the answer has started, so the trace tucks itself away above it.
- * `helpers`: other agents working with Neon right now (Aurora's scouts), shown melting into him.
+ * `helpers`: searches running right now (Aurora's scouts, the web); while there are any, Neon stays split into planets.
  */
 export function LiveTrace({ trace, started, chars, writing, nudge, helpers = 0 }: { trace: TraceItem[]; started: number; chars: number; writing: boolean; nudge: number; helpers?: number }) {
   const [now, setNow] = useState(() => Date.now());
@@ -82,7 +82,7 @@ export function LiveTrace({ trace, started, chars, writing, nudge, helpers = 0 }
   return (
     <div className="cx-trace is-live">
       <div className="cx-trace-head">
-        <LavaBlob size={30} helpers={helpers} label={helpers ? "Neon and Aurora are working" : "Neon is thinking"} nudge={nudge} />
+        <LavaBlob size={30} split={helpers > 0} label={helpers ? "Neon is searching" : "Neon is thinking"} nudge={nudge} />
         <span className="cx-trace-status">{status}…</span>
         <span className="cx-trace-meta">{meta}</span>
       </div>
