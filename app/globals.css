@@ -2104,3 +2104,12 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-doc-size { font-size: 12px; color: var(--im-sub, var(--muted)); }
 .cx-doc .cx-attach-x { top: 6px; right: 6px; }
 .cx-user-docs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+/* The + menu: paste text in one tap, or pick photos and files. */
+.cx-add { position: relative; flex: none; align-self: flex-end; }
+.cx-add-scrim { position: fixed; inset: 0; z-index: 40; border: 0; padding: 0; background: transparent; cursor: default; }
+.cx-add-menu { position: absolute; z-index: 41; left: 0; bottom: calc(100% + 8px); width: min(280px, calc(100vw - 32px)); display: grid; padding: 6px; border-radius: 16px; background: var(--im-bg, #fff); border: 1px solid var(--im-line, #E4DFD5); box-shadow: 0 12px 32px rgba(21, 23, 26, 0.16); animation: cx-pop 0.14s ease-out; }
+.cx-add-menu button { display: flex; align-items: center; gap: 12px; padding: 10px; border: 0; border-radius: 10px; background: transparent; color: var(--im-ink, var(--ink)); text-align: left; font: 500 15px/1.25 var(--im-font, inherit); cursor: pointer; }
+.cx-add-menu button:hover, .cx-add-menu button:focus-visible { background: var(--im-gray, #F1EEE8); outline: none; }
+.cx-add-menu small { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--im-sub, var(--muted)); }
+.cx-add-ic { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #5a35a8; color: #fff; font-size: 17px; }
+@media (prefers-reduced-motion: reduce) { .cx-add-menu { animation: none; } }

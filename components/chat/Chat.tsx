@@ -116,6 +116,7 @@ export default function Chat({
   const [atBottom, setAtBottom] = useState(true);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [docs, setDocs] = useState<PendingDoc[]>([]);
+  const [addMenu, setAddMenu] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
@@ -400,6 +401,26 @@ export default function Chat({
     send(u.text, { editIndex: userIndex, images: u.images ?? [] });
   }
 
+  /**
+   * Pastes from the clipboard with one tap (no long-press menu, no giant text in the box): long text becomes
+   * a document, short text goes into the message.
+   */
+  async function pasteFromClipboard() {
+    setAddMenu(false);
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return flash("Allow paste when your phone asks, or long-press the message box and paste");
+    }
+    if (!text.trim()) return flash("Nothing to paste");
+    if (text.length > PASTE_AS_DOC_CHARS) addDoc({ name: `Pasted text ${docs.length + 1}`, kind: "text", data: text });
+    else {
+      setInput((v) => (v ? v.replace(/\s*$/, " ") : "") + text);
+      inputRef.current?.focus();
+    }
+  }
+
   /** Adds a long paste or a text/PDF file as a document attachment. */
   function addDoc(d: DocUpload) {
     if (docs.length >= MAX_DOCS) return flash(`Up to ${MAX_DOCS} documents per message`);
@@ -554,9 +575,43 @@ export default function Chat({
         send(input);
       }}
     >
-      <button type="button" className="cx-plus" onClick={() => fileRef.current?.click()} aria-label="Add photos or files" title="Add photos, PDFs or text files" disabled={!configured}>
-        <PlusIcon2 />
-      </button>
+      <div className="cx-add">
+        <button type="button" className="cx-plus" onClick={() => setAddMenu((v) => !v)} aria-label="Add photos, files or pasted text" aria-expanded={addMenu} aria-haspopup="menu" disabled={!configured}>
+          <PlusIcon2 />
+        </button>
+        {addMenu && (
+          <>
+            <button type="button" className="cx-add-scrim" aria-label="Close" onClick={() => setAddMenu(false)} />
+            <div className="cx-add-menu" role="menu" onKeyDown={(e) => e.key === "Escape" && setAddMenu(false)}>
+              <button type="button" role="menuitem" autoFocus onClick={pasteFromClipboard}>
+                <span className="cx-add-ic" aria-hidden>
+                  ⎘
+                </span>
+                <span>
+                  Paste text
+                  <small>Long text is attached as a document</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setAddMenu(false);
+                  fileRef.current?.click();
+                }}
+              >
+                <span className="cx-add-ic" aria-hidden>
+                  ＋
+                </span>
+                <span>
+                  Photos or files
+                  <small>Photos, PDFs, text and CSV files</small>
+                </span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
       <input
         ref={fileRef}
         type="file"
