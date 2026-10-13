@@ -2162,7 +2162,8 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .cx-browser-keys input.is-editing { border-color: #7b4dff; box-shadow: 0 0 0 3px rgb(123 77 255 / 0.3); }
 /* Live browser on a canvas (newest frame wins), connection state, and the required take-over (Done — continue). */
 .cx-browser-canvas { display: block; width: 100%; height: auto; max-height: min(62vh, 520px); object-fit: contain; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.cx-browser.is-full .cx-browser-canvas { width: 100%; height: 100%; max-height: none; object-fit: contain; touch-action: none; cursor: pointer; }
+.cx-browser.is-full .cx-browser-screen { position: relative; }
+.cx-browser.is-full .cx-browser-canvas { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); max-height: none; object-fit: contain; touch-action: none; cursor: pointer; }
 .cx-browser.is-ended .cx-browser-canvas { filter: grayscale(0.6) brightness(0.7); }
 .cx-browser-conn { position: absolute; inset: auto 12px 12px; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: rgb(15 13 22 / 0.85); color: #eeeaf7; font: 500 13px/1.3 var(--im-font, inherit); text-align: center; }
 .cx-browser-conn:disabled { cursor: default; }

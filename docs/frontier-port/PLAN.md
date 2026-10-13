@@ -8,14 +8,14 @@ Statuses: TODO, READY, IN_PROGRESS, BLOCKED, DONE. DONE requires evidence.
 |---|---|---|---|---|
 | T01 | Inspect both projects, baseline | — | coordinator | DONE |
 | T02 | Shared contracts + ownership model | T01 | coordinator: `lib/run-shared.ts`, `components/chat/run-context.ts`, `prisma/schema.prisma`, `lib/flights-shared.ts` (BrowserCard), CONTRACTS.md | DONE |
-| T03 | Authenticated persistence + run APIs | T02 | backend agent: `lib/runs.ts`, `app/api/assistant/runs/**`, `app/api/assistant/route.ts`, `instrumentation.ts` | IN_PROGRESS |
-| T04 | Assistant + progress streaming (signal, waiter, cancel-save, failed entries) | T03 | backend agent: `lib/assistant.ts`, `lib/connectors/types.ts` | IN_PROGRESS |
-| T05 | Browser worker + transport (backpressure, input queue, tokens, release, cleanup) | T03 | browser agent: `browser-service/**`, `lib/browser.ts`, `app/api/assistant/browser/route.ts`, `lib/connectors/amazon.ts` | IN_PROGRESS |
-| T06 | Frontier browser presentation (canvas renderer, mapping, states, expansion) | T02 (final: T05) | browser-UI agent: `components/chat/BrowserView.tsx`, `components/chat/browser-frames.ts`, `app/globals.css` (`.cx-browser*` only) | IN_PROGRESS |
-| T07 | Chat-first browser + required takeover integration (run client) | T04, T05, T06 | chat agent: `components/chat/Chat.tsx`, `components/chat/ui.tsx`, `lib/run-client.ts` | IN_PROGRESS (client side in parallel against the contract) |
-| T08 | Harden recovery, isolation, limits | T07 | verify agents | TODO |
-| T09 | Mobile styling + accessibility verification | T07 | verify agents | TODO |
-| T10 | Integrated verification, review, delivery | T08, T09 | coordinator + review agents | TODO |
+| T03 | Authenticated persistence + run APIs | T02 | backend agent: `lib/runs.ts`, `app/api/assistant/runs/**`, `app/api/assistant/route.ts`, `instrumentation.ts` | DONE |
+| T04 | Assistant + progress streaming (signal, waiter, cancel-save, failed entries) | T03 | backend agent: `lib/assistant.ts`, `lib/connectors/types.ts` | DONE |
+| T05 | Browser worker + transport (backpressure, input queue, tokens, release, cleanup) | T03 | browser agent: `browser-service/**`, `lib/browser.ts`, `app/api/assistant/browser/route.ts`, `lib/connectors/amazon.ts` | DONE |
+| T06 | Frontier browser presentation (canvas renderer, mapping, states, expansion) | T02 (final: T05) | browser-UI agent: `components/chat/BrowserView.tsx`, `components/chat/browser-frames.ts`, `app/globals.css` (`.cx-browser*` only) | DONE |
+| T07 | Chat-first browser + required takeover integration (run client) | T04, T05, T06 | chat agent: `components/chat/Chat.tsx`, `components/chat/ui.tsx`, `lib/run-client.ts` | DONE |
+| T08 | Harden recovery, isolation, limits | T07 | verify agents | DONE |
+| T09 | Mobile styling + accessibility verification | T07 | verify agents | DONE |
+| T10 | Integrated verification, review, delivery | T08, T09 | coordinator + review agents | IN_PROGRESS |
 
 ## Acceptance checks
 

@@ -58,25 +58,25 @@ async function startCast(s) {
   });
 }
 
-/** Switches the tab between the desktop browser (Neon) and the phone site (the shopper driving). */
+/**
+ * Switches the tab between the desktop browser (Neon) and the phone site (the shopper driving). Done with the
+ * DevTools emulation calls directly, never page.setViewport: that reloads the page whenever the mobile/touch
+ * emulation changes, which would throw away what the shopper just did. Puppeteer's own viewport stays the
+ * desktop one throughout (screenshots use s.mode).
+ */
 async function setMode(s, mode) {
   if (s.mode === mode) return;
   s.mode = mode;
   const page = s.page;
-  if (mode === "phone") {
-    await page.setUserAgent(PHONE_UA);
-    await page.setViewport(PHONE_VIEW);
-    await startCast(s);
-    // Reload so Amazon serves its phone layout (not after a form post, which a reload would resend).
-    if (/^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
-  } else {
-    // Back to the desktop browser without a reload (page.setViewport reloads when the mobile/touch emulation
-    // changes, which would throw away what the shopper just did on the page). Neon's next step navigates anyway.
-    await page.setUserAgent(UA);
-    await s.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false }).catch(() => {});
-    await s.cdp.send("Emulation.setDeviceMetricsOverride", { width: VIEW.width, height: VIEW.height, deviceScaleFactor: 1, mobile: false });
-    await startCast(s);
-  }
+  const phone = mode === "phone";
+  const v = phone ? PHONE_VIEW : VIEW;
+  await page.setUserAgent(phone ? PHONE_UA : UA);
+  await s.cdp.send("Emulation.setDeviceMetricsOverride", { width: v.width, height: v.height, deviceScaleFactor: v.deviceScaleFactor ?? 1, mobile: phone });
+  await s.cdp.send("Emulation.setTouchEmulationEnabled", phone ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+  await startCast(s);
+  // Going to the phone site: reload so Amazon serves its phone layout (not after a form post, which a reload
+  // would resend, nor on sign-in or robot-check pages). Back to desktop: no reload; Neon's next step navigates.
+  if (phone && /^https:\/\//.test(page.url()) && !/\/ap\/|\/ax\/|validateCaptcha/i.test(page.url())) await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
 }
 // Pages the browser may open. Images, scripts and styles can come from anywhere public.
 const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-amazon\.com|ssl-images-amazon\.com)$/i;
@@ -246,8 +246,8 @@ async function isCaptcha(page) {
 
 /** What on the page only the shopper can get past, if anything (said to them in the chat). */
 async function needsShopper(page) {
-  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Tap Take over and get past it.";
-  if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon is asking you to sign in. Tap Take over to sign in yourself.";
+  if (await isCaptcha(page)) return "Amazon wants to check you're not a robot. Get past it, then tap Done.";
+  if (/\/ap\/(signin|mfa|cvf)|\/ax\/claim/i.test(page.url())) return "Amazon wants you to sign in. Sign in yourself (Neon never sees it), then tap Done.";
   return null;
 }
 
