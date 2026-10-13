@@ -48,8 +48,11 @@ function findField(hint, kinds) {
       if (t === want) score = Math.max(score, 100);
       else if (t.includes(want)) score = Math.max(score, 80);
       else {
-        const hit = words.filter((w) => t.split(" ").includes(w)).length;
-        if (hit) score = Math.max(score, (hit / words.length) * 60);
+        // A partial match must include the hint's last word, the kind of field ("date", "time", "location",
+        // "name"): "pick-up date" must not land on "Pick-up location".
+        const tw = t.split(" ");
+        const hit = words.filter((w) => tw.includes(w)).length;
+        if (hit && tw.includes(words[words.length - 1])) score = Math.max(score, (hit / words.length) * 60);
       }
     }
     if (score > (best?.score ?? 0)) best = { el, score };
