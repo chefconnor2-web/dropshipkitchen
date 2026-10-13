@@ -17,9 +17,7 @@ check (or a choice only they can make) opens this browser full screen on their p
     default 49152: no new frame is sent while a viewer's socket holds more), `ALLOWED_ORIGINS` (comma list of
     storefront origins allowed to open the live view, e.g. `https://storefront-preview-debc.up.railway.app`),
     `NAV_INTERCEPT=off` (turns off the page-load check described below), `UNWATCHED_MINUTES` (default 3: a
-    browser nobody is watching and Neon isn't using closes after this, unless it's waiting on a robot check),
-    `BATCH_TABS` (default 3: tabs a batch of searches or adds uses at once; helpers load no images and close
-    when the batch ends).
+    browser nobody is watching and Neon isn't using closes after this, unless it's waiting on a robot check)).
 - Memory: each Amazon tab takes roughly 250–450 MB. With a 1 GB limit keep `MAX_SESSIONS` at 2 or raise the
   service's memory limit; Chrome is started with lighter settings and video/audio streams are blocked.
 - Variables on the Chit (storefront) service:
