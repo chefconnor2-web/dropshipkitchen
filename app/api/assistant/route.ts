@@ -109,6 +109,7 @@ export async function POST(req: Request) {
         let error = "Something went wrong. Please try again.";
         if (e instanceof AssistantLimitError) error = e.message;
         else if (e instanceof Anthropic.RateLimitError) error = "The assistant is busy. Try again in a minute.";
+        else if (e instanceof Anthropic.BadRequestError && /too long|context|exceed/i.test(e.message)) error = "This chat has more than Neon can read at once. Start a new chat, or send a shorter message.";
         else if (e instanceof Anthropic.AuthenticationError) {
           console.error("[assistant] bad ANTHROPIC_API_KEY");
           error = "The assistant isn't set up correctly.";

@@ -43,6 +43,7 @@ import {
   type Turn,
 } from "./ui";
 import { imageUrl, uploadImage } from "./images";
+import { MAX_MESSAGE_CHARS } from "@/lib/limits";
 import { listen, speak, speechInputSupported, speechOutputSupported, stopSpeaking, unlockSpeech, type Recognizer } from "./voice";
 import VoiceMode from "./VoiceMode";
 
@@ -557,7 +558,7 @@ export default function Chat({
             id="cx-q"
             ref={inputRef}
             rows={1}
-            maxLength={8000}
+            maxLength={MAX_MESSAGE_CHARS}
             value={input}
             enterKeyHint="send"
             placeholder={dictating ? "Listening…" : "Message"}
@@ -712,7 +713,7 @@ export default function Chat({
                       <textarea
                         autoFocus
                         value={editing.text}
-                        maxLength={8000}
+                        maxLength={MAX_MESSAGE_CHARS}
                         onChange={(ev2) => setEditing({ index: i, text: ev2.target.value })}
                         onKeyDown={(ev2) => {
                           if (ev2.key === "Escape") setEditing(null);
