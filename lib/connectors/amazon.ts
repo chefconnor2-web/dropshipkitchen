@@ -40,7 +40,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "browser_act",
     description:
-      "Control the live browser directly when the Amazon tools aren't enough (choose a size or color, open a section, scroll). Actions run in order, then you get a screenshot (390×780 px) to see the result. tap x/y are pixels on that screenshot. Only Amazon pages open.",
+      "Control the live browser directly when the Amazon tools aren't enough (choose a size or color, open a section, scroll). Actions run in order, then you get a screenshot (1280×800 px, a desktop browser) to see the result. tap x/y are pixels on that screenshot (a click). Only Amazon pages open.",
     input_schema: {
       type: "object",
       properties: {

@@ -24,6 +24,8 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   const [needs, setNeeds] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [frame, setFrame] = useState(false);
+  // The browser is desktop-sized; on a phone the shopper can zoom in while driving.
+  const [zoom, setZoom] = useState(false);
 
   // Connect only while the card is on screen (old cards further up stay quiet).
   useEffect(() => {
@@ -109,10 +111,15 @@ export default function BrowserView({ b }: { b: BrowserCard }) {
   // The page itself says it needs the shopper (robot check, sign in), or Neon asked them to take over.
   const ask = !closed && !control ? needs || b.handoff || null : null;
   const card = (
-    <div className={`cx-browser${control ? " is-control is-full" : ""}${closed ? " is-ended" : ""}${ask ? " is-asking" : ""}`}>
+    <div className={`cx-browser${control ? " is-control is-full" : ""}${control && zoom ? " is-zoom" : ""}${closed ? " is-ended" : ""}${ask ? " is-asking" : ""}`}>
       <div className="cx-browser-bar">
         <span className={`cx-browser-dot${status === "live" && !closed ? " is-live" : ""}`} aria-hidden />
         <span className="cx-browser-host">{host}</span>
+        {control && (
+          <button type="button" className="cx-browser-zoom" onClick={() => setZoom((z) => !z)} aria-pressed={zoom}>
+            {zoom ? "Fit" : "Zoom"}
+          </button>
+        )}
         {!closed && status === "live" && (
           <button type="button" className={`cx-browser-take${control ? " is-on" : ""}`} onClick={() => take(!control)}>
             {control ? "Hand back to Neon" : "Take over"}

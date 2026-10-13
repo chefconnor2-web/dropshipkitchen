@@ -41,7 +41,7 @@ export interface PageState {
   signIn: boolean;
   /** Set when only the shopper can get past the page (robot check, sign in): what to tell them. */
   needsShopper?: string | null;
-  /** JPEG, base64, 390×780. */
+  /** JPEG, base64, 1280×800 (desktop Chrome). */
   screenshot: string | null;
   [k: string]: unknown;
 }
