@@ -340,7 +340,7 @@ async function goto(s, url, page = s.page) {
   // Amazon gets the long wait (its first load is slow); other sites fail fast so Neon can fall back.
   const amazon = /(^|\.)amazon\./i.test(hostOf(url));
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: amazon ? 30000 : 15000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: amazon ? 30000 : 25000 });
   } catch (e) {
     log("goto failed:", hostOf(url), e?.name || "Error");
     // Stop the half-loaded page, so the next look at it (a screenshot, the title) answers at once.
@@ -702,8 +702,16 @@ const server = http.createServer(async (req, res) => {
             timing.push(`${a?.type}${a?.field ? `(${String(a.field).slice(0, 24)})` : a?.text ? `(${String(a.text).slice(0, 24)})` : ""} ${Date.now() - t}ms${r && r.ok === false ? " ✗" : ""}`);
             if (SMART.has(a?.type)) results.push({ type: a.type, ...(a.field ? { field: String(a.field).slice(0, 60) } : {}), ...(a.text ? { text: String(a.text).slice(0, 60) } : {}), ...r });
           }
-          log("act", s.id.slice(0, 6), hostOf(s.page.url()), `${Date.now() - t0}ms:`, timing.join(", "));
+          // Discover Cars: the path too (search and booking steps), for tuning. Amazon stays host-only.
+          let where = hostOf(s.page.url());
+          if (/discovercars/i.test(where)) {
+            try {
+              where += new URL(s.page.url()).pathname.slice(0, 80);
+            } catch {}
+          }
+          log("act", s.id.slice(0, 6), where, `${Date.now() - t0}ms:`, timing.join(", "));
           for (const r of results) if (!r.ok && r.fields) log("act", s.id.slice(0, 6), "fields on page:", JSON.stringify(r.fields).slice(0, 900));
+          for (const r of results) if (!r.ok && r.calendar) log("act", s.id.slice(0, 6), "calendar:", r.calendar);
           return snapshot(s, results.length ? { results } : {}, s.page, body.noShot !== true);
         }));
       }
