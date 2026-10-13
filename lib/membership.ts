@@ -99,12 +99,24 @@ export function messagesFor(budgetMicros: number, avgMicros: number): number {
   return Math.max(0, Math.floor(budgetMicros / Math.max(1, avgMicros)));
 }
 
+const OWNER_LIMIT = 1_000_000;
+/** OWNER_EMAILS: comma-separated emails of the store's owners, who aren't limited (signed in as that account). */
+export function isOwnerEmail(email: string | null | undefined): boolean {
+  const owners = (process.env.OWNER_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+  return !!email && owners.includes(email.trim().toLowerCase());
+}
+
 /** How many AI messages this person may still send. */
 export async function aiAllowance(who: { customerId: string | null; visitorId: string | null }): Promise<Allowance> {
   const limits = await getLimits();
   const customer = who.customerId ? await prisma.customer.findUnique({ where: { id: who.customerId } }) : null;
   const subs = customer ? await activeSubscriptions(customer.id) : [];
   const subscriber = subs.length > 0;
+  // The store's owners (OWNER_EMAILS) test without limits; their AI use is still recorded.
+  if (customer && isOwnerEmail(customer.email)) {
+    const used = await prisma.aiUsage.count({ where: { customerId: customer.id, createdAt: { gte: new Date(Date.now() - WINDOW_MS) } } });
+    return { subscriber, plan: subscriber ? (subs.some((s) => s.plan !== "lite") ? "full" : "lite") : null, limit: OWNER_LIMIT, used, remaining: OWNER_LIMIT, basis: "custom", spendCents: 0 };
+  }
   if (customer && subscriber) {
     // Someone with both plans gets the full one.
     const plan: "full" | "lite" = subs.some((s) => s.plan !== "lite") ? "full" : "lite";
