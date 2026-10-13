@@ -31,7 +31,12 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        to: { type: "string", description: "Recipient address (e.g. the hotel's front desk). Only an address you found on the hotel's own site or booking details." },
+        to: {
+          type: "string",
+          description: "Recipient address: the hotel's front desk, found on the hotel's own site or booking details, or an address the shopper told you to send it to instead (e.g. their own, to test).",
+        },
+        found_address: { type: "string", description: "The hotel front-desk address you found, when `to` is a different address the shopper asked for. Shown on the draft." },
+        found_at: { type: "string", description: "Where you found found_address (the page's site, e.g. hotelname.com)." },
         subject: { type: "string" },
         body: { type: "string", description: "Plain text, signed with the shopper's name." },
       },
@@ -118,6 +123,8 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
     const to = String(input.to ?? "").trim();
     const subject = String(input.subject ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
     const body = String(input.body ?? "").trim().slice(0, 5000);
+    const found = String(input.found_address ?? "").trim();
+    const foundAt = String(input.found_at ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
     if (!validEmail(to)) return { content: "That isn't a valid email address. Find the hotel's front desk address on its own website first.", isError: true };
     if (!subject || !body) return { content: "Give the email a subject and a body.", isError: true };
     const sent = (sendsByChat.get(ctx.chatId) ?? 0) + 1;
@@ -138,6 +145,7 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
         body,
         from: g?.email ?? null,
         ...(!g && gmailConfigured() ? { connectUrl: `${config.siteUrl}/api/google/connect?back=${encodeURIComponent(`/c/${ctx.chatId}`)}` } : {}),
+        ...(validEmail(found) && found.toLowerCase() !== to.toLowerCase() ? { foundAddress: found, ...(foundAt ? { foundAt } : {}) } : {}),
         status: "draft",
         group: "Email",
       };
@@ -180,6 +188,7 @@ export const tripsConnector: Connector = {
 Trips and email:
 - When the shopper wants a package sent to where they're staying (e.g. "send this to my hotel" alongside a flight and hotel), do it in order: find the flight; find a hotel whose check-in date is on or before the flight's arrival date (and that's open when they land); find the Amazon item and finish with the Check out on Amazon link, telling them to ship it to the hotel's address as "<their name>, guest arriving <date>, c/o <hotel name>, <hotel address>" and noting Amazon's estimated delivery date from your add results (say it's an estimate; it depends on the address they enter).
 - They book and pay for the flight and hotel themselves with the cards' Book buttons. When they say they've booked, call trip_bookings, then find the hotel's front desk email on the hotel's own website (web search), and call send_email with a short, polite note from them: their name, booking confirmation, flight number and arrival time, that a package from Amazon is due around <date>, and a request to hold it at the front desk until they check in. It's sent only after they approve it in the chat.
+- If the shopper asks you to send it to another address instead (say, their own, to test), still find the front desk's address first, then call send_email with to = their address, found_address = the front desk's and found_at = the site you found it on; the draft shows both. Mention the front desk address in your reply too.
 - Never invent an email address, a booking, a time or a delivery date: use only what the tools returned.`,
   tools: TOOLS,
   run,

@@ -145,6 +145,9 @@ export interface EmailDraftCard {
   cc: string[];
   subject: string;
   body: string;
+  /** The hotel's front-desk address Neon found, and where it found it, when the shopper had it sent elsewhere (a test). */
+  foundAddress?: string;
+  foundAt?: string;
   /** The shopper's Gmail it will be sent from, or null (then it goes from the store, replies to the shopper). */
   from: string | null;
   /** Shown while Gmail isn't connected: where to connect it. */
