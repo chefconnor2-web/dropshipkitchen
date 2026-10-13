@@ -209,13 +209,15 @@ export const tripsConnector: Connector = {
   enabled: () => true,
   prompt: () => `
 Trips and email:
-- When the shopper wants a package sent to where they're staying (e.g. "send this to my hotel" alongside a flight and hotel), do it in this order:
-  1. Amazon first: find the item (Prime only, unless nothing fits) and add it to the cart, so you have Amazon's estimated delivery date from your add results (say it's an estimate; it depends on the address they enter).
-  2. Then the flight.
-  3. Then a hotel whose check-in date is on or before the flight's arrival date (and that's open when they land).
-  4. Then a rental car at the destination airport from the flight's arrival date to the day they leave (rental_car_link), when they ask for one.
-  5. They book and pay for the flight and hotel themselves with the cards' Book buttons. When they say they've booked, call trip_bookings, then finish the Amazon order with the Check out on Amazon link, telling them to ship it to the hotel's address as "<their name>, guest arriving <date>, c/o <hotel name>, <hotel address>".
-  6. Last, the email: find the hotel's front desk email on the hotel's own website (web search) and call send_email with a short, polite note from them: their name, booking confirmation, flight number and arrival time, that a package from Amazon is due around <date>, and a request to hold it at the front desk until they check in. It's sent only after they approve it in the chat.
+- When the shopper wants a package sent to where they're staying (e.g. "send this to my hotel" alongside a flight and hotel), always book the trip first and do the package at the end:
+  1. The flight.
+  2. A hotel whose check-in date is on or before the flight's arrival date (and that's open when they land).
+  3. A rental car at the destination airport from the arrival date to the day they leave (rental_car_link), when they ask for one.
+  4. They book and pay for the flight and hotel themselves with the cards' Book buttons (the car on Discover Cars). Wait until they say they've booked, then call trip_bookings.
+  5. Then the package, shipped to the hotel: find the item on Amazon (Prime only, unless nothing fits), add it to the cart, and finish with the Check out on Amazon link, telling them to ship it to "<their name>, guest arriving <date>, c/o <hotel name>, <hotel address>" and giving Amazon's estimated delivery date from your add results (an estimate; it depends on the address they enter). If it's estimated to arrive after they check out, say so and suggest something that arrives sooner.
+  6. If no shop has it (nothing suitable on Amazon, or Amazon won't load), don't stall the trip: tell them their trip is booked, and that you can shop for it on Amazon or from wholesalers (the catalog) whenever they like and get it shipped to their accommodation.
+  7. Last, once the package is on its way to the hotel, the email: find the hotel's front desk email on the hotel's own website (web search) and call send_email with a short, polite note from them: their name, booking confirmation, flight number and arrival time, that a package from Amazon is due around <date>, and a request to hold it at the front desk until they check in. It's sent only after they approve it in the chat.
+- After any hotel is booked, even without a package, offer once: you can shop anything they need on Amazon or from wholesalers and have it shipped to their accommodation, waiting for them when they arrive.
 - If the shopper asks you to send it to another address instead (say, their own, to test), still find the front desk's address first, then call send_email with to = their address, found_address = the front desk's and found_at = the site you found it on; the draft shows both. Mention the front desk address in your reply too.
 - When they ask about their trips, itinerary, receipts or confirmation codes, call my_trips and answer from it (in a short, scannable list), and mention that it's all in the Trips menu (✈️ at the top of the chat).
 - Never invent an email address, a booking, a time or a delivery date: use only what the tools returned.`,
