@@ -283,6 +283,39 @@ async function setNative(page, value) {
 }
 
 /**
+ * The car offers on a results page: each card is the largest box holding exactly one deal button ("View deal",
+ * "Select"...) and a price. Marks each button (data-neon-offer-btn) so open_offer clicks exactly that card's
+ * deal. Returns them cheapest first, with the card's text for the model to read (car, supplier, terms).
+ */
+function listOffers() {
+  const vis = (el) => {
+    const st = getComputedStyle(el);
+    return st.display !== "none" && st.visibility !== "hidden" && el.getClientRects().length > 0;
+  };
+  const DEAL = /^(view deal|view offer|select|choose|book( now)?|see deal|reserve)$/i;
+  const MONEY = /(?:US\$|C\$|CA\$|\$|€|£)\s?\d[\d,]*(?:\.\d{2})?|\d[\d,]*(?:\.\d{2})?\s?(?:USD|CAD|EUR|GBP)/g;
+  const amount = (m) => Number(m.replace(/[^\d.]/g, ""));
+  const buttons = [...document.querySelectorAll("a, button, [role=button]")].filter((b) => vis(b) && DEAL.test((b.textContent || "").replace(/\s+/g, " ").trim()));
+  const out = [];
+  buttons.forEach((b, i) => {
+    let card = b;
+    for (let el = b.parentElement; el && el !== document.body; el = el.parentElement) {
+      const deals = [...el.querySelectorAll("a, button, [role=button]")].filter((x) => buttons.includes(x));
+      if (deals.length > 1) break;
+      card = el;
+    }
+    const text = (card.innerText || "").replace(/\s+/g, " ").trim();
+    const moneys = text.match(MONEY) || [];
+    if (!moneys.length) return;
+    const totalM = /total[^$€£\d]{0,20}((?:US\$|C\$|CA\$|\$|€|£)\s?\d[\d,]*(?:\.\d{2})?)/i.exec(text);
+    const total = totalM ? amount(totalM[1]) : Math.max(...moneys.map(amount));
+    b.setAttribute("data-neon-offer-btn", String(i));
+    out.push({ index: i, total, price: totalM ? totalM[1] : moneys.sort((x, y) => amount(y) - amount(x))[0], text: text.slice(0, 420) });
+  });
+  return out.sort((x, y) => x.total - y.total).slice(0, 15);
+}
+
+/**
  * One smart action. Returns { ok, did } (or { ok: false, why }) for Neon.
  * fill:   { field, value, choose? }  text field; choose = pick the matching suggestion that appears
  * select: { field, value }           native or custom dropdown (times understood in any format)
@@ -334,7 +367,7 @@ export async function smartAction(page, a) {
   if (a.type === "select") {
     const f = await page.evaluate(findField, String(a.field ?? ""), "select");
     if (!f) return { ok: false, why: `No dropdown like "${a.field}".`, fields: await page.evaluate(fieldInventory).catch(() => []) };
-    const forms = timeForms(value).concat(value);
+    const forms = timeForms(value).concat(value, ...(Array.isArray(a.alternates) ? a.alternates.map(String) : []));
     if (f.tag === "select") {
       const did = await page.$eval(
         "[data-neon-pick]",
@@ -362,7 +395,49 @@ export async function smartAction(page, a) {
         return { ok: true, did: `chose "${did}"` };
       }
     }
+    // A searchable dropdown (React Select and the like): type to filter, then take the match or the first.
+    for (const v of [value, ...(Array.isArray(a.alternates) ? a.alternates.map(String) : [])].slice(0, 3)) {
+      await page.keyboard.type(String(v).slice(0, 60), { delay: 15 }).catch(() => {});
+      for (let i = 0; i < 6; i++) {
+        await pause(100);
+        const did = await page.evaluate(clickMatching, forms, "options");
+        if (did) {
+          await settle(page, 400);
+          return { ok: true, did: `typed "${v}", chose "${did}"` };
+        }
+      }
+      // Still nothing listed: Enter takes the highlighted match in most comboboxes.
+      const before = await page.evaluate(() => document.querySelector("[data-neon-pick]")?.textContent?.trim() ?? "").catch(() => "");
+      await page.keyboard.press("Enter").catch(() => {});
+      await settle(page, 300);
+      const after = await page.evaluate(() => document.querySelector("[data-neon-pick]")?.textContent?.trim() ?? "").catch(() => "");
+      if (after && after !== before && forms.some((w) => after.toLowerCase().includes(String(w).toLowerCase()))) return { ok: true, did: `typed "${v}", chose "${after.slice(0, 40)}"` };
+      await page.keyboard.down("Control").catch(() => {});
+      await page.keyboard.press("KeyA").catch(() => {});
+      await page.keyboard.up("Control").catch(() => {});
+      await page.keyboard.press("Backspace").catch(() => {});
+    }
+    await page.keyboard.press("Escape").catch(() => {});
     return { ok: false, why: `Opened "${a.field}" but found no option "${value}".` };
+  }
+  if (a.type === "list_offers") {
+    const offers = await page.evaluate(listOffers).catch(() => []);
+    if (!offers.length) return { ok: false, why: "No car offers with a deal button found on this page." };
+    return { ok: true, did: `found ${offers.length} offers`, offers };
+  }
+  if (a.type === "open_offer") {
+    const n = Number(a.index);
+    const box = await page.evaluate((n) => {
+      const b = document.querySelector(`[data-neon-offer-btn="${n}"]`);
+      if (!b) return null;
+      b.scrollIntoView({ block: "center", behavior: "instant" });
+      const r = b.getBoundingClientRect();
+      return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    }, n).catch(() => null);
+    if (!box) return { ok: false, why: `Offer ${a.index} isn't on the page any more (it re-rendered). List the offers again.` };
+    await page.mouse.click(box.x, box.y, { delay: 20 });
+    await settle(page, 1500);
+    return { ok: true, did: `opened offer ${n}` };
   }
   if (a.type === "date") {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { ok: false, why: "Dates are YYYY-MM-DD." };
@@ -391,5 +466,5 @@ export async function smartAction(page, a) {
   return { ok: false, why: `Unknown action ${a.type}.` };
 }
 
-export const SMART = new Set(["fill", "select", "date", "click_text"]);
+export const SMART = new Set(["fill", "select", "date", "click_text", "list_offers", "open_offer"]);
 export { settle };
