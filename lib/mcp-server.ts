@@ -343,7 +343,7 @@ export function chitMcpServer(who: Who): McpServer {
   server.registerTool(
     "open_chit",
     { title: "Open Chit", description: "Show the customer's Chit in the chat: tabs for their trips, cart, orders and Neon chats, with buttons (full screen available). Use when they ask to see their Chit, account or everything.", inputSchema: {}, annotations: { readOnlyHint: true, openWorldHint: false }, _meta: UI },
-    guarded(who, "open_chit", async () => ({ ...txt({ shown: "The customer's Chit (trips, cart, orders, chats) is open in the card." }), structuredContent: { home: true } })),
+    guarded(who, "open_chit", async () => ({ ...txt({ shown: "The customer's Chit (trips, cart, orders, chats) is open in the card." }), structuredContent: { home: true, result: "The customer's Chit (trips, cart, orders, chats) is open in the card." } })),
   );
 
   /* ---------- Shopping: Chit's catalog and the customer's Chit cart (the same cart as on their phone) ---------- */
@@ -617,7 +617,14 @@ async function waitNeon(runId: string, ms = STATUS_WAIT_MS): Promise<NeonResult>
 function neonOut(r: NeonResult): Out {
   const out = neonOutRaw(r);
   // The card follows the run live (neon_watch) until it ends, like Neon's bubble in the Chit chat.
-  if (r.state !== "error") out.structuredContent = { ...(out.structuredContent ?? { cards: [] }), neon: { runId: r.runId, chatId: r.chatId } };
+  if (r.state !== "error") {
+    const text = out.content[0]?.text ?? "";
+    let result: unknown = text;
+    try {
+      result = JSON.parse(text);
+    } catch {}
+    out.structuredContent = { result, cards: [], ...(out.structuredContent ?? {}), neon: { runId: r.runId, chatId: r.chatId } };
+  }
   return out;
 }
 
