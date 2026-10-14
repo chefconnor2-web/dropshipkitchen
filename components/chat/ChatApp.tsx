@@ -214,6 +214,12 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             </svg>
             <span>Company</span>
           </Link>
+          <Link href="/connect" className="sb-row">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <path d="M9 7V3M15 7V3M6 7h12v4a6 6 0 0 1-12 0V7ZM12 17v4" />
+            </svg>
+            <span>Claude &amp; ChatGPT</span>
+          </Link>
           <Link href="/account" className="sb-row">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
               <circle cx="12" cy="8" r="3.5" />

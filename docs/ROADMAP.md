@@ -25,20 +25,14 @@ What's agreed but not built yet, roughly in order. Update it as things ship.
 
 ## Chit MCP: a Claude and ChatGPT connector
 
-Publish Chit as a remote MCP server, so other assistants can search and book through Chit. Claude takes remote MCP servers as custom connectors, and ChatGPT's apps and connectors are built on MCP, so one server serves both.
+Live at `/mcp` (Streamable HTTP, OAuth 2.1 with dynamic client registration and PKCE). Setup steps for users are on the `/connect` page.
 
-- Tools, built on the same code as Neon's connectors (not a second system):
-  - search flights (with fare types)
-  - search hotels
-  - find a rental car (search and pick)
-  - my trips (itinerary and receipts)
-  - log an expense
-  - the company travel policy
-- Payment stays as pay links (Stripe Checkout, Pay on Discover Cars). The MCP never handles card data.
-- Each user connects their Chit account with OAuth, so bookings, saved details and expenses go to the right person and company.
-- Rate limits per account, no browser sessions exposed, and audit logs of bookings started through the MCP.
-- Revenue is the same as in the app: flight and hotel fees plus the Discover Cars affiliate commission.
-- Do it after the core flows are solid on the real sites. Estimate about a week.
+- Done: search_flights, get_flight, find_places, search_hotels, find_rental_car (a Discover Cars link), my_trips, company_policy, set_work_trip, log_expense. Each search becomes a Chit trip chat, so the cards and bookings show in Chit. Pay links only. Per-account rate limit (20 calls a minute, 300 an hour) and an audit row per call (McpCall). Customers disconnect apps on /connect.
+- Next:
+  - Try it in Claude (Settings → Connectors → Add custom connector) and in ChatGPT developer mode on the live site.
+  - ChatGPT app polish: widgets (flight and hotel cards rendered in ChatGPT), then submit to the app directory.
+  - Submit to Claude's connector directory once it's stable.
+  - Rental car search with Neon's live browser (needs a way to hand over the pay link outside the chat).
 
 ## Ideas parked
 

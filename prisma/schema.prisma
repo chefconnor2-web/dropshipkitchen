@@ -478,23 +478,23 @@ model EmailLog {
 /// One shopper's conversation with the sourcing assistant. `messagesJson` is the exact Anthropic message
 /// history (append-only); `uiJson` is what the chat panel shows (text, product cards, cart notices).
 model AssistantChat {
-  id           String   @id @default(cuid())
+  id               String   @id @default(cuid())
   /// Anonymous browser id (cs_vid cookie): a visitor's chat history.
-  visitorId    String?
+  visitorId        String?
   /// The signed-in owner. Once set, only that customer can open the chat (the visitor id no longer counts).
-  customerId   String?
-  title        String   @default("New chat")
-  messagesJson String   @default("[]")
-  uiJson       String   @default("[]")
-  userTurns    Int      @default(0)
-  inputTokens  Int      @default(0)
-  outputTokens Int      @default(0)
+  customerId       String?
+  title            String   @default("New chat")
+  messagesJson     String   @default("[]")
+  uiJson           String   @default("[]")
+  userTurns        Int      @default(0)
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
   /// The live browser (browser service session id) this chat drives; only this chat's owner gets view tokens for it.
   browserSessionId String?
   /// Work travel: its bookings and expenses go to the owner's company (expense export, policy).
-  work         Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  work             Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([visitorId, updatedAt])
   @@index([customerId, updatedAt])
@@ -652,43 +652,43 @@ model ShippingQuote {
 /// A flight bought through the chat (Duffel). Created before payment with an immutable snapshot of the offer;
 /// the Duffel order is only created after Stripe confirms payment, and exactly once (status lock).
 model FlightBooking {
-  id                  String      @id @default(cuid())
-  number              String      @unique
+  id                   String      @id @default(cuid())
+  number               String      @unique
   /// HELD | PENDING_PAYMENT | BOOKING | BOOKED | CANCELLING | CANCELLED | FAILED_REFUNDED | NEEDS_REVIEW
-  status              String      @default("PENDING_PAYMENT")
+  status               String      @default("PENDING_PAYMENT")
   /// A held fare (Duffel hold order, not paid yet): pay by then or the airline releases the seats
-  holdUntil           DateTime?
+  holdUntil            DateTime?
   /// A held fare's price is guaranteed until then (null: it can change until paid)
   priceGuaranteedUntil DateTime?
-  offerId             String
+  offerId              String
   /// The flight card the shopper saw (lib/flights-shared FlightCard)
-  cardJson            String
+  cardJson             String
   /// Duffel's own total for the offer when the shopper started checkout (what our balance pays)
-  duffelAmount        String
-  currency            String
+  duffelAmount         String
+  currency             String
   /// What the shopper pays (Duffel total + our fee), in `currency` ×100
-  priceCents          Int
+  priceCents           Int
   /// [{id, title, gender, given_name, family_name, born_on, passport?}] in the offer's passenger order
-  passengersJson      String
-  email               String
-  phone               String
-  customerId          String?
-  stripeSessionId     String?     @unique
-  stripePaymentIntent String?
-  stripeRefundId      String?
-  duffelOrderId       String?
-  bookingReference    String?
-  error               String?
-  paidAt              DateTime?
-  bookedAt            DateTime?
+  passengersJson       String
+  email                String
+  phone                String
+  customerId           String?
+  stripeSessionId      String?     @unique
+  stripePaymentIntent  String?
+  stripeRefundId       String?
+  duffelOrderId        String?
+  bookingReference     String?
+  error                String?
+  paidAt               DateTime?
+  bookedAt             DateTime?
   /// Cancelled by the shopper: the airline's refund passed on to them (our fee is kept), ×100
-  refundCents         Int?
-  cancelledAt         DateTime?
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+  refundCents          Int?
+  cancelledAt          DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
   /// Booked through a friend's shared trip link (the same flights)
-  sharedTripId        String?
-  sharedTrip          SharedTrip? @relation(fields: [sharedTripId], references: [id])
+  sharedTripId         String?
+  sharedTrip           SharedTrip? @relation(fields: [sharedTripId], references: [id])
 
   @@index([status])
   @@index([sharedTripId])
@@ -872,4 +872,59 @@ model Expense {
 
   @@index([companyId, spentOn])
   @@index([customerId, spentOn])
+}
+
+/// Chit MCP (Claude / ChatGPT connectors). An app that registered itself (OAuth dynamic client registration).
+model McpClient {
+  id           String   @id // the OAuth client_id
+  name         String
+  /// JSON array of allowed redirect URIs.
+  redirectUris String
+  createdAt    DateTime @default(now())
+}
+
+/// One sign-in in progress: the app's authorize request, waiting for the customer to approve it, then its
+/// one-time code (only the hash is stored) until the app swaps it for tokens.
+model McpAuthRequest {
+  id            String    @id @default(cuid())
+  clientId      String
+  redirectUri   String
+  state         String    @default("")
+  codeChallenge String
+  scope         String    @default("")
+  resource      String    @default("")
+  customerId    String?
+  codeHash      String?   @unique
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+/// Access and refresh tokens for a connected app (hashes only). Revoking one revokes the whole grant.
+model McpToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  kind       String // access | refresh
+  grantId    String
+  clientId   String
+  customerId String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([grantId])
+  @@index([customerId])
+}
+
+/// Audit log and rate limit: one row per tool call through the MCP.
+model McpCall {
+  id         String   @id @default(cuid())
+  customerId String
+  clientId   String
+  tool       String
+  ok         Boolean
+  ms         Int
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
 }
