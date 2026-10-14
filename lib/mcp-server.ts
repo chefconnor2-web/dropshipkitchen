@@ -217,7 +217,7 @@ export function chitMcpServer(who: Who): McpServer {
           min_stars: z.number().int().min(0).max(5).default(0),
           hotel_name: z.string().max(80).optional().describe("A hotel the customer named, e.g. 'Lakeview Signature': matches go first"),
           currency: z.string().length(3).optional().describe("ISO currency for prices, e.g. CAD; default the customer's local currency"),
-          max_results: z.number().int().min(1).max(30).default(6),
+          max_results: z.coerce.number().int().min(1).max(30).default(6),
           cursor: z.string().max(30).optional().describe("next_cursor from the previous search_hotels: the next hotels from that same search, no new search"),
           trip_id: tripIdField,
         },
