@@ -20,6 +20,8 @@ export interface ViewCard {
   badges?: string[];
   price?: string;
   priceNote?: string;
+  /** Neon's live browser for this chat: the view streams it and lets the customer take over. */
+  live?: { chatId: string; session: string; site?: string; runId?: string; stepId?: string; needs?: string };
   /** Fare types (Basic, Standard, Flex…): each one books its own offer. */
   options?: Array<{ label: string; price: string; detail: string; url: string }>;
   actions: ViewAction[];
@@ -121,9 +123,22 @@ export function viewCards(items: ConnectorItem[], chatId?: string): ViewCard[] {
       case "supplier":
         return [{ kind: "supplier", id: it.id, title: it.name, subtitle: it.location, lines: [it.offer, it.moq ? `MOQ ${it.moq}` : "", it.note ?? ""].filter(Boolean), price: it.price, actions: [{ label: "Contact", url: it.url, primary: true }] }];
       case "browser":
-        return chatId ? [{ kind: "browser", id: it.id, title: `Live browser · ${it.site}`, lines: ["Neon is working on this site. Open the chat in Chit to watch or take over."], actions: [{ label: "Open in Chit", url: abs(`/c/${chatId}`), primary: true }] }] : [];
+        return chatId ? [browserCard(chatId, it.session, it.site)] : [];
       default:
         return [];
     }
   });
+}
+
+/** Neon's live browser as a view card: the view streams it; "Open in Chit" is the fallback. */
+export function browserCard(chatId: string, session: string, site?: string, step?: { runId: string; stepId: string; needs: string }): ViewCard {
+  return {
+    kind: "browser",
+    id: `br_${session}`,
+    title: `Neon's browser${site ? ` · ${site.replace(/^www\./, "")}` : ""}`,
+    // The chat's "Approve & next" is the card's "I'm done" here.
+    lines: step ? [step.needs.replace(/Approve & next/g, "I'm done")] : [],
+    live: { chatId, session, site, ...(step ? { runId: step.runId, stepId: step.stepId, needs: step.needs } : {}) },
+    actions: [{ label: "Open in Chit", url: abs(`/c/${chatId}`) }],
+  };
 }
