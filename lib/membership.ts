@@ -100,9 +100,12 @@ export function messagesFor(budgetMicros: number, avgMicros: number): number {
 }
 
 const OWNER_LIMIT = 1_000_000;
-/** OWNER_EMAILS: comma-separated emails of the store's owners, who aren't limited (signed in as that account). */
+/**
+ * OWNER_EMAILS (and EXTRA_OWNER_EMAILS, for adding people without editing the first list): comma-separated
+ * emails of the store's owners, who aren't limited (signed in as that account).
+ */
 export function isOwnerEmail(email: string | null | undefined): boolean {
-  const owners = (process.env.OWNER_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+  const owners = `${process.env.OWNER_EMAILS ?? ""},${process.env.EXTRA_OWNER_EMAILS ?? ""}`.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
   return !!email && owners.includes(email.trim().toLowerCase());
 }
 
