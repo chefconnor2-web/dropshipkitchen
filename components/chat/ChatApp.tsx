@@ -316,7 +316,7 @@ export default function ChatApp(props: { storeName: string; initials: string; co
           <div className="topbar-title topbar-contact">
             <span className="topbar-name">
               {props.storeName}
-              <span className="topbar-sub">{active ? active.title : "Your personal POS"}</span>
+              <span className="topbar-sub">{active ? active.title : "Neon · books and buys for you"}</span>
             </span>
           </div>
           <button type="button" className="sb-icon topbar-trips" onClick={() => setTripsOpen(true)} aria-label="Trips" title="Trips: itineraries and receipts">

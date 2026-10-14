@@ -1014,38 +1014,34 @@ export default function Chat({
       <div className="cx-scroll" ref={scrollRef} onScroll={onScroll}>
         {empty ? (
           <div className="cx-empty">
-            <div className="cx-contact">
-              <AgentBlob size={76} className="cx-avatar cx-avatar-lg" attentive={typing && !!input.trim()} nudge={typing ? nudge : 0} />
-              <h1>{storeName}</h1>
-              <p>Your personal POS · replies in seconds</p>
-              <ShareButton className="cx-share share-center" url="/" text={`${storeName}: your own personal POS system in a chat`} label={`Share ${storeName}`} />
+            <div className="cx-hero">
+              <AgentBlob size={56} className="cx-avatar cx-avatar-lg" attentive={typing && !!input.trim()} nudge={typing ? nudge : 0} />
+              <h1>Hi, I’m Neon.</h1>
+              <p>Tell me what you need, like a flight, a hotel, a rental car or anything to buy. I find the best option, show you the full price and do the booking. You approve every step.</p>
+              <ul className="cx-trust" aria-label="How Neon keeps you in control">
+                <li>Full price before you pay</li>
+                <li>You approve every step</li>
+                <li>Neon never sees your card</li>
+              </ul>
             </div>
-            <div className="cx-col cx-greeting" aria-label="How it works">
-              <div className="cx-msg cx-bot">
-                <div className="cx-bubble cx-bubble-bot cx-no-tail">Hey! 👋 I’m Neon, your personal POS. Tell me what you need, parts, supplies or a flight, like you’d text a friend.</div>
-              </div>
-              <div className="cx-msg cx-bot">
-                <div className="cx-bubble cx-bubble-bot cx-no-tail">I’ll find it, compare the best options and check you out right here. You see the full price before you pay.</div>
-              </div>
-              <div className="cx-msg cx-bot">
-                <div className="cx-bubble cx-bubble-bot">Type, talk 🎙️ or send a photo 📷. Or tap one of these:</div>
-              </div>
-              {!configured && (
-                <p className="cx-err">
-                  The assistant is switched off right now. Try again in a little while.
-                </p>
-              )}
-              <div className="cx-examples" role="group" aria-label="Suggestions">
-                {EXAMPLES.map((x) => (
-                  <button key={x} type="button" className="cx-example" onClick={() => send(x)} disabled={!configured}>
-                    {x}
-                  </button>
-                ))}
-                <button type="button" className="cx-example cx-example-test" onClick={() => send(HOTEL_EMAIL_TEST.prompt)} disabled={!configured}>
-                  {HOTEL_EMAIL_TEST.label}
+            {!configured && <p className="cx-err">The assistant is switched off right now. Try again in a little while.</p>}
+            <div className="cx-examples" role="group" aria-label="Suggestions">
+              {EXAMPLES.map((x) => (
+                <button key={x.text} type="button" className="cx-example" onClick={() => send(x.text)} disabled={!configured}>
+                  <span className="cx-example-icon" aria-hidden>
+                    {x.icon}
+                  </span>
+                  <span>{x.text}</span>
                 </button>
-              </div>
+              ))}
+              <button type="button" className="cx-example cx-example-test" onClick={() => send(HOTEL_EMAIL_TEST.prompt)} disabled={!configured}>
+                <span className="cx-example-icon" aria-hidden>
+                  🧪
+                </span>
+                <span>{HOTEL_EMAIL_TEST.label.replace(/^🧪\s*/, "")}</span>
+              </button>
             </div>
+            <ShareButton className="cx-share share-center" url="/" text={`${storeName}: Neon finds, books and buys for you, right in a chat`} label={`Share ${storeName}`} />
           </div>
         ) : (
           <RunContext.Provider value={savedCtx}>
@@ -1298,7 +1294,7 @@ export default function Chat({
         )}
         {composer}
         <p className="cx-disclaimer">
-          The assistant can make mistakes. Check specs before you order.{" "}
+          Neon can make mistakes. Check the details before you pay.{" "}
           {allowance && !allowance.subscriber && plans && (
             <button type="button" className="cx-plan-link" onClick={() => setShowPlans(true)}>
               {allowance.remaining <= 0 ? "Free preview ended · Keep going" : allowance.remaining === 1 ? "Last free message · Keep going" : "Free preview · Plans"}

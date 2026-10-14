@@ -2315,3 +2315,107 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .b2c { margin: 14px 0 6px; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .b2c-stay { border: 0; background: none; color: var(--ink-2, #555); font-size: 13.5px; padding: 6px; cursor: pointer; }
 .b2c-note { font-size: 13.5px; color: var(--ink-2, #555); margin: 8px 0 0; text-align: center; }
+
+/* ---------- Chit: calm, modern chat. Neon's replies as plain text, a soft bubble for you, one accent ---------- */
+.chat-app {
+  --nx-accent: #5B4BF5;
+  --nx-accent-dark: #4A3AE0;
+  --nx-accent-soft: #F1EFFF;
+  --nx-ink: #111114;
+  --nx-sub: #6B6B76;
+  --nx-line: #E8E8ED;
+  --nx-soft: #F4F4F7;
+  /* the iMessage tokens follow the brand */
+  --im-blue: var(--nx-accent);
+  --im-blue-2: #7C6CFF;
+  --im-gray: var(--nx-soft);
+  --im-ink: var(--nx-ink);
+  --im-sub: var(--nx-sub);
+  --im-line: var(--nx-line);
+  -webkit-font-smoothing: antialiased;
+}
+.chat-app .cx { color: var(--nx-ink); }
+
+/* thread: your messages in a soft bubble, Neon's as plain, readable text */
+.chat-app .cx-col { gap: 22px; }
+.chat-app .cx-bubble-me { background: var(--nx-soft); color: var(--nx-ink); border-radius: 20px 20px 6px 20px; padding: 10px 16px; line-height: 1.5; }
+.chat-app .cx-bubble-me::before, .chat-app .cx-bubble-me::after, .chat-app .cx-bubble-bot::before, .chat-app .cx-bubble-bot::after { display: none; }
+.chat-app .cx-bubble-bot { background: transparent; color: var(--nx-ink); padding: 0; max-width: 100%; border-radius: 0; line-height: 1.6; }
+.chat-app .cx-bubble .cx-md { line-height: 1.6; }
+.chat-app .cx-bubble-bot .cx-md code { background: var(--nx-soft); }
+
+/* header and sidebar */
+.chat-app .topbar { background: rgba(255, 255, 255, 0.86); border-bottom-color: var(--nx-line); }
+.chat-app .topbar-name { font-weight: 650; letter-spacing: -0.01em; color: var(--nx-ink); }
+.chat-app .sb { background: #FAFAFB; border-right-color: var(--nx-line); }
+.chat-app .sb-search { background: #fff; border: 1px solid var(--nx-line); }
+.chat-app .sb-item.is-active { background: var(--nx-accent-soft); }
+.chat-app .sb-item.is-active .sb-item-link, .chat-app .sb-item.is-active .sb-item-more { color: var(--nx-ink); }
+
+/* welcome: who Neon is, why it's safe, and a few things to try */
+.chat-app .cx-empty { justify-content: center; align-items: center; padding: 28px 20px 12px; gap: 20px; }
+.chat-app .cx-empty > * { width: 100%; max-width: 640px; }
+.cx-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; animation: im-fade 0.35s ease both; }
+.cx-hero h1 { margin: 6px 0 0; font: 650 28px/1.15 var(--im-font); letter-spacing: -0.02em; color: var(--nx-ink); text-transform: none; }
+.cx-hero p { margin: 0; max-width: 520px; font-size: 15.5px; line-height: 1.55; color: var(--nx-sub); }
+.cx-trust { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; font-size: 13px; color: var(--nx-sub); }
+.cx-trust li { display: inline-flex; align-items: center; gap: 6px; }
+.cx-trust li::before {
+  content: ""; flex: none; width: 16px; height: 16px; border-radius: 50%;
+  background: #E7F6EC url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%231F9D55' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px no-repeat;
+}
+.chat-app .cx-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; align-items: stretch; animation: im-fade 0.35s ease both 0.1s; }
+.chat-app .cx-example {
+  max-width: none; display: flex; align-items: flex-start; gap: 10px; text-align: left;
+  font: 400 14px/1.4 var(--im-font); color: var(--nx-ink); background: #fff;
+  border: 1px solid var(--nx-line); border-radius: 14px; padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(17, 17, 20, 0.04); transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+.chat-app .cx-example:hover:not(:disabled) { background: #fff; color: var(--nx-ink); border-color: #CFCFD8; box-shadow: 0 4px 14px rgba(17, 17, 20, 0.07); transform: translateY(-1px); }
+.cx-example-icon { flex: none; width: 26px; height: 26px; border-radius: 8px; background: var(--nx-soft); display: grid; place-items: center; font-size: 14px; line-height: 1; }
+.chat-app .cx-example.cx-example-test { grid-column: 1 / -1; border-style: dashed; color: var(--nx-sub); box-shadow: none; }
+.chat-app .cx-empty .cx-share { align-self: center; width: auto; }
+@media (max-width: 520px) {
+  .chat-app .cx-examples { grid-template-columns: 1fr; }
+  .cx-hero h1 { font-size: 24px; }
+}
+
+/* composer: one calm field, the accent on focus and on Send */
+.chat-app .cx-pill { border: 1px solid var(--nx-line); border-radius: 24px; padding: 5px 5px 5px 16px; box-shadow: 0 1px 2px rgba(17, 17, 20, 0.04), 0 8px 24px rgba(17, 17, 20, 0.06); transition: border-color 0.12s, box-shadow 0.12s; }
+.chat-app .cx-pill:focus-within { border-color: #CAC4FA; box-shadow: 0 0 0 4px rgba(91, 75, 245, 0.1), 0 8px 24px rgba(17, 17, 20, 0.06); }
+.chat-app .cx-plus, .chat-app .cx-voice-btn { width: 40px; height: 40px; background: var(--nx-soft); color: var(--nx-sub); }
+.chat-app .cx-plus:hover:not(:disabled), .chat-app .cx-voice-btn:hover:not(:disabled) { background: #EAEAF0; color: var(--nx-ink); }
+.chat-app .cx-send { width: 34px; height: 34px; background: var(--nx-accent); }
+.chat-app .cx-send:hover:not(:disabled) { background: var(--nx-accent-dark); }
+.chat-app .cx-send:disabled { background: #D9D9E0; }
+.chat-app .cx-disclaimer { color: #9A9AA5; }
+
+/* cards: same quiet frame everywhere, the accent for Neon's pick */
+.chat-app .cx-car, .chat-app .cx-hotel, .chat-app .cx-flight { border-color: var(--nx-line); border-radius: 16px; box-shadow: 0 1px 2px rgba(17, 17, 20, 0.04); }
+.chat-app .cx-car-pick { background: var(--nx-accent-soft); border-color: #DDD8FF; }
+.chat-app .cx-car-pick-label { color: var(--nx-accent); }
+.chat-app .cx-car-booked { border-color: #BFE6CD; background: #F6FCF8; }
+.chat-app .cx-car-pay { border-color: #DDD8FF; }
+.chat-app .cx-btn { border-radius: 10px; }
+.chat-app .cx-card .cx-btn-primary { background: var(--nx-accent); border-color: var(--nx-accent); }
+.chat-app .cx-card .cx-btn-primary:hover:not(:disabled) { background: var(--nx-accent-dark); border-color: var(--nx-accent-dark); }
+/* the approval keeps its framed card; the typing dots sit on a soft pill */
+.chat-app .cx-bubble-bot.cx-approval-card { padding: 14px 16px; border-radius: 16px; background: #FFFAF0; border: 1px solid #F2D27A; }
+.chat-app .cx-bubble-bot.cx-typing, .chat-app .cx-typing { background: var(--nx-soft); border-radius: 16px; padding: 12px 14px; }
+/* welcome: never clipped under the header on a phone (centred when it fits, scrolls from the top when not) */
+.chat-app .cx-empty { justify-content: flex-start; }
+.chat-app .cx-empty > :first-child { margin-top: auto; }
+.chat-app .cx-empty > :last-child { margin-bottom: auto; }
+.cx-hero .cx-avatar { background: radial-gradient(circle at 50% 40%, #FFFFFF 0%, var(--nx-accent-soft) 70%); box-shadow: 0 0 0 1px #E6E2FF, 0 8px 24px rgba(91, 75, 245, 0.12); }
+.chat-app .cx-empty .cx-share { font-weight: 500; font-size: 13px; color: var(--nx-sub); border-color: var(--nx-line); padding: 6px 12px; min-height: 0; }
+.chat-app .sb-brand-name { font: 700 1.25rem/1 var(--im-font); text-transform: none; letter-spacing: -0.02em; color: var(--nx-ink); }
+.chat-app .sb-brand-name::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 3px; border-radius: 50%; background: var(--nx-accent); box-shadow: 0 0 8px rgba(91, 75, 245, 0.6); vertical-align: 2px; }
+@media (max-width: 520px) {
+  .chat-app .cx-empty { gap: 16px; padding-top: 20px; }
+  .cx-hero p { font-size: 14.5px; }
+  .chat-app .cx-example { padding: 10px 12px; font-size: 14px; }
+}
+.chat-app .cx-empty .share-btn { font: 500 13px/1 var(--im-font); color: var(--nx-sub); border-color: var(--nx-line); padding: 7px 12px; }
+.chat-app .cx-empty .share-btn:hover { border-color: #CFCFD8; color: var(--nx-ink); }
+.chat-app .cx-empty .cx-share { margin-top: 0; }
+.chat-app .cx-cost { font: 500 11.5px/1.3 var(--im-font); font-variant-numeric: tabular-nums; color: #9A9AA5; margin: 0 0 0 2px; }

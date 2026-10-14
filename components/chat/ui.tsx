@@ -122,10 +122,10 @@ export interface KitState {
 
 // Everyday asks first (for people who've never used an assistant like this), then bigger projects.
 export const EXAMPLES = [
-  "A gift for my dad who loves grilling, under $50",
-  "Stock a small café: 200 compostable cups, lids and a milk frother",
-  "Everything for a road trip with two kids",
-  "Battery setup for a custom 48V e-bike, plus the tools to build it",
+  { icon: "✈️", text: "A weekend in Miami next month: flight, hotel and a car" },
+  { icon: "🎁", text: "A gift for my dad who loves grilling, under $50" },
+  { icon: "☕", text: "Stock a small café: 200 compostable cups, lids and a milk frother" },
+  { icon: "🧳", text: "Everything for a road trip with two kids" },
 ];
 
 /** A one-tap test of the trip + hotel-hold email flow: Neon finds the front desk's address but emails the tester. */
