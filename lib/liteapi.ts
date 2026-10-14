@@ -50,11 +50,26 @@ export interface Money {
   amount: number;
   currency: string;
 }
+/** A tax or fee on a rate: `included` false means the hotel collects it at the property (not in the total). */
+export interface LiteTaxFee {
+  included?: boolean;
+  description?: string;
+  amount?: number;
+  currency?: string;
+}
+/** From `cancelTime` on (in `timezone`, often GMT), cancelling costs `amount`. */
+export interface LiteCancelInfo {
+  cancelTime?: string;
+  amount?: number;
+  currency?: string;
+  type?: string;
+  timezone?: string;
+}
 export interface LiteRate {
   name?: string;
   boardName?: string;
-  retailRate?: { total?: Money[] };
-  cancellationPolicies?: { refundableTag?: string };
+  retailRate?: { total?: Money[]; taxesAndFees?: LiteTaxFee[] | null };
+  cancellationPolicies?: { refundableTag?: string; cancelPolicyInfos?: LiteCancelInfo[] | null };
 }
 export interface LiteRoomType {
   offerId: string;

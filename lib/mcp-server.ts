@@ -30,6 +30,8 @@ import { VIEW_URI, viewHtml } from "@/lib/mcp-view";
 import { guarded, txt, UI, withCards, type Out, type Who } from "@/lib/mcp-kit";
 import { registerMoreTools } from "@/lib/mcp-tools-more";
 import { browserConfigured, liveOrigin, mintLiveUrl } from "@/lib/browser";
+import { localCurrency } from "@/lib/hotels";
+import { getProfile } from "@/lib/traveller";
 
 
 export const INSTRUCTIONS = `Chit is the signed-in customer's shopping and travel app, and Neon is Chit's own assistant. Work exactly like the Chit app: send what the customer wants done to ask_neon (keep passing the chat_id it returns, so Neon remembers the conversation), and let Neon do it. It searches, books with its live browser (shown in the card, where the customer watches and can take over), shops and emails just as it does in Chit, and the card streams its work live.
@@ -202,7 +204,8 @@ export function chitMcpServer(who: Who): McpServer {
       "search_hotels",
       {
         title: "Search hotels",
-        description: "Search live hotel rates in a city for the dates. Returns up to 6 picks with the total for the stay (fee and up-front taxes included), per-night price, room, meals, refundability and a book_url where the customer pays.",
+        description:
+          "Search live hotel rates in a city for the dates (one live search). Returns 6 picks by default with an ISO currency on every price: total for the stay (room, taxes charged at booking and fee), per-night price, pay_at_hotel (taxes the hotel collects at check-in, not in total), room, meals, refundability with the free-cancellation deadline, and a book_url where the customer pays. hotel_name puts that hotel first or says it has no rooms. next_cursor pages through the rest of the same search without searching again.",
         inputSchema: {
           city: z.string().max(60),
           country_code: z.string().length(2).describe("2-letter ISO country code"),
@@ -212,13 +215,18 @@ export function chitMcpServer(who: Who): McpServer {
           child_ages: z.array(z.number().int().min(0).max(17)).max(6).default([]),
           max_price_per_night: z.number().min(0).default(0).describe("0 for any"),
           min_stars: z.number().int().min(0).max(5).default(0),
+          hotel_name: z.string().max(80).optional().describe("A hotel the customer named, e.g. 'Lakeview Signature': matches go first"),
+          currency: z.string().length(3).optional().describe("ISO currency for prices, e.g. CAD; default the customer's local currency"),
+          max_results: z.number().int().min(1).max(30).default(6),
+          cursor: z.string().max(30).optional().describe("next_cursor from the previous search_hotels: the next hotels from that same search, no new search"),
           trip_id: tripIdField,
         },
         annotations: ro,
         _meta: UI,
       },
       guarded(who, "search_hotels", async ({ trip_id, ...s }) => {
-        const { result, items, text } = await runConnector(liteapiConnector.run, "find_hotels", s, "mcp");
+        const currency = s.currency?.toUpperCase() || localCurrency(await getProfile({ customerId: who.customerId, visitorId: null }).then((p) => p?.country || p?.passportCountry, () => null));
+        const { result, items, text } = await runConnector(liteapiConnector.run, "find_hotels", { ...s, currency }, "mcp");
         if (result.isError) return txt(text, true);
         if (!items.length) return txt({ ...JSON.parse(text), note: "No hotels matched. Try a higher budget, fewer stars or other dates." });
         const chatId = await tripChat(who, trip_id, `Hotels in ${s.city}, ${s.checkin}`);
