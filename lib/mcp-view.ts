@@ -46,6 +46,10 @@ button.a{border:0;border-radius:10px;padding:8px 14px;font:600 13px/1 inherit;fo
 button.a.primary{background:var(--accent);color:var(--accent-ink)}
 .foot{font-size:11px;color:var(--muted)}
 .empty{color:var(--muted);font-size:13px;padding:6px 2px}
+.neon .ntext{font-size:14px;line-height:1.5}.neon .ntext a{color:var(--accent);font-weight:600}
+.nstat{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}.nstat:empty{display:none}
+.nstat .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1s infinite alternate}
+@keyframes pulse{from{opacity:.3}to{opacity:1}}.muted{color:var(--muted)}
 .stack,[data-pane]{display:flex;flex-direction:column;gap:10px}
 .line{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;font-size:13px}
 .qty{display:flex;align-items:center;gap:4px}.qty button{width:26px;height:26px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;cursor:pointer;font:inherit}
@@ -251,9 +255,78 @@ function renderHome() {
   show(0);
 }
 
+// Neon's text: escaped, with **bold**, [links](https://…) as buttons that open in the browser, and line breaks.
+function neonText(t) {
+  return esc(t || "")
+    .replace(/\\*\\*([^*]+)\\*\\*/g, "<b>$1</b>")
+    .replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, (_, label, url) => '<a href="#" data-href="' + url + '">' + label + '</a>')
+    .replace(/\\n/g, "<br>");
+}
+
+let neonTimer = null;
+
+/** ask_neon and friends: follows Neon's run live (neon_watch), like its bubble in the Chit chat. */
+function renderNeon(info, first) {
+  if (neonTimer) { clearTimeout(neonTimer); neonTimer = null; }
+  root.innerHTML = '<div class="brand"><i></i>Chit · Neon</div><div class="card neon"><div class="nstat" data-nstat></div><div class="ntext" data-ntext></div><div data-nstep></div></div><div data-nbrowser></div><div data-ncards class="stack"></div>';
+  const statEl = root.querySelector("[data-nstat]"), textEl = root.querySelector("[data-ntext]"), stepEl = root.querySelector("[data-nstep]"), browserEl = root.querySelector("[data-nbrowser]"), cardsEl = root.querySelector("[data-ncards]");
+  root.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("[data-href]"); if (a) { e.preventDefault(); open(a.dataset.href); } });
+  let cardSig = "", browserKey = "", stopBrowser = null, told = false, misses = 0;
+  if (first && first.cards && first.cards.length) { const cs = first.cards.filter((c) => c.kind !== "browser"); cardSig = JSON.stringify(cs); drawCards(cardsEl, cs, () => {}); }
+  async function tick() {
+    let w;
+    try {
+      const r = await app.callServerTool({ name: "neon_watch", arguments: { run_id: info.runId } });
+      if (r.isError) throw new Error("watch");
+      w = r.structuredContent; misses = 0;
+    } catch { if (++misses > 5) { statEl.textContent = "Lost touch with Neon. Open the chat in Chit."; return; } neonTimer = setTimeout(tick, 2000); return; }
+    const active = ["queued", "running", "waiting"].includes(w.status);
+    statEl.innerHTML = w.status === "waiting" ? "⏸ Waiting for you" : active ? '<span class="dot"></span>' + esc((w.steps && w.steps[0]) || "Neon is working…") : w.status === "completed" ? "" : "⚠ " + esc(w.error || "Neon stopped.");
+    textEl.innerHTML = neonText(w.text) || (active ? '<span class="muted">…</span>' : "");
+    const sig = JSON.stringify(w.cards);
+    if (sig !== cardSig) { cardSig = sig; drawCards(cardsEl, w.cards, () => {}); }
+    // The live browser: once per session (and again when the step it waits on changes, for I'm done).
+    const step = w.pending && w.pending.inBrowser ? w.pending : null;
+    const key = w.session ? w.session + "|" + (step ? step.id : "") : "";
+    if (key !== browserKey) {
+      browserKey = key;
+      if (stopBrowser) { stopBrowser(); stopBrowser = null; }
+      browserEl.innerHTML = "";
+      if (w.session) {
+        const card = { kind: "browser", id: "br", title: "Neon's browser", lines: step ? [step.message.replace(/Approve & next/g, "I'm done")] : [], live: { chatId: info.chatId, session: w.session, ...(step ? { runId: info.runId, stepId: step.id, needs: step.message } : {}) }, actions: [{ label: "Open in Chit", url: w.chat_url }] };
+        browserEl.innerHTML = cardHtml(card, 0);
+        stopBrowser = startLive(card.live, browserEl.querySelector(".card"));
+        browserEl.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => open(w.chat_url)));
+      }
+    }
+    // A step that isn't in the browser (an email draft): approve it here, like Approve in Chit.
+    const other = w.pending && !w.pending.inBrowser ? w.pending : null;
+    if (!other) stepEl.innerHTML = "";
+    else if (stepEl.dataset.id !== other.id) {
+      stepEl.dataset.id = other.id;
+      stepEl.innerHTML = '<div class="l"><b>' + esc(other.message) + '</b></div><div class="acts"><button class="a primary" data-approve>Approve</button><button class="a" data-chat>Open in Chit</button></div>';
+      stepEl.querySelector("[data-chat]").addEventListener("click", () => open(w.chat_url));
+      stepEl.querySelector("[data-approve]").addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        const r = await app.callServerTool({ name: "browser_done", arguments: { run_id: info.runId, step_id: other.id } }).catch(() => null);
+        if (!r || r.isError) { e.target.disabled = false; flash(stepEl, "Neon had already moved on."); }
+      });
+    }
+    if (active) { neonTimer = setTimeout(tick, 1100); return; }
+    if (stopBrowser && w.status !== "waiting") { /* keep the last frame visible */ }
+    if (!told && w.status === "completed") {
+      told = true;
+      app.updateModelContext({ content: [{ type: "text", text: "Neon finished in the Chit card: " + (w.text || "").slice(0, 4000) }] }).catch(() => {});
+    }
+  }
+  tick();
+}
+
 function render(data) {
   lives.forEach((stop) => stop());
   lives = [];
+  if (neonTimer) { clearTimeout(neonTimer); neonTimer = null; }
+  if (data && data.neon) return renderNeon(data.neon, data);
   if (data && data.home) return renderHome();
   const cards = (data && Array.isArray(data.cards)) ? data.cards : [];
   if (!cards.length) { root.innerHTML = data && data.note ? '<div class="empty">' + esc(data.note) + '</div>' : ""; return; }
