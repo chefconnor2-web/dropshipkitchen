@@ -2455,3 +2455,7 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .co-people li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line, #E8E8ED); }
 .co-invite { display: flex; gap: 8px; flex-wrap: wrap; }
 .co-invite input { flex: 1; min-width: 200px; }
+
+/* Connect page (Chit MCP) */
+.co-code { display: block; padding: 10px 12px; border-radius: 10px; background: var(--nx-soft, #f3f2fb); font-size: 14px; word-break: break-all; user-select: all; }
+.co-actions { display: flex; gap: 8px; margin-top: 16px; }
