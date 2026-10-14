@@ -25,7 +25,7 @@ import { expenseRows, invite, membershipOf, ROLES, setPolicy } from "@/lib/compa
 import { formatMoney } from "@/lib/money";
 import { flightPrice, stayPrice, type FlightCard, type HotelCard } from "@/lib/flights-shared";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
-import { cardLabel, payBookingWithSavedCard, publishableKey, savedCard } from "@/lib/stripe-customer";
+import { cardLabel, isEmbedded, payBookingWithSavedCard, publishableKey, savedCard } from "@/lib/stripe-customer";
 import { stripe } from "@/lib/stripe";
 
 const isDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
@@ -219,7 +219,7 @@ export function registerMoreTools(server: McpServer, who: Who) {
     guarded(who, "checkout_secret", async ({ session_id }) => {
       const s = await stripe().checkout.sessions.retrieve(session_id).catch(() => null);
       const mineSession = !!s && (await prisma.customer.findUnique({ where: { id: who.customerId }, select: { stripeCustomerId: true } }))?.stripeCustomerId === (typeof s.customer === "string" ? s.customer : s.customer?.id);
-      if (!s || !mineSession || s.ui_mode !== "embedded" || s.status !== "open" || !s.client_secret) return txt("This payment can't open here. Use the pay link.", true);
+      if (!s || !mineSession || !isEmbedded(s.ui_mode) || s.status !== "open" || !s.client_secret) return txt("This payment can't open here. Use the pay link.", true);
       return { ...txt("ok"), structuredContent: { client_secret: s.client_secret, publishable_key: publishableKey() } };
     }),
   );

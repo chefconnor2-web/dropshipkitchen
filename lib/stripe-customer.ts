@@ -41,7 +41,7 @@ export async function forCustomer(params: Stripe.Checkout.SessionCreateParams, c
   }
   if (embedded) {
     const { success_url, cancel_url: _cancel, ...rest } = p;
-    p = { ...rest, ui_mode: "embedded", return_url: success_url ?? `${config.siteUrl}/`, redirect_on_completion: "if_required" };
+    p = { ...rest, ui_mode: "embedded_page", return_url: success_url ?? `${config.siteUrl}/`, redirect_on_completion: "if_required" };
   }
   return p;
 }
@@ -119,3 +119,6 @@ export async function payBookingWithSavedCard(kind: "flight" | "hotel", bookingI
   else await (await import("@/lib/hotel-booking")).completeHotelBooking(done);
   return { ok: true };
 }
+
+/** Stripe's embedded checkout (called "embedded_page" since the 2026 API; "embedded" before). */
+export const isEmbedded = (mode: string | null | undefined) => mode === "embedded_page" || mode === "embedded";
