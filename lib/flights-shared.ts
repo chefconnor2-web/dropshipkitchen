@@ -41,8 +41,41 @@ export interface FlightCard {
   changeable: boolean | null;
   slices: FlightSlice[];
   expiresAt: string;
+  /** Change and refund before departure: "free", "fee" (with the fee), "no", or null when the airline doesn't say. */
+  changeRule?: FareRule;
+  refundRule?: FareRule;
+  /** The airline lets this fare be held now and paid later (Hold this fare on the booking page). */
+  holdable?: boolean;
+  /** Every fare type for these exact flights (Basic, Standard, Flex…), cheapest first, this card's included. */
+  fares?: FareOption[];
   /** Which search found it ("Cheapest", "Nonstop", "±2 days"…). */
   group?: string;
+}
+
+export type FareRule = { kind: "free" } | { kind: "fee"; fee: string } | { kind: "no" } | null;
+
+/** One fare type for a flight: its own offer (what Book uses), price, bags and rules. */
+export interface FareOption {
+  id: string;
+  brand: string;
+  priceCents: number;
+  checkedBags: number;
+  carryOn: number;
+  changeRule: FareRule;
+  refundRule: FareRule;
+}
+
+/** "Free changes", "Changes $75", "No changes"; same for refunds. */
+export function ruleLabel(r: FareRule | undefined, what: "changes" | "refund"): string | null {
+  if (!r) return null;
+  if (r.kind === "free") return what === "changes" ? "Free changes" : "Refundable";
+  if (r.kind === "fee") return what === "changes" ? `Changes ${r.fee}` : `Refund minus ${r.fee}`;
+  return what === "changes" ? "No changes" : "No refund";
+}
+
+/** The same flights (segments, flight numbers, times): different fare types of one trip share this key. */
+export function itineraryKey(c: Pick<FlightCard, "slices">): string {
+  return c.slices.map((s) => s.segments.map((g) => `${g.flight}@${g.depart}`).join("+")).join("|");
 }
 
 /** One hotel's best room for the dates, from LiteAPI. Booking re-checks the price first. */

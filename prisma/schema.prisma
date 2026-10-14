@@ -652,8 +652,12 @@ model ShippingQuote {
 model FlightBooking {
   id                  String      @id @default(cuid())
   number              String      @unique
-  /// PENDING_PAYMENT | BOOKING | BOOKED | CANCELLING | CANCELLED | FAILED_REFUNDED | NEEDS_REVIEW
+  /// HELD | PENDING_PAYMENT | BOOKING | BOOKED | CANCELLING | CANCELLED | FAILED_REFUNDED | NEEDS_REVIEW
   status              String      @default("PENDING_PAYMENT")
+  /// A held fare (Duffel hold order, not paid yet): pay by then or the airline releases the seats
+  holdUntil           DateTime?
+  /// A held fare's price is guaranteed until then (null: it can change until paid)
+  priceGuaranteedUntil DateTime?
   offerId             String
   /// The flight card the shopper saw (lib/flights-shared FlightCard)
   cardJson            String

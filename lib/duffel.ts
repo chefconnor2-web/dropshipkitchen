@@ -112,6 +112,8 @@ export interface DuffelOffer {
     change_before_departure?: { allowed: boolean; penalty_amount?: string | null; penalty_currency?: string | null } | null;
   } | null;
   available_services?: Array<{ type: string; total_amount: string; total_currency: string; metadata?: { type?: string; maximum_weight_kg?: number | null } }> | null;
+  /** requires_instant_payment false: the fare can be held now and paid later (a hold order). */
+  payment_requirements?: { requires_instant_payment: boolean; price_guarantee_expires_at?: string | null; payment_required_by?: string | null } | null;
 }
 
 export interface OfferRequestInput {
@@ -153,6 +155,8 @@ export interface DuffelOrder {
   booking_reference: string;
   total_amount: string;
   total_currency: string;
+  /** Hold orders: whether it's still waiting to be paid, by when, and until when the price holds. */
+  payment_status?: { awaiting_payment: boolean; payment_required_by?: string | null; price_guarantee_expires_at?: string | null } | null;
 }
 
 /** Books the offer, paid from our Duffel balance. Call only once the shopper's payment has cleared. */
@@ -163,6 +167,20 @@ export function createOrder(offer: Pick<DuffelOffer, "id" | "total_amount" | "to
     { type: "instant", selected_offers: [offer.id], passengers, payments: [{ type: "balance", currency: offer.total_currency, amount: offer.total_amount }], metadata },
     60_000,
   );
+}
+
+/** Holds the offer without paying (a hold order): the seats are kept until payment_status.payment_required_by. */
+export function createHoldOrder(offerId: string, passengers: DuffelOrderPassenger[], metadata: Record<string, string>): Promise<DuffelOrder> {
+  return call<DuffelOrder>("POST", "/air/orders", { type: "hold", selected_offers: [offerId], passengers, metadata }, 60_000);
+}
+
+export function getOrder(id: string): Promise<DuffelOrder> {
+  return call<DuffelOrder>("GET", `/air/orders/${encodeURIComponent(id)}`, undefined, 20_000);
+}
+
+/** Pays a held order from our Duffel balance. Call only once the shopper's payment has cleared. */
+export function payOrder(orderId: string, amount: string, currency: string): Promise<{ id: string }> {
+  return call<{ id: string }>("POST", "/air/payments", { order_id: orderId, payment: { type: "balance", amount, currency } }, 60_000);
 }
 
 // ---------- cancellations ----------

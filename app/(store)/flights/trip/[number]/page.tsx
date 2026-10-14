@@ -6,6 +6,7 @@ import { stripe } from "@/lib/stripe";
 import { getMemberId } from "@/lib/session";
 import { canCancelFlight, completeFlightBooking, FLIGHT_STATUS, routeLabel, tripToken, type PassengerInput } from "@/lib/flight-booking";
 import CancelFlight from "./CancelFlight";
+import PayHeld from "./PayHeld";
 import { FlightCard } from "@/components/chat/ui";
 import { flightPrice, type FlightCard as Card } from "@/lib/flights-shared";
 import { timingSafeEqual } from "node:crypto";
@@ -48,8 +49,16 @@ export default async function TripPage({ params, searchParams }: { params: Promi
   const shared = shareSlug ? await prisma.sharedTrip.findUnique({ where: { slug: shareSlug } }) : null;
   const going = shared ? await whosGoing(shared) : [];
   const refunded = flightPrice({ priceCents: b.refundCents ?? 0, currency: b.currency });
-  const head =
-    status === "CANCELLED"
+  const when = (d: Date | null) => (d ? `${d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" })} UTC` : null);
+  // A held fare, or one whose checkout was left unfinished while the hold still stands: they can pay (again).
+  const held = status === FLIGHT_STATUS.HELD || (status === FLIGHT_STATUS.PENDING_PAYMENT && !!b.duffelOrderId && !!b.holdUntil && b.holdUntil.getTime() > Date.now());
+  const head = held
+    ? {
+        title: "Fare held",
+        sub: `${card.airline} is keeping your seats${b.holdUntil ? ` until ${when(b.holdUntil)}` : ""}. Nothing has been charged. ${b.priceGuaranteedUntil ? `The price is guaranteed until ${when(b.priceGuaranteedUntil)}.` : "The price can change until you pay."} Pay before the deadline or the airline releases the seats.`,
+        tone: "is-warn",
+      }
+    : status === "CANCELLED"
       ? { title: "Cancelled", sub: (b.refundCents ?? 0) > 0 ? `${refunded} is being refunded to your card (what the airline refunded; our service fee isn't refundable).` : `${card.airline} didn't refund money for this fare.`, tone: "is-off" }
       : status === "CANCELLING"
         ? { title: "Cancelling…", sub: "We're cancelling with the airline.", tone: "" }
@@ -79,6 +88,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
             <code>{b.bookingReference}</code>
           </p>
         )}
+        {held && <PayHeld number={b.number} token={await tripToken(b.id)} label={`Pay ${price} and book`} />}
         {fromChat && <BackToChat chatId={fromChat} booked={`flight:${b.number}`} what="flight" done={status === FLIGHT_STATUS.BOOKED} pending={working} />}
       </section>
       <div className="fl-summary">
@@ -99,7 +109,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
         <dt>Passengers</dt>
         <dd>{names.join(", ")}</dd>
         <dt>Paid</dt>
-        <dd>{status === FLIGHT_STATUS.PENDING_PAYMENT ? "Not charged" : status === FLIGHT_STATUS.FAILED_REFUNDED ? `${price}, refunded` : status === "CANCELLED" ? `${price}, ${refunded} refunded` : price}</dd>
+        <dd>{status === FLIGHT_STATUS.PENDING_PAYMENT || held ? "Not charged" : status === FLIGHT_STATUS.FAILED_REFUNDED ? `${price}, refunded` : status === "CANCELLED" ? `${price}, ${refunded} refunded` : price}</dd>
         <dt>E-ticket email</dt>
         <dd>{b.email}</dd>
       </dl>

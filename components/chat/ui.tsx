@@ -4,7 +4,7 @@
 import BrowserView from "./BrowserView";
 import type { DocInfo } from "@/lib/docs-shared";
 import type { ApprovalRecord } from "@/lib/run-shared";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import ShipBadge from "@/components/ShipBadge";
 import ShareButton from "@/components/ShareButton";
 import BrandMark from "@/components/BrandMark";
@@ -13,7 +13,7 @@ import { useRunContext } from "./run-context";
 
 /** Book buttons in the chat carry the chat's id, so after paying the shopper lands back in this chat. */
 const chatQ = (id: string | null, sep = "?") => (id && /^[A-Za-z0-9_-]{1,40}$/.test(id) ? `${sep}chat=${encodeURIComponent(id)}` : "");
-import { clock, dayShift, durationLabel, flightPrice, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, ruleLabel, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -783,6 +783,10 @@ export function FlightCard({
   share?: ReactNode;
 }) {
   const { chatId } = useRunContext();
+  // The fare type the shopper picked (Basic, Standard, Flex…): price, bags and Book follow it.
+  const [fareId, setFareId] = useState(f.id);
+  const fare = f.fares?.find((x) => x.id === fareId);
+  const shown = fare ? { ...f, id: fare.id, priceCents: fare.priceCents, checkedBags: fare.checkedBags, refundable: fare.refundRule ? fare.refundRule.kind !== "no" : f.refundable } : f;
   return (
     <div className="cx-flight">
       <div className="cx-flight-head">
@@ -790,7 +794,7 @@ export function FlightCard({
         <span className="cx-flight-airline" title={f.airline}>
           {f.airline}
         </span>
-        {!hidePrice && <span className="cx-flight-price">{flightPrice(f)}</span>}
+        {!hidePrice && <span className="cx-flight-price">{flightPrice(shown)}</span>}
       </div>
       {f.slices.map((s, i) => (
         <div key={i} className="cx-flight-slice">
@@ -813,17 +817,35 @@ export function FlightCard({
           </div>
         </div>
       ))}
+      {f.fares && f.fares.length > 1 && (
+        <div className="cx-fares" role="radiogroup" aria-label="Fare type">
+          {f.fares.map((x) => {
+            const extra = x.priceCents - f.fares![0].priceCents;
+            return (
+              <button key={x.id} type="button" role="radio" aria-checked={x.id === shown.id} className={`cx-fare${x.id === shown.id ? " is-on" : ""}`} onClick={() => setFareId(x.id)}>
+                <span className="cx-fare-top">
+                  <span className="cx-fare-brand">{x.brand}</span>
+                  {!hidePrice && <span className="cx-fare-price">{extra > 0 ? `+${flightPrice({ priceCents: extra, currency: f.currency })}` : flightPrice({ priceCents: x.priceCents, currency: f.currency })}</span>}
+                </span>
+                <span className="cx-fare-perks">
+                  {[x.checkedBags > 0 ? `${x.checkedBags} bag${x.checkedBags > 1 ? "s" : ""}` : "No checked bag", ruleLabel(x.changeRule, "changes"), ruleLabel(x.refundRule, "refund")].filter(Boolean).join(" · ")}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="cx-flight-foot">
         <span>
-          {f.cabin}
-          {f.checkedBags > 0 ? ` · ${f.checkedBags} bag${f.checkedBags > 1 ? "s" : ""}` : " · no checked bag"}
-          {f.refundable ? " · refundable" : ""}
+          {fare ? fare.brand : f.cabin}
+          {shown.checkedBags > 0 ? ` · ${shown.checkedBags} bag${shown.checkedBags > 1 ? "s" : ""}` : " · no checked bag"}
+          {shown.refundable ? " · refundable" : ""}
         </span>
         {(share || bookable) && (
           <span className="cx-flight-actions">
             {share}
             {bookable && (
-              <a href={bookHref ?? `/flights/book/${encodeURIComponent(f.id)}${chatQ(chatId)}`} className="cx-btn cx-btn-primary">
+              <a href={bookHref ?? `/flights/book/${encodeURIComponent(shown.id)}${chatQ(chatId)}`} className="cx-btn cx-btn-primary">
                 Book
               </a>
             )}
