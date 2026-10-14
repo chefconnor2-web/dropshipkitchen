@@ -95,8 +95,10 @@ export interface ShipTo {
 export async function getShipTo(): Promise<ShipTo> {
   const fallback: ShipTo = { country: "CA", zip: "", tier: "standard" };
   try {
-    // Acting for a customer (the Chit MCP): no browser, so their saved address.
-    const v = actingAs() ? null : (JSON.parse((await cookies()).get(SHIP_COOKIE)?.value ?? "null") as Partial<ShipTo> | null);
+    // Acting for a customer (the Chit MCP): no browser, so what the caller gave, else their saved address.
+    const a = actingAs();
+    if (a?.shipTo) return a.shipTo;
+    const v = a ? null : (JSON.parse((await cookies()).get(SHIP_COOKIE)?.value ?? "null") as Partial<ShipTo> | null);
     if (!v) {
       // Nothing chosen on this browser: the address in their saved details (My details), if any.
       const p = await getProfile(await currentProfileOwner()).catch(() => null);

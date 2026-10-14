@@ -28,10 +28,10 @@ What's agreed but not built yet, roughly in order. Update it as things ship.
 Live at `/mcp` (Streamable HTTP, OAuth 2.1 with dynamic client registration and PKCE). Setup steps for users are on the `/connect` page.
 
 - Done: search_flights, get_flight, find_places, search_hotels, find_rental_car (a Discover Cars link), my_trips, company_policy, set_work_trip, log_expense; shopping (search_products, get_product, add_to_cart, view_cart, update_cart on the account's cart, shared with every signed-in browser); Neon (my_chats, read_chat, ask_neon with neon_status and approve_neon_step: everything Neon does, live browser included, on the customer's AI allowance). Flight, hotel, car, cart, trip and Neon results show as cards in the chat (MCP Apps view ui://chit/cards.html), including Neon's live browser: watch, Take over, type, and "I'm done" to let Neon carry on. Each search becomes a Chit trip chat, so the cards and bookings show in Chit. Pay links only. Per-account rate limit (40 calls a minute, 300 an hour) and an audit row per call (McpCall). Customers disconnect apps on /connect.
+- Also done: one-tap pay links (book_flight / book_hotel with saved details, hold and pay held fares, checkout_cart, payment_status), bookings (get_booking, two-step cancel_flight / cancel_hotel, share_trip), orders and tracking, account (my_details, update_my_details, my_plan, subscribe, billing_portal), company admin (invite_member, edit_policy, expense_report), personalized products, open_chit (tabs for trips, cart, orders, chats; full screen), interactive cards (Book with my details, cart + / − / remove, share and cancel buttons), full vs read-only access on the consent page, daily caps, an activity log on /connect, and /privacy and /terms (drafts to review).
 - Next:
-  - Try it in Claude (Settings → Connectors → Add custom connector) and in ChatGPT developer mode on the live site.
-  - Check the cards in ChatGPT, then submit to its app directory.
-  - Submit to Claude's connector directory once it's stable.
+  - Try it all in Claude and ChatGPT on the live site.
+  - Have the privacy policy and terms reviewed, then submit to Claude's connector directory and ChatGPT's app directory (they need a logo, screenshots and a test account).
 
 ## Ideas parked
 

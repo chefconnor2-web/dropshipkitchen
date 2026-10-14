@@ -905,6 +905,8 @@ model McpToken {
   id         String    @id @default(cuid())
   tokenHash  String    @unique
   kind       String // access | refresh
+  /// "chit" (everything) or "chit:read" (look, never change or buy), chosen on the consent page.
+  scope      String    @default("chit")
   grantId    String
   clientId   String
   customerId String

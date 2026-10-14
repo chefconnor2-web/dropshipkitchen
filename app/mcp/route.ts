@@ -1,6 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { prisma } from "@/lib/db";
-import { bearer, resourceMetadataUrl, SCOPE } from "@/lib/mcp-auth";
+import { bearer, READ_SCOPE, resourceMetadataUrl, SCOPE } from "@/lib/mcp-auth";
 import { cors, preflight } from "@/lib/mcp-http";
 import { chitMcpServer } from "@/lib/mcp-server";
 
@@ -24,11 +24,11 @@ async function handle(req: Request): Promise<Response> {
   const who = await bearer(req.headers.get("authorization"));
   if (!who) return unauthorized("Sign in to Chit to use this connector.");
   const client = await prisma.mcpClient.findUnique({ where: { id: who.clientId }, select: { name: true } });
-  const server = chitMcpServer({ customerId: who.customerId, clientId: who.clientId, clientName: client?.name ?? "an app" });
+  const server = chitMcpServer({ customerId: who.customerId, clientId: who.clientId, clientName: client?.name ?? "an app", readOnly: who.readOnly });
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   try {
-    const res = await transport.handleRequest(req, { authInfo: { token: who.token, clientId: who.clientId, scopes: [SCOPE], extra: { customerId: who.customerId } } });
+    const res = await transport.handleRequest(req, { authInfo: { token: who.token, clientId: who.clientId, scopes: [who.readOnly ? READ_SCOPE : SCOPE], extra: { customerId: who.customerId } } });
     return cors(res);
   } finally {
     // JSON mode: the response is complete once handleRequest returns.
