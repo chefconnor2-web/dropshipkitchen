@@ -25,12 +25,21 @@ import { expenseRows, invite, membershipOf, ROLES, setPolicy } from "@/lib/compa
 import { formatMoney } from "@/lib/money";
 import { flightPrice, stayPrice, type FlightCard, type HotelCard } from "@/lib/flights-shared";
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
+import { cardLabel, payBookingWithSavedCard, publishableKey, savedCard } from "@/lib/stripe-customer";
+import { stripe } from "@/lib/stripe";
 
 const isDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
 const abs = (p: string) => (p.startsWith("http") ? p : `${config.siteUrl}${p}`);
 
 /** A Stripe link as a card with one Pay button. */
-const payCard = (id: string, title: string, lines: string[], price: string | undefined, url: string, label = "Pay"): ViewCard => ({ kind: "trip", id, title, lines, price, actions: [{ label, url, primary: true }] });
+const payCard = (id: string, title: string, lines: string[], price: string | undefined, url: string, label = "Pay", pay?: ViewCard["pay"]): ViewCard => ({ kind: "trip", id, title, lines, price, actions: [{ label, url, primary: true }], ...(pay ? { pay } : {}) });
+
+/** The pay card's in-chat options: the embedded session in the URL, and the saved card (when there is one). */
+async function payOptions(who: Who, url: string, number: string | undefined): Promise<ViewCard["pay"]> {
+  const sessionId = /\/pay\/(cs_[A-Za-z0-9_]+)/.exec(url)?.[1];
+  const saved = number ? await savedCard(who.customerId).catch(() => null) : null;
+  return { url, ...(number ? { number } : {}), ...(sessionId ? { sessionId } : {}), ...(saved ? { savedCard: cardLabel(saved) } : {}) };
+}
 
 /** Next's redirect() inside a server action, caught: the URL it was sending the browser to. */
 function redirectTarget(e: unknown): string | null {
@@ -64,6 +73,8 @@ const confirmCodes = new Map<string, { bookingId: string; until: number }>();
 
 export function registerMoreTools(server: McpServer, who: Who) {
   const asMe = <T>(fn: () => Promise<T>, extra: Partial<Parameters<typeof acting.run>[0]> = {}) => acting.run({ customerId: who.customerId, ...extra }, fn);
+  // Checkout made for the card opens inside it (Stripe's embedded form) when the publishable key is set.
+  const embed = { embedded: !!publishableKey() };
 
   /* ---------- Phase 1: pay in one tap ---------- */
 
@@ -109,13 +120,14 @@ export function registerMoreTools(server: McpServer, who: Who) {
         const start = hold ? startFlightHold : startFlightCheckout;
         const r = await start({ offerId: offer_id, shownCents: price, form, customerId: who.customerId });
         if (!r.url) return txt({ booked: false, problem: r.error, travellers: offer.passengers.length, needs_passport: offer.passenger_identity_documents_required === true, how: "Ask the customer for what's missing and call book_flight again with passengers filled in." }, true);
-        const card = JSON.parse((await prisma.flightBooking.findFirst({ where: { offerId: offer_id, customerId: who.customerId }, orderBy: { createdAt: "desc" }, select: { cardJson: true } }))?.cardJson ?? "null") as FlightCard | null;
+        const row = await prisma.flightBooking.findFirst({ where: { offerId: offer_id, customerId: who.customerId }, orderBy: { createdAt: "desc" }, select: { cardJson: true, number: true } });
+        const card = JSON.parse(row?.cardJson ?? "null") as FlightCard | null;
         const route = card ? `${card.slices[0].from} → ${card.slices[card.slices.length - 1].to}` : "Flight";
         return withCards(
           { ok: true, [hold ? "held_url" : "pay_url"]: r.url, price: flightPrice({ priceCents: price, currency: offer.total_currency }), note: hold ? "Held with the airline. Pay before the deadline from that page (or pay_held_flight)." : "The customer pays on this Stripe page in their browser; the ticket is booked straight away and emailed." },
-          [payCard(offer_id, hold ? `Fare held · ${route}` : `Pay for your flight · ${route}`, [hold ? "Held free with the airline. Pay before the deadline." : "Passengers filled in from your saved details."], flightPrice({ priceCents: price, currency: offer.total_currency }), r.url, hold ? "View hold" : "Pay")],
+          [payCard(offer_id, hold ? `Fare held · ${route}` : `Pay for your flight · ${route}`, [hold ? "Held free with the airline. Pay before the deadline." : "Passengers filled in from your saved details."], flightPrice({ priceCents: price, currency: offer.total_currency }), r.url, hold ? "View hold" : "Pay", hold ? undefined : await payOptions(who, r.url, row?.number))],
         );
-      }),
+      }, embed),
     ),
   );
 
@@ -141,8 +153,10 @@ export function registerMoreTools(server: McpServer, who: Who) {
         if (trip_id) form.set("chat", trip_id);
         const r = await startHotelCheckout({ offerId: offer_id, shownCents: card.priceCents, form, customerId: who.customerId });
         if (!r.url) return txt({ booked: false, problem: r.error, how: "Ask the customer for what's missing, then call book_hotel again." }, true);
-        return withCards({ ok: true, pay_url: r.url, price: stayPrice(card) }, [payCard(card.id, `Pay for your stay · ${card.name}`, [`${card.checkin} → ${card.checkout} · ${card.room}`], stayPrice(card), r.url)]);
-      }),
+        const sid = /(cs_[A-Za-z0-9_]+)/.exec(r.url)?.[1];
+        const row = sid ? await prisma.hotelBooking.findUnique({ where: { stripeSessionId: sid }, select: { number: true } }) : null;
+        return withCards({ ok: true, pay_url: r.url, price: stayPrice(card) }, [payCard(card.id, `Pay for your stay · ${card.name}`, [`${card.checkin} → ${card.checkout} · ${card.room}`], stayPrice(card), r.url, "Pay", await payOptions(who, r.url, row?.number))]);
+      }, embed),
     ),
   );
 
@@ -152,9 +166,9 @@ export function registerMoreTools(server: McpServer, who: Who) {
     guarded(who, "pay_held_flight", async ({ number }) => {
       const b = await mine(who, await prisma.flightBooking.findUnique({ where: { number } }));
       if (!b) return txt("That booking isn't one of the customer's.", true);
-      const r = await payHeldFlight(b.id);
+      const r = await asMe(() => payHeldFlight(b.id), embed);
       if (!r.url) return txt(r.error ?? "Couldn't open payment.", true);
-      return withCards({ pay_url: r.url }, [payCard(b.id, `Pay for held fare ${b.number}`, [], flightPrice({ priceCents: b.priceCents, currency: b.currency }), r.url)]);
+      return withCards({ pay_url: r.url }, [payCard(b.id, `Pay for held fare ${b.number}`, [], flightPrice({ priceCents: b.priceCents, currency: b.currency }), r.url, "Pay", await payOptions(who, r.url, b.number))]);
     }),
   );
 
@@ -194,6 +208,31 @@ export function registerMoreTools(server: McpServer, who: Who) {
       const o = await mine(who, await prisma.order.findUnique({ where: { number } }));
       if (o) return txt({ kind: "order", number, status: o.status, tracking: o.trackingStage ?? undefined, link: abs(`/orders/${o.number}?t=${await orderViewToken(o.id)}`) });
       return txt("No booking or order with that number for this customer.", true);
+    }),
+  );
+
+  // For the card only (never the model): open Stripe's embedded form, and pay with the saved card on a tap.
+  const APP_ONLY = { ui: { resourceUri: "ui://chit/cards.html", visibility: ["app"] } };
+  server.registerTool(
+    "checkout_secret",
+    { title: "Open payment in the card", description: "For the Chit card: the client secret of the customer's own open embedded checkout.", inputSchema: { session_id: z.string().regex(/^cs_[A-Za-z0-9_]+$/) }, annotations: { readOnlyHint: true, openWorldHint: true }, _meta: APP_ONLY },
+    guarded(who, "checkout_secret", async ({ session_id }) => {
+      const s = await stripe().checkout.sessions.retrieve(session_id).catch(() => null);
+      const mineSession = !!s && (await prisma.customer.findUnique({ where: { id: who.customerId }, select: { stripeCustomerId: true } }))?.stripeCustomerId === (typeof s.customer === "string" ? s.customer : s.customer?.id);
+      if (!s || !mineSession || s.ui_mode !== "embedded" || s.status !== "open" || !s.client_secret) return txt("This payment can't open here. Use the pay link.", true);
+      return { ...txt("ok"), structuredContent: { client_secret: s.client_secret, publishable_key: publishableKey() } };
+    }),
+  );
+  server.registerTool(
+    "pay_with_saved_card",
+    { title: "Pay with saved card", description: "For the Chit card: the customer tapped Pay with their saved card for this booking.", inputSchema: { number: z.string().max(40) }, annotations: { readOnlyHint: false, openWorldHint: true }, _meta: APP_ONLY },
+    guarded(who, "pay_with_saved_card", async ({ number }) => {
+      const f = await mine(who, await prisma.flightBooking.findUnique({ where: { number } }));
+      const h = f ? null : await mine(who, await prisma.hotelBooking.findUnique({ where: { number } }));
+      if (!f && !h) return txt("That booking isn't one of the customer's.", true);
+      const r = await payBookingWithSavedCard(f ? "flight" : "hotel", (f ?? h)!.id, who.customerId);
+      if (!r.ok) return txt(JSON.stringify({ paid: false, problem: r.error, use_link: !!r.needsLink }), true);
+      return txt({ paid: true, number });
     }),
   );
 

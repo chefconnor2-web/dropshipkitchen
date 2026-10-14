@@ -9,6 +9,8 @@ export interface Acting {
   customerId: string;
   /** Where to ship the cart, when the MCP caller says (else the customer's saved address). */
   shipTo?: { country: string; zip: string; tier: "standard" | "express" };
+  /** Checkout opens inside the Chit card (Stripe's embedded form) instead of Stripe's hosted page. */
+  embedded?: boolean;
 }
 
 export const acting = new AsyncLocalStorage<Acting>();
