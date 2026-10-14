@@ -360,13 +360,18 @@ async function probeUrl(url) {
   if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon and Discover Cars pages can be opened."), { status: 400 });
   const b = await getBrowser();
   const ctx = await b.createBrowserContext();
+  // A light, bounded look: no images, fonts or media, and never more than 12 s (it must not hold up the live
+  // browser the shopper is using).
+  const cap = setTimeout(() => void ctx.close().catch(() => {}), 12000);
   try {
     const page = await ctx.newPage();
     await page.setUserAgent(UA);
     await page.setViewport(VIEW);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.setRequestInterception(true);
+    page.on("request", (r) => (["image", "font", "media"].includes(r.resourceType()) ? r.abort() : r.continue()).catch(() => {}));
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10000 });
     // Booking pages render after load; give them a moment, then read.
-    await settle(page, 2500);
+    await settle(page, 1500);
     const r = await page.evaluate(() => {
       const t = (document.body?.innerText || "").replace(/\s+/g, " ");
       const u = location.href;
@@ -384,6 +389,7 @@ async function probeUrl(url) {
     });
     return { ...r, title: await page.title().catch(() => "") };
   } finally {
+    clearTimeout(cap);
     await ctx.close().catch(() => {});
   }
 }

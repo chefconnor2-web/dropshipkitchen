@@ -5,7 +5,7 @@
 import { processSingleton } from "@/lib/singleton";
 
 const pokes = processSingleton("payment-watch-pokes", () => new Map<string, () => void>());
-const EVERY_MS = 8_000;
+const EVERY_MS = 15_000;
 
 /** Resolves with the first truthy result of `check`, polling until `signal` aborts (then it never resolves). */
 export function watchPayment<T>(chatId: string, check: () => Promise<T | null>, signal: AbortSignal): Promise<T> {
