@@ -1,0 +1,183 @@
+/* Connect an AI app to Chit: sign-in and permission screens. Dark, in Neon's violet, one card on a slow aurora. */
+.cn {
+  --cn-bg: #07060b;
+  --cn-ink: #f4f1fa;
+  --cn-mute: #a29cb3;
+  --cn-faint: #6f6981;
+  --cn-line: rgba(255, 255, 255, 0.09);
+  --cn-glass: rgba(22, 19, 32, 0.72);
+  --cn-violet: #8b5cf6;
+  --cn-violet-2: #b794ff;
+  --cn-ok: #4ade80;
+  --cn-err: #ff7a7a;
+  min-height: 100dvh;
+  background: var(--cn-bg);
+  color: var(--cn-ink);
+  font: 15px/1.5 "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+.cn a { color: var(--cn-violet-2); text-decoration: none; }
+.cn a:hover { text-decoration: underline; }
+
+.cn-main { position: relative; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 20px 16px 28px; overflow: clip; isolation: isolate; }
+
+/* Aurora: three soft blobs drifting behind the card. */
+.cn-aura { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.cn-aura::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0%, transparent 0%, var(--cn-bg) 70%); }
+.cn-aura span { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.55; animation: cnDrift 22s ease-in-out infinite alternate; }
+.cn-aura span:nth-child(1) { width: 520px; height: 520px; left: -160px; top: -200px; background: #5b2bd6; }
+.cn-aura span:nth-child(2) { width: 420px; height: 420px; right: -140px; top: -80px; background: #2b4fd6; animation-delay: -7s; opacity: 0.4; }
+.cn-aura span:nth-child(3) { width: 360px; height: 360px; left: 30%; top: 260px; background: #a0359c; animation-delay: -14s; opacity: 0.25; }
+@keyframes cnDrift { to { transform: translate(60px, 40px) scale(1.12); } }
+
+.cn-top { width: 100%; max-width: 460px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.cn-word { font: 700 22px/1 "Barlow Condensed", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }
+.cn-secure { display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1 "IBM Plex Mono", monospace; letter-spacing: 0.06em; text-transform: uppercase; color: var(--cn-mute); padding: 7px 10px; border: 1px solid var(--cn-line); border-radius: 999px; background: rgba(255, 255, 255, 0.03); }
+.cn-secure svg { width: 13px; height: 13px; color: var(--cn-ok); }
+
+.cn-card {
+  width: 100%; max-width: 460px; padding: 28px 22px 22px; border-radius: 24px;
+  background: var(--cn-glass); border: 1px solid var(--cn-line);
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.08), 0 30px 80px -20px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(24px) saturate(140%); backdrop-filter: blur(24px) saturate(140%);
+  animation: cnRise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes cnRise { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
+@media (min-width: 520px) { .cn-card { padding: 36px 34px 28px; } }
+
+/* Chit ⟷ app, joined by a pulsing wire. */
+.cn-pair { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 22px; }
+.cn-tile { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; flex: none; position: relative; }
+.cn-chit { background: radial-gradient(circle at 30% 25%, #2a1f45, #120d1f); border: 1px solid rgba(183, 148, 255, 0.25); box-shadow: 0 0 30px -6px rgba(139, 92, 246, 0.6); }
+.cn-app { --h: 18; background: linear-gradient(145deg, hsl(var(--h) 70% 62%), hsl(var(--h) 65% 46%)); color: #fff; font: 700 30px/1 "Barlow Condensed", sans-serif; border: 1px solid rgba(255, 255, 255, 0.18); box-shadow: 0 0 30px -8px hsl(var(--h) 80% 55% / 0.7); }
+.cn-wire { display: flex; gap: 6px; padding: 0 2px; }
+.cn-wire i { width: 6px; height: 6px; border-radius: 50%; background: var(--cn-faint); animation: cnPulse 1.4s ease-in-out infinite; }
+.cn-wire i:nth-child(2) { animation-delay: 0.2s; }
+.cn-wire i:nth-child(3) { animation-delay: 0.4s; }
+.cn-pair.linked .cn-wire i { background: var(--cn-violet-2); box-shadow: 0 0 8px var(--cn-violet); }
+@keyframes cnPulse { 0%, 100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }
+
+.cn-steps { list-style: none; display: flex; justify-content: center; gap: 6px; padding: 0; margin: 0 0 22px; font: 500 11px/1 "IBM Plex Mono", monospace; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cn-faint); flex-wrap: wrap; }
+.cn-steps li { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px 6px 6px; border-radius: 999px; border: 1px solid transparent; }
+.cn-steps li span { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; border: 1px solid var(--cn-line); }
+.cn-steps li.now { color: var(--cn-ink); border-color: rgba(139, 92, 246, 0.4); background: rgba(139, 92, 246, 0.12); }
+.cn-steps li.now span { background: var(--cn-violet); border-color: var(--cn-violet); color: #fff; }
+.cn-steps li.done { color: var(--cn-mute); }
+.cn-steps li.done span { background: rgba(74, 222, 128, 0.15); border-color: rgba(74, 222, 128, 0.4); color: var(--cn-ok); }
+/* Phones: only the current step keeps its name, so the three fit on one line. */
+@media (max-width: 419px) {
+  .cn-steps { flex-wrap: nowrap; }
+  .cn-steps li:not(.now) { font-size: 0; gap: 0; padding: 6px; }
+  .cn-steps li:not(.now) span { font-size: 10px; }
+}
+
+.cn-title { font: 700 30px/1.05 "Barlow Condensed", sans-serif; letter-spacing: 0.01em; text-transform: uppercase; text-align: center; margin: 0 0 10px; text-wrap: balance; }
+@media (min-width: 520px) { .cn-title { font-size: 34px; } }
+.cn-sub { color: var(--cn-mute); text-align: center; margin: 0 auto 22px; max-width: 34ch; text-wrap: pretty; }
+.cn-h2 { font: 500 11px/1 "IBM Plex Mono", monospace; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cn-faint); margin: 22px 0 10px; padding: 0; }
+
+/* Forms */
+.cn-form { display: grid; gap: 10px; }
+.cn-label { font: 500 12px/1 "IBM Plex Sans", sans-serif; color: var(--cn-mute); margin: 0 0 2px; padding: 0; }
+.cn-input {
+  width: 100%; height: 52px; padding: 0 16px; border-radius: 14px; font: 500 16px/1 "IBM Plex Sans", sans-serif;
+  color: var(--cn-ink); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--cn-line); outline: none; margin: 0;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.cn-input::placeholder { color: var(--cn-faint); }
+.cn-input:focus { border-color: var(--cn-violet); background: rgba(139, 92, 246, 0.06); box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.18); }
+.cn-error { color: var(--cn-err); font-size: 13px; margin: 0; }
+.cn-sent { margin: 0 0 4px; color: var(--cn-mute); text-align: center; font-size: 14px; }
+.cn-sent b { color: var(--cn-ink); font-weight: 600; word-break: break-all; }
+.cn-sent .cn-link { margin-left: 8px; }
+
+.cn-otp { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; border: 0; padding: 0; margin: 0 0 12px; }
+.cn-otp legend { margin-bottom: 8px; }
+.cn-otp input {
+  height: 58px; width: 100%; min-width: 0; padding: 0; margin: 0; text-align: center; border-radius: 14px;
+  font: 600 24px/1 "IBM Plex Mono", monospace; color: var(--cn-ink);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--cn-line); outline: none; caret-color: var(--cn-violet-2);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.cn-otp input:focus { border-color: var(--cn-violet); box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.18); transform: translateY(-1px); }
+.cn-otp input:not(:placeholder-shown), .cn-otp input[value]:not([value=""]) { border-color: rgba(183, 148, 255, 0.45); }
+.cn-otp.bad input { border-color: rgba(255, 122, 122, 0.6); animation: cnShake 0.35s; }
+.cn-otp:disabled input { opacity: 0.6; }
+@keyframes cnShake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.cn-resend { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; color: var(--cn-faint); font-size: 13px; margin-top: 4px; }
+
+/* Buttons */
+.cn-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 52px; border-radius: 14px;
+  font: 600 15px/1 "IBM Plex Sans", sans-serif; cursor: pointer; border: 1px solid transparent; transition: transform 0.12s, box-shadow 0.2s, background 0.2s, opacity 0.2s;
+}
+.cn-btn:active { transform: scale(0.985); }
+.cn-btn:disabled { opacity: 0.5; cursor: default; }
+.cn-btn.primary { color: #fff; background: linear-gradient(135deg, #9b6cff, #6d3df0 55%, #4f46e5); box-shadow: 0 10px 30px -10px rgba(124, 77, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.cn-btn.primary:hover:not(:disabled) { box-shadow: 0 14px 36px -10px rgba(124, 77, 255, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+.cn-btn.ghost { color: var(--cn-mute); background: transparent; border-color: var(--cn-line); }
+.cn-btn.ghost:hover { color: var(--cn-ink); background: rgba(255, 255, 255, 0.04); }
+.cn-btn:focus-visible, .cn-link:focus-visible { outline: 2px solid var(--cn-violet-2); outline-offset: 3px; }
+.cn-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 500; color: var(--cn-violet-2); cursor: pointer; }
+.cn-link:disabled { color: var(--cn-faint); cursor: default; }
+.cn-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: #fff; animation: cnSpin 0.7s linear infinite; }
+@keyframes cnSpin { to { transform: rotate(360deg); } }
+
+/* Who's signed in */
+.cn-who { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: rgba(255, 255, 255, 0.035); border: 1px solid var(--cn-line); }
+.cn-avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 600; background: linear-gradient(135deg, #8b5cf6, #4f46e5); color: #fff; }
+.cn-who-text { flex: 1; min-width: 0; display: grid; }
+.cn-who-text b, .cn-who-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cn-who-text small { color: var(--cn-mute); font-size: 12.5px; }
+.cn-who form { margin: 0; }
+.cn-who .cn-link { font-size: 13px; white-space: nowrap; }
+
+/* Permissions */
+.cn-perms { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
+.cn-perms li { display: flex; gap: 14px; align-items: flex-start; padding: 10px 2px; }
+.cn-perms li + li { border-top: 1px solid var(--cn-line); }
+.cn-perms svg { flex: none; width: 36px; height: 36px; padding: 8px; border-radius: 11px; color: var(--cn-violet-2); background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.22); }
+.cn-perms span, .cn-opt-body { display: grid; gap: 2px; }
+.cn-perms b, .cn-opt-body b { font-weight: 600; font-size: 14.5px; }
+.cn-perms small, .cn-opt-body small { color: var(--cn-mute); font-size: 13px; line-height: 1.4; }
+
+/* Access choice */
+.cn-access { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.cn-opt { display: flex; gap: 12px; align-items: flex-start; padding: 14px; margin: 0; border-radius: 16px; border: 1px solid var(--cn-line); background: rgba(255, 255, 255, 0.025); cursor: pointer; color: var(--cn-ink); transition: border-color 0.15s, background 0.15s, box-shadow 0.15s; }
+.cn-opt:hover { border-color: rgba(183, 148, 255, 0.3); }
+.cn-opt:has(input:checked) { border-color: var(--cn-violet); background: rgba(139, 92, 246, 0.1); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
+.cn-opt:has(input:focus-visible) { outline: 2px solid var(--cn-violet-2); outline-offset: 2px; }
+.cn-opt input { appearance: none; -webkit-appearance: none; flex: none; width: 20px; height: 20px; margin: 1px 0 0; padding: 0; border-radius: 50%; border: 1.5px solid var(--cn-faint); background: transparent; display: grid; place-items: center; transition: border-color 0.15s; }
+.cn-opt input::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--cn-violet-2); transform: scale(0); transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.cn-opt input:checked { border-color: var(--cn-violet-2); }
+.cn-opt input:checked::after { transform: scale(1); }
+.cn-opt em { font: 500 10px/1 "IBM Plex Mono", monospace; font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--cn-ok); background: rgba(74, 222, 128, 0.1); border: 1px solid rgba(74, 222, 128, 0.25); padding: 3px 6px; border-radius: 6px; margin-left: 6px; vertical-align: 2px; }
+
+/* Trust strip */
+.cn-trust { list-style: none; padding: 0; margin: 20px 0 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cn-trust li { display: grid; justify-items: center; gap: 6px; text-align: center; font-size: 11.5px; line-height: 1.3; color: var(--cn-mute); padding: 10px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--cn-line); }
+.cn-trust svg { width: 18px; height: 18px; color: var(--cn-ok); }
+
+.cn-actions { display: grid; gap: 10px; }
+@media (max-width: 519px) {
+  /* On phones Allow stays in reach at the bottom of the screen, Cancel beside it. */
+  .cn-actions { position: sticky; bottom: 0; z-index: 2; grid-template-columns: 96px 1fr; margin: 0 -22px; padding: 12px 22px calc(12px + env(safe-area-inset-bottom)); background: #0f0d17; box-shadow: 0 -28px 24px -6px #0f0d17; border-radius: 0 0 24px 24px; }
+  .cn-actions .cn-btn.ghost { order: -1; }
+}
+.cn-fine { margin: 16px 0 0; text-align: center; font-size: 12.5px; color: var(--cn-faint); text-wrap: pretty; }
+.cn-fine b { color: var(--cn-mute); font-weight: 500; }
+
+.cn-state { text-align: center; padding: 10px 0; }
+.cn-badge { width: 56px; height: 56px; border-radius: 18px; display: inline-grid; place-items: center; margin-bottom: 16px; }
+.cn-badge svg { width: 26px; height: 26px; }
+.cn-badge.warn { color: #fbbf24; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); }
+
+.cn-foot { margin-top: auto; padding-top: 24px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; font-size: 12px; color: var(--cn-faint); }
+.cn-foot a { color: var(--cn-mute); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cn *, .cn *::before, .cn *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+/* No light flash past the edges when a phone overscrolls. */
+html:has(.cn), html:has(.cn) body { background: #07060b; }
