@@ -418,7 +418,13 @@ export async function smartAction(page, a) {
       await page.keyboard.press("Backspace").catch(() => {});
     }
     await page.keyboard.press("Escape").catch(() => {});
-    return { ok: false, why: `Opened "${a.field}" but found no option "${value}".` };
+    // What the dropdown is made of (tags and classes only, no values), so the logs show how to work it.
+    const widget = await page.evaluate(() => {
+      const el = document.querySelector("[data-neon-pick]");
+      const box = el?.closest("[class*=select i], [class*=dropdown i], [class*=field i], label, div") || el;
+      return box ? box.outerHTML.replace(/\svalue="[^"]*"/g, "").replace(/>[^<]{1,80}</g, ">…<").replace(/\s+/g, " ").slice(0, 700) : null;
+    }).catch(() => null);
+    return { ok: false, why: `Opened "${a.field}" but found no option "${value}".`, ...(widget ? { widget } : {}) };
   }
   if (a.type === "list_offers") {
     const offers = await page.evaluate(listOffers).catch(() => []);

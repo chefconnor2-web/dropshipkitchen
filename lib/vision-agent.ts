@@ -50,7 +50,7 @@ export interface VisionResult {
 type ToolUse = Anthropic.ToolUseBlock & { toolset_name?: string | null };
 
 /** Works toward `goal` in this chat's live browser. */
-export async function visionAgent(chatId: string, goal: string, opts: { signal: AbortSignal; start?: PageState; progress?: (note: string) => void }): Promise<VisionResult> {
+export async function visionAgent(chatId: string, goal: string, opts: { signal: AbortSignal; start?: PageState; progress?: (note: string) => void; maxMs?: number }): Promise<VisionResult> {
   const { signal } = opts;
   const client = new Anthropic();
   const log: string[] = [];
@@ -75,7 +75,7 @@ export async function visionAgent(chatId: string, goal: string, opts: { signal: 
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     signal.throwIfAborted();
-    if (Date.now() - t0 > MAX_MS) return finish(false, turn - 1, "ran out of time");
+    if (Date.now() - t0 > (opts.maxMs ?? MAX_MS)) return finish(false, turn - 1, "ran out of time");
     const r = await client.messages.create(
       {
         model: VISION_MODEL,

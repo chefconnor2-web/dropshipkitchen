@@ -756,6 +756,7 @@ const server = http.createServer(async (req, res) => {
           log("act", s.id.slice(0, 6), where, `${Date.now() - t0}ms:`, timing.join(", "));
           for (const r of results) if (!r.ok && r.fields) log("act", s.id.slice(0, 6), "fields on page:", JSON.stringify(r.fields).slice(0, 900));
           for (const r of results) if (!r.ok && r.calendar) log("act", s.id.slice(0, 6), "calendar:", r.calendar);
+          for (const r of results) if (!r.ok && r.widget) log("act", s.id.slice(0, 6), "dropdown:", r.widget);
           return snapshot(s, results.length ? { results } : {}, s.page, body.noShot !== true);
         }));
       }
