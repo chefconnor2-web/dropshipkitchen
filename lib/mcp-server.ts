@@ -11,9 +11,8 @@ import { config } from "@/lib/config";
 import { duffelConnector } from "@/lib/connectors/duffel";
 import { liteapiConnector } from "@/lib/connectors/liteapi";
 import { companyConnector } from "@/lib/connectors/company";
-import { discoverCarsUrl } from "@/lib/connectors/discovercars";
 import type { ConnectorContext, ToolResult } from "@/lib/connectors/types";
-import type { CarRentalCard, ConnectorItem } from "@/lib/flights-shared";
+import type { ConnectorItem } from "@/lib/flights-shared";
 import { CATEGORIES, logExpense, membershipOf } from "@/lib/company";
 import { tripsFor } from "@/lib/trips";
 import { browserCard, viewCards, type ViewCard } from "@/lib/mcp-cards";
@@ -33,15 +32,12 @@ import { registerMoreTools } from "@/lib/mcp-tools-more";
 import { browserConfigured, liveOrigin, mintLiveUrl } from "@/lib/browser";
 
 
-export const INSTRUCTIONS = `Chit is the signed-in customer's shopping and travel account: live flights (Duffel), hotels (LiteAPI), rental cars (Discover Cars), a product catalog with their Chit cart, their trips and receipts, company travel policy and expenses, and Neon (Chit's own agent, with a live browser).
-- Payment always happens in the customer's own browser: give them the Book / Check out / Pay link from the result (the cards show them as buttons). Never ask for card details.
-- Every travel search returns a trip_id. Pass it to later searches for the same trip (flights, then hotel, then car) so they stay together in the customer's Chit trips.
-- To buy: book_flight / book_hotel use the customer's saved details and return a Stripe pay link (no form); checkout_cart pays for the cart. After they pay, payment_status confirms it.
-- Cancelling is always two calls: first get the quote, tell the customer exactly what they'd get back, and only after a clear yes call again with the quote.
-- open_chit shows their whole Chit (trips, cart, orders, chats) in the chat.
-- Use the direct tools first (search_flights, search_hotels, search_products, add_to_cart…). Use ask_neon for what needs Neon's live browser or several steps: booking a rental car up to payment, filling an Amazon cart, emailing a hotel. It uses the customer's AI allowance.
-- Prices include Chit's fee. Only quote prices and options the tools returned.
-- For work trips call company_policy first and stay within it, then call set_work_trip.`;
+export const INSTRUCTIONS = `Chit is the signed-in customer's shopping and travel app, and Neon is Chit's own assistant. Work exactly like the Chit app: send what the customer wants done to ask_neon (keep passing the chat_id it returns, so Neon remembers the conversation), and let Neon do it. It searches, books with its live browser (shown in the card, where the customer watches and can take over), shops and emails just as it does in Chit, and the card streams its work live.
+- While Neon is working, call neon_status with the run_id for its final answer, then relay it briefly; the cards already show the options and buttons.
+- If Neon waits on the customer: for a browser step they use the card (Take over, then I'm done); for an email draft, show it and only on their yes call approve_neon_step.
+- Payment always happens in the customer's own browser through the pay link. Never ask for card details.
+- The other tools are quick lookups and shortcuts (trips, cart, orders, bookings, details, plan, company). book_flight / book_hotel return a pay link with saved details; cancelling is always two calls with the customer's yes in between.
+- open_chit shows their whole Chit (trips, cart, orders, chats) in the chat.`;
 
 
 /** The customer's chat for this trip: theirs when trip_id is given, else a new one. */
@@ -233,7 +229,7 @@ export function chitMcpServer(who: Who): McpServer {
     {
       title: "Find a rental car",
       description:
-        "A Discover Cars link for renting a car at a place and dates (it compares every rental company). The customer picks the car and pays on Discover Cars in their browser. The car is added to their Chit trip.",
+        "Rent a car exactly as Chit does: Neon searches Discover Cars in its live browser (the customer watches it in the card and can take over), picks the right car for the customer (residence rules included), fills the booking up to payment and returns the pay link. Same as ask_neon with a car request.",
       inputSchema: {
         location: z.string().max(80).describe("Where they pick up, e.g. 'Miami Airport (MIA)'"),
         city: z.string().max(60),
@@ -248,15 +244,10 @@ export function chitMcpServer(who: Who): McpServer {
     },
     guarded(who, "find_rental_car", async ({ location, city, country_code, airport, pickup, dropoff, trip_id }) => {
       if (dropoff < pickup) return txt("The drop-off date must be on or after the pick-up date.", true);
-      const url = discoverCarsUrl({ countryCode: country_code, city, airport });
-      const chatId = await tripChat(who, trip_id, `Car in ${city}, ${pickup}`);
-      const card: CarRentalCard = { kind: "car", id: `car_${chatId}_${pickup}`, location, pickup, dropoff, url, group: "Rental car" };
-      await record(chatId, `Find a rental car at ${location}, ${pickup} to ${dropoff}`, "Here's Discover Cars for your dates: pick the car and pay there.", [card]);
-      return withCards({
-        trip_id: chatId,
-        url,
-        how: `Open the link, search ${location} from ${pickup} to ${dropoff}, and book the car there. Drivers renting outside their country of residence (e.g. a Canadian resident in the US) should set their country of residence in the search and pick a company that accepts it.`,
-      }, viewCards([card], chatId));
+      // Exactly as in Chit: Neon searches Discover Cars in its live browser (shown in the card), picks the right
+      // car, fills the booking up to payment and hands over the pay link.
+      const where = `${location}${airport ? ` (${airport.toUpperCase()})` : ""}, ${city}, ${country_code.toUpperCase()}`;
+      return neonOut(await askNeon(who, `Rent me a car at ${where}, picking up ${pickup} and dropping off ${dropoff}. Find the best car and take the booking as far as payment, then give me the pay link.`, trip_id));
     }),
   );
 
@@ -455,9 +446,9 @@ export function chitMcpServer(who: Who): McpServer {
   server.registerTool(
     "ask_neon",
     {
-      title: "Ask Neon",
+      title: "Chit (Neon)",
       description:
-        "Hand a task to Neon, Chit's own shopping and travel agent, with everything it can do: book a rental car end to end in its live browser (it fills Discover Cars up to payment and returns a pay link), fill an Amazon cart and return a checkout link, find and compare products, draft emails (sent only after the customer approves), save the customer's traveller details, and more. Runs in one of the customer's Neon chats (pass chat_id to continue one). Uses the customer's Chit AI allowance. Long tasks keep running: if the result says it's still working, call neon_status with the run_id.",
+        "The Chit app itself: pass the customer's request to Neon, Chit's own assistant, and it does exactly what it does in the Chit app, with its live browser (shown in the card, where the customer watches and can take over): plan and book trips (flights, hotels, rental cars up to payment), shop Amazon and Chit's catalog, email hotels, save details, and everything else in Chit. Use this by default for anything the customer wants done in Chit. Pass chat_id from the previous ask_neon in this conversation so Neon remembers it. The card streams Neon's work live; if the result says it's still working, call neon_status with the run_id to get the final answer.",
       inputSchema: { message: z.string().min(2).max(4000).describe("What to do, in the customer's words, with all the details you know (dates, places, names)"), chat_id: z.string().max(40).optional() },
       annotations: { readOnlyHint: false, openWorldHint: true },
       _meta: UI,
@@ -474,6 +465,36 @@ export function chitMcpServer(who: Who): McpServer {
       if (!r || c?.customerId !== who.customerId) return txt("Unknown run_id.", true);
       return neonOut(await waitNeon(run_id));
     }),
+  );
+
+  server.registerTool(
+    "neon_watch",
+    {
+      title: "Neon live",
+      description: "For the Chit card: Neon's run as it happens (text so far, cards, the step it's waiting on, its browser).",
+      inputSchema: { run_id: z.string().max(40) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: { ui: { resourceUri: VIEW_URI, visibility: ["app"] } },
+    },
+    async ({ run_id }) => {
+      // Polled every second or so by the card: not rate-limited or logged like the other tools, but owner-only.
+      const r = await getRun(run_id);
+      const c = r ? await prisma.assistantChat.findUnique({ where: { id: r.chatId }, select: { customerId: true, browserSessionId: true } }) : null;
+      if (!r || c?.customerId !== who.customerId) return txt("Unknown run.", true);
+      const { run, done } = r;
+      const items = (done ? ((done.entry as { items?: ConnectorItem[] }).items ?? []) : run.partial.items ?? []).filter((i) => i.kind !== "browser");
+      const live = {
+        status: run.status,
+        text: done ? done.entry.text : run.partial.text,
+        steps: run.partial.steps?.slice(-1) ?? [],
+        cards: viewCards(items, r.chatId),
+        pending: run.pending ? { id: run.pending.id, kind: run.pending.kind, message: run.pending.message, inBrowser: !!run.pending.browser } : null,
+        session: run.pending?.browser?.sessionId ?? (isActive(run.status) ? c.browserSessionId : null) ?? null,
+        error: run.error,
+        chat_url: `${config.siteUrl}/c/${r.chatId}`,
+      };
+      return { ...txt("ok"), structuredContent: live };
+    },
   );
 
   server.registerTool(
@@ -545,7 +566,9 @@ type NeonResult =
   | { state: "done"; runId: string; chatId: string; text: string; items: ConnectorItem[] }
   | { state: "failed"; runId: string; chatId: string; message: string };
 
-const NEON_WAIT_MS = 50_000;
+/** ask_neon answers after this (the card keeps streaming); neon_status waits up to the longer one. */
+const ASK_WAIT_MS = 8_000;
+const STATUS_WAIT_MS = 45_000;
 
 async function askNeon(who: Who, message: string, chatId: string | undefined): Promise<NeonResult> {
   if (!assistantConfigured()) return { state: "error", message: "Neon isn't switched on." };
@@ -562,12 +585,12 @@ async function askNeon(who: Who, message: string, chatId: string | undefined): P
     if (!r.ok) return { state: "error", message: r.body.error } as NeonResult;
     // Runs in the background like a message sent in the app; the acting context follows it.
     if (r.start) void r.start();
-    return waitNeon(r.accepted.run.id);
+    return waitNeon(r.accepted.run.id, ASK_WAIT_MS);
   });
 }
 
-/** Waits for the run to finish or stop on a step, up to NEON_WAIT_MS. */
-async function waitNeon(runId: string): Promise<NeonResult> {
+/** Waits for the run to finish or stop on a step, up to `ms`. */
+async function waitNeon(runId: string, ms = STATUS_WAIT_MS): Promise<NeonResult> {
   const t0 = Date.now();
   for (;;) {
     const r = await getRun(runId);
@@ -577,15 +600,22 @@ async function waitNeon(runId: string): Promise<NeonResult> {
     if (run.status === "waiting" && run.pending)
       return { state: "waiting", runId, chatId, step: { id: run.pending.id, kind: run.pending.kind, message: run.pending.message, inBrowser: !!run.pending.browser, session: run.pending.browser?.sessionId }, partial: run.partial.text, items: (run.partial as { items?: ConnectorItem[] }).items ?? [] };
     if (!isActive(run.status)) return { state: "failed", runId, chatId, message: run.error ?? `Neon stopped (${run.status}).` };
-    if (Date.now() - t0 > NEON_WAIT_MS) {
+    if (Date.now() - t0 > ms) {
       const session = (await prisma.assistantChat.findUnique({ where: { id: chatId }, select: { browserSessionId: true } }))?.browserSessionId;
-      return { state: "working", runId, chatId, session, note: "Neon is still working (the customer can watch its browser in the card). Call neon_status with this run_id." };
+      return { state: "working", runId, chatId, session, note: "Neon is still working; the customer sees it live in the card. Call neon_status with this run_id for the result." };
     }
     await new Promise((res) => setTimeout(res, 800));
   }
 }
 
 function neonOut(r: NeonResult): Out {
+  const out = neonOutRaw(r);
+  // The card follows the run live (neon_watch) until it ends, like Neon's bubble in the Chit chat.
+  if (r.state !== "error") out.structuredContent = { ...(out.structuredContent ?? { cards: [] }), neon: { runId: r.runId, chatId: r.chatId } };
+  return out;
+}
+
+function neonOutRaw(r: NeonResult): Out {
   if (r.state === "error") return txt(r.message, true);
   const chat_url = `${config.siteUrl}/c/${r.chatId}`;
   if (r.state === "failed") return txt({ run_id: r.runId, chat_url, error: r.message }, true);
