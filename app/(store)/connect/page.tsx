@@ -14,7 +14,7 @@ export default async function ConnectPage() {
     <div className="wrap page narrow co">
       <p className="eyebrow">Connectors</p>
       <h1 className="page-title">Use Chit in Claude and ChatGPT</h1>
-      <p>Ask Claude or ChatGPT to find flights, hotels and rental cars with Chit, check your trips and receipts, or log work expenses. You still pay on Chit’s checkout in your own browser: the assistant only gets booking links.</p>
+      <p>Everything Neon does, in Claude or ChatGPT: flights, hotels and rental cars, shopping with your Chit cart, your Neon chats, trips and receipts, and work expenses. Flight, hotel and cart cards show right in the chat. You still pay on Chit’s checkout in your own browser: the assistant only gets booking links.</p>
 
       <section className="co-card">
         <h2 className="section-title">Connector URL</h2>

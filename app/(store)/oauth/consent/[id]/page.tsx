@@ -30,9 +30,10 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
       <div className="co-card">
         <p>It will be able to:</p>
         <ul className="co-points">
-          <li>Search flights, hotels and rental cars for you, and make booking links.</li>
-          <li>See your trips, itineraries and receipts from Chit.</li>
-          <li>Read your company’s travel policy and log work expenses.</li>
+          <li>Search flights, hotels, rental cars and products for you, and make booking links.</li>
+          <li>Add to and change your Chit cart.</li>
+          <li>Read your Neon chats and ask Neon to do things for you (using your Chit AI allowance).</li>
+          <li>See your trips, itineraries and receipts, read your company’s travel policy and log work expenses.</li>
         </ul>
         <p className="muted small">It can’t pay for anything or see card details. You pay on Chit’s own checkout page, in your browser. Disconnect it any time on the Connect page.</p>
       </div>

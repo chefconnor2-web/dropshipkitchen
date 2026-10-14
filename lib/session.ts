@@ -12,6 +12,7 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { sendEmail } from "@/lib/email";
+import { actingAs } from "@/lib/acting";
 
 const COOKIE = "cs_session";
 const LEGACY_COOKIE = "cs_member";
@@ -100,6 +101,8 @@ const currentSession = cache(async (): Promise<{ id: string; customerId: string 
 
 /** The signed-in customer's id, or null (safe in server components). */
 export async function getMemberId(): Promise<string | null> {
+  const a = actingAs();
+  if (a) return a.customerId;
   return (await currentSession())?.customerId ?? null;
 }
 

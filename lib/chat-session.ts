@@ -7,12 +7,14 @@ import { randomBytes } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getMemberId } from "@/lib/session";
+import { actingAs } from "@/lib/acting";
 
 const VISITOR = "cs_vid";
 const LEGACY_CHAT = "cs_chat";
 
 /** The visitor id, or null when this browser has none yet (read-only; safe in server components). */
 export async function getVisitorId(): Promise<string | null> {
+  if (actingAs()) return null;
   const v = (await cookies()).get(VISITOR)?.value;
   return v && /^[A-Za-z0-9_-]{16,64}$/.test(v) ? v : null;
 }

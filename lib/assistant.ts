@@ -681,6 +681,28 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
   return { content: `Unknown tool ${name}.`, isError: true };
 }
 
+/**
+ * Neon's catalog tools without a chat turn, for the Chit MCP: product options, adding to the cart and the
+ * cart summary. Plain database and supplier calls, no AI.
+ */
+export async function catalogTool(name: "get_product" | "add_to_cart" | "view_cart", input: Record<string, unknown>, cartId: string): Promise<ToolResult> {
+  const ctx: Ctx = {
+    cartId,
+    cards: [],
+    known: new Map(),
+    added: [],
+    emit: () => {},
+    client: null as unknown as Anthropic,
+    usage: { in: 0, out: 0, micros: 0 },
+    items: [],
+    seen: new Set(),
+    chatId: "",
+    signal: neverAborted,
+    waitForShopper: noShopper,
+  };
+  return runTool(name, input, ctx);
+}
+
 export class AssistantLimitError extends Error {}
 
 /** One shopper turn: runs the planner's tool loop to completion and returns what the chat panel should show. */

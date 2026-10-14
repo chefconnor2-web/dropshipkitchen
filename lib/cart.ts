@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { getMemberId } from "@/lib/session";
 import { currentProfileOwner, getProfile } from "@/lib/traveller";
+import { actingAs } from "@/lib/acting";
 
 const COOKIE = "cs_cart";
 
@@ -10,8 +11,14 @@ const COOKIE = "cs_cart";
  * that belongs to an account never opens for anyone else, even with its cookie.
  */
 export async function getCartId(): Promise<string | null> {
+  const a = actingAs();
+  if (a) return accountCartId(a.customerId);
   const id = (await cookies()).get(COOKIE)?.value;
-  if (!id) return null;
+  if (!id) {
+    // A signed-in shopper on a new device: their account's cart.
+    const me = await getMemberId();
+    return me ? accountCartId(me) : null;
+  }
   const cart = await prisma.cart.findUnique({ where: { id }, select: { customerId: true } });
   if (!cart) return null;
   return !cart.customerId || cart.customerId === (await getMemberId()) ? id : null;
@@ -19,6 +26,8 @@ export async function getCartId(): Promise<string | null> {
 
 /** Only callable from server actions / route handlers (sets a cookie). A signed-in shopper's cart joins their account. */
 export async function getOrCreateCartId(): Promise<string> {
+  const a = actingAs();
+  if (a) return (await accountCartId(a.customerId)) ?? (await prisma.cart.create({ data: { customerId: a.customerId } })).id;
   const jar = await cookies();
   const memberId = await getMemberId();
   const existing = await getCartId();
@@ -29,6 +38,12 @@ export async function getOrCreateCartId(): Promise<string> {
   const cart = await prisma.cart.create({ data: { customerId: memberId } });
   jar.set(COOKIE, cart.id, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
   return cart.id;
+}
+
+/** The customer's account cart (the most recently used one), shared by their browsers and the Chit MCP. */
+export async function accountCartId(customerId: string): Promise<string | null> {
+  const withItems = await prisma.cart.findFirst({ where: { customerId, OR: [{ items: { some: {} } }, { boxes: { some: {} } }] }, orderBy: { updatedAt: "desc" }, select: { id: true } });
+  return (withItems ?? (await prisma.cart.findFirst({ where: { customerId }, orderBy: { updatedAt: "desc" }, select: { id: true } })))?.id ?? null;
 }
 
 export async function clearCartCookie() {
@@ -80,7 +95,8 @@ export interface ShipTo {
 export async function getShipTo(): Promise<ShipTo> {
   const fallback: ShipTo = { country: "CA", zip: "", tier: "standard" };
   try {
-    const v = JSON.parse((await cookies()).get(SHIP_COOKIE)?.value ?? "null") as Partial<ShipTo> | null;
+    // Acting for a customer (the Chit MCP): no browser, so their saved address.
+    const v = actingAs() ? null : (JSON.parse((await cookies()).get(SHIP_COOKIE)?.value ?? "null") as Partial<ShipTo> | null);
     if (!v) {
       // Nothing chosen on this browser: the address in their saved details (My details), if any.
       const p = await getProfile(await currentProfileOwner()).catch(() => null);

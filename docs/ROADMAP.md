@@ -27,12 +27,11 @@ What's agreed but not built yet, roughly in order. Update it as things ship.
 
 Live at `/mcp` (Streamable HTTP, OAuth 2.1 with dynamic client registration and PKCE). Setup steps for users are on the `/connect` page.
 
-- Done: search_flights, get_flight, find_places, search_hotels, find_rental_car (a Discover Cars link), my_trips, company_policy, set_work_trip, log_expense. Each search becomes a Chit trip chat, so the cards and bookings show in Chit. Pay links only. Per-account rate limit (20 calls a minute, 300 an hour) and an audit row per call (McpCall). Customers disconnect apps on /connect.
+- Done: search_flights, get_flight, find_places, search_hotels, find_rental_car (a Discover Cars link), my_trips, company_policy, set_work_trip, log_expense; shopping (search_products, get_product, add_to_cart, view_cart, update_cart on the account's cart, shared with every signed-in browser); Neon (my_chats, read_chat, ask_neon with neon_status and approve_neon_step: everything Neon does, live browser included, on the customer's AI allowance). Flight, hotel, car, cart, trip and Neon results show as cards in the chat (MCP Apps view ui://chit/cards.html). Each search becomes a Chit trip chat, so the cards and bookings show in Chit. Pay links only. Per-account rate limit (40 calls a minute, 300 an hour) and an audit row per call (McpCall). Customers disconnect apps on /connect.
 - Next:
   - Try it in Claude (Settings → Connectors → Add custom connector) and in ChatGPT developer mode on the live site.
-  - ChatGPT app polish: widgets (flight and hotel cards rendered in ChatGPT), then submit to the app directory.
+  - Check the cards in ChatGPT, then submit to its app directory.
   - Submit to Claude's connector directory once it's stable.
-  - Rental car search with Neon's live browser (needs a way to hand over the pay link outside the chat).
 
 ## Ideas parked
 
