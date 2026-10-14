@@ -335,6 +335,8 @@ function shot(p: PageState, facts: Record<string, unknown>, note?: string, chatI
     note,
     hidden ? "This is the payment page, which stays private (no screenshot). Ask the shopper whether they booked, and for anything you need from it." : "",
     p.needsShopper ? "The page shows a robot check: call rental_car_hand_over with reason captcha and a one-line message." : "",
+    // On the payment step: hand the link over now (no tapping around on the payment page).
+    !hidden && /\/(payment|checkout|pay)(\/|\?|$)/i.test((() => { try { return new URL(p.url).pathname; } catch { return ""; } })()) ? "This is the payment page: call rental_car_hand_over with reason payment now, so the shopper gets the Pay link in the chat." : "",
   ].filter(Boolean);
   const text = JSON.stringify({ ...facts, page: { url: p.url, title: p.title }, ...(notes.length ? { important: notes.join(" ") } : {}) });
   const spent = micros ? { micros } : {};
@@ -498,62 +500,50 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         // the exact checkout Neon filled in. First make sure the link opens that checkout on its own (no cookies
         // from the live browser), else fall back to paying in the live browser.
         const link = continueUrl(now.url, discoverCarsUrl());
-        ctx.progress("Getting your payment link ready…");
-        const probe = await browserApi.probe(sessionId, link, signal).catch(() => null);
-        if (probe && (probe.kind === "payment" || probe.kind === "driver")) {
-          const search = lastSearch.get(ctx.chatId);
-          const pay: CarRentalCard = {
-            kind: "car",
-            id: `carpay_${createHash("sha256").update(link).digest("hex").slice(0, 10)}`,
-            location: search?.location ?? "Your rental car",
-            pickup: search?.pickup ?? "",
-            dropoff: search?.dropoff ?? "",
-            url: link,
-            filled: true,
-            pay: { step: probe.kind },
-          };
-          ctx.show("", [pay]);
-          const watching = new AbortController();
-          const onStop = () => watching.abort();
-          signal.addEventListener("abort", onStop, { once: true });
-          // Booked? The same check, every few seconds and as soon as they're back in the chat.
-          const paid = watchPayment(ctx.chatId, async () => {
-            const p = await browserApi.probe(sessionId, link, watching.signal).catch(() => null);
-            return p?.kind === "confirmed" ? p : null;
-          }, watching.signal);
-          let detected: Awaited<typeof paid> | null = null;
-          void paid.then((p) => (detected = p));
-          const w = await ctx.waitForShopper({
-            kind: "checkout",
-            message: "Tap Pay on Discover Cars: it opens in your browser with everything filled in. Pay with your saved card or Apple Pay; Neon carries on as soon as it's booked.",
-            browser: null,
-            until: paid,
-          });
-          watching.abort();
-          signal.removeEventListener("abort", onStop);
-          if (w.outcome !== "resumed") return { content: STOPPED };
-          // Tapped "I've paid" before the watcher saw it: one last look.
-          const last: { kind: string; number: string | null } | null = detected ?? (await browserApi.probe(sessionId, link, signal).catch(() => null));
-          const confirmed = last?.kind === "confirmed";
-          return {
-            content: JSON.stringify({
-              paid_in_own_browser: true,
-              booking_confirmed: confirmed,
-              ...(confirmed && last?.number ? { confirmation_number: last.number } : {}),
-              how: detected ? "Chit saw the booking go through" : "the shopper tapped I've paid",
-              next: `${confirmed ? "Tell them the car is booked (with the confirmation number if there is one)." : "The booking didn't show up on our side yet (it can take a minute); ask them to say if payment didn't go through."} Then ask them for a screenshot of the booking confirmation (Discover Cars' confirmation page or email: the 📷 Send booking screenshot button on the card) so you can add the exact pickup time, desk and confirmation to their trip. End your turn there. When they send it, read it and call rental_car_save_booking with exactly what it shows, then carry on with the trip's next step.`,
-            }),
-          };
-        }
-        // The link didn't reach the checkout on its own: they pay in the live browser instead.
-        const after = await handOver(sessionId, "checkout", str(input.message, 160) || "Enter your card details and tap Book. Neon can't see this page. Then tap Approve & next.");
-        if (after === "stopped") return { content: STOPPED };
-        return shot(
-          after,
-          { handedBack: true, afterPayment: true },
-          "The shopper handed back after the payment step. If the page shows a booking confirmation, tell them the confirmation number and that Discover Cars emails the voucher; otherwise ask whether they booked.",
-          ctx.chatId,
-        );
+        // The link goes in the chat at once: they pay in their own browser (saved card or Apple Pay; no card
+        // ever touches Chit). The live browser stays in the chat too, if they'd rather pay there.
+        const search = lastSearch.get(ctx.chatId);
+        const pay: CarRentalCard = {
+          kind: "car",
+          id: `carpay_${createHash("sha256").update(link).digest("hex").slice(0, 10)}`,
+          location: search?.location ?? "Your rental car",
+          pickup: search?.pickup ?? "",
+          dropoff: search?.dropoff ?? "",
+          url: link,
+          filled: true,
+          pay: { step: "payment" },
+        };
+        ctx.show("", [pay]);
+        const watching = new AbortController();
+        const onStop = () => watching.abort();
+        signal.addEventListener("abort", onStop, { once: true });
+        // Booked? A light check in the background (every few seconds and as soon as they're back in the chat).
+        const paid = watchPayment(ctx.chatId, async () => {
+          const p = await browserApi.probe(sessionId, link, watching.signal).catch(() => null);
+          return p?.kind === "confirmed" ? p : null;
+        }, watching.signal);
+        let detected: Awaited<typeof paid> | null = null;
+        void paid.then((p) => (detected = p));
+        const w = await ctx.waitForShopper({
+          kind: "checkout",
+          message: "Tap Pay on Discover Cars: it opens in your browser with everything filled in. Pay with your saved card or Apple Pay; Neon carries on as soon as it's booked.",
+          browser: null,
+          until: paid,
+        });
+        watching.abort();
+        signal.removeEventListener("abort", onStop);
+        if (w.outcome !== "resumed") return { content: STOPPED };
+        const last: { kind: string; number: string | null } | null = detected ?? (await browserApi.probe(sessionId, link, signal).catch(() => null));
+        const confirmed = last?.kind === "confirmed";
+        return {
+          content: JSON.stringify({
+            paid_in_own_browser: true,
+            booking_confirmed: confirmed,
+            ...(confirmed && last?.number ? { confirmation_number: last.number } : {}),
+            how: detected ? "Chit saw the booking go through" : "the shopper tapped I've paid",
+            next: `${confirmed ? "Tell them the car is booked (with the confirmation number if there is one)." : "The booking didn't show up on our side yet (it can take a minute); ask them to say if payment didn't go through."} Then ask them for a screenshot of the booking confirmation (Discover Cars' confirmation page or email: the 📷 Send booking screenshot button on the card) so you can add the exact pickup time, desk and confirmation to their trip. End your turn there. When they send it, read it and call rental_car_save_booking with exactly what it shows, then carry on with the trip's next step.`,
+          }),
+        };
       }
       const kind = input.reason === "captcha" ? "captcha" : "choice";
       const after = await handOver(sessionId, kind, str(input.message, 160) || "Your turn: tap Approve & next when you're done.");
