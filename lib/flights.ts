@@ -4,7 +4,16 @@
 
 import { processSingleton } from "@/lib/singleton";
 import { getOffer, searchOffers, type DuffelOffer, type OfferRequestInput } from "@/lib/duffel";
-import type { FlightCard, FlightSlice } from "@/lib/flights-shared";
+import { itineraryKey, type FareOption, type FareRule, type FlightCard, type FlightSlice } from "@/lib/flights-shared";
+
+type Condition = { allowed: boolean; penalty_amount?: string | null; penalty_currency?: string | null } | null | undefined;
+/** Duffel's change/refund condition as a rule the card and the planner can show. */
+export function fareRule(c: Condition): FareRule {
+  if (!c) return null;
+  if (!c.allowed) return { kind: "no" };
+  const fee = Number(c.penalty_amount ?? 0);
+  return fee > 0 ? { kind: "fee", fee: `${c.penalty_currency ?? ""} ${Math.ceil(fee)}`.trim() } : { kind: "free" };
+}
 
 /**
  * Our fee on every ticket: covers Duffel's per-booking fees, card processing and the AI that found it, plus
@@ -74,9 +83,56 @@ export function toCard(o: DuffelOffer, fee = flightFee()): FlightCard {
     carryOn: bags("carry_on"),
     refundable: o.conditions?.refund_before_departure ? o.conditions.refund_before_departure.allowed : null,
     changeable: o.conditions?.change_before_departure ? o.conditions.change_before_departure.allowed : null,
+    ...(o.payment_requirements?.requires_instant_payment === false ? { holdable: true } : {}),
+    changeRule: fareRule(o.conditions?.change_before_departure),
+    refundRule: fareRule(o.conditions?.refund_before_departure),
     slices,
     expiresAt: o.expires_at,
   };
+}
+
+const fareOf = (c: FlightCard): FareOption => ({
+  id: c.id,
+  brand: c.fareBrand || c.cabin,
+  priceCents: c.priceCents,
+  checkedBags: c.checkedBags,
+  carryOn: c.carryOn,
+  changeRule: c.changeRule ?? null,
+  refundRule: c.refundRule ?? null,
+});
+
+/**
+ * One card per actual trip: airlines send each fare type (Basic, Standard, Flex…) of the same flights as its
+ * own offer. Groups them by itinerary; each card is that trip's cheapest fare that fits, carrying every fare
+ * type (cheapest of each kind, up to 4) so the shopper can pick a more flexible one.
+ */
+export function groupFares(cards: FlightCard[], fits: (c: FlightCard) => boolean = () => true): FlightCard[] {
+  const byTrip = new Map<string, FlightCard[]>();
+  for (const c of cards) {
+    const k = itineraryKey(c);
+    byTrip.set(k, [...(byTrip.get(k) ?? []), c]);
+  }
+  const out: FlightCard[] = [];
+  for (const all of byTrip.values()) {
+    const sorted = [...all].sort((a, b) => a.priceCents - b.priceCents);
+    const base = sorted.find(fits);
+    if (!base) continue;
+    // The cheapest of each distinct fare (brand, bags and rules), so near-duplicates don't crowd the list.
+    const seen = new Set<string>();
+    const fares: FareOption[] = [];
+    for (const c of sorted) {
+      const f = fareOf(c);
+      const sig = JSON.stringify([f.brand.toLowerCase(), f.checkedBags, f.changeRule?.kind, f.refundRule?.kind]);
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      fares.push(f);
+    }
+    // Keep the chosen fare in the list even past the cap.
+    const shown = fares.slice(0, 4);
+    if (!shown.some((f) => f.id === base.id)) shown[shown.length - 1] = fareOf(base);
+    out.push({ ...base, ...(shown.length > 1 ? { fares: shown.sort((a, b) => a.priceCents - b.priceCents) } : {}) });
+  }
+  return out;
 }
 
 export interface FlightSearch {
@@ -89,11 +145,15 @@ export interface FlightSearch {
   departAfter: string;
   departBefore: string;
   checkedBag: boolean;
+  /** "changeable": changes allowed (any fee); "refundable": a refund allowed. Empty for any fare. */
+  fare?: "" | "changeable" | "refundable";
 }
 
 /** The shopper's must-haves that Duffel can't filter for us. */
-export function keep(c: FlightCard, s: Pick<FlightSearch, "departAfter" | "departBefore" | "checkedBag" | "maxStops">): boolean {
+export function keep(c: FlightCard, s: Pick<FlightSearch, "departAfter" | "departBefore" | "checkedBag" | "maxStops" | "fare">): boolean {
   if (s.checkedBag && c.checkedBags < 1) return false;
+  if (s.fare === "changeable" && !(c.changeRule ? c.changeRule.kind !== "no" : c.changeable)) return false;
+  if (s.fare === "refundable" && !(c.refundRule ? c.refundRule.kind !== "no" : c.refundable)) return false;
   if (s.maxStops != null && c.slices.some((x) => x.stops > s.maxStops!)) return false;
   const t = c.slices[0]?.depart.slice(11, 16) ?? "";
   if (/^\d\d:\d\d$/.test(s.departAfter) && t < s.departAfter) return false;

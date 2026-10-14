@@ -16,6 +16,7 @@ export default function BookForm({
   tripSlug,
   prefill,
   chatId,
+  holdUntil,
 }: {
   offerId: string;
   priceCents: number;
@@ -28,6 +29,8 @@ export default function BookForm({
   prefill?: Record<string, string>;
   /** The chat the Book button was tapped in: after paying, back to it. */
   chatId?: string;
+  /** The airline lets this fare be held now and paid later: when payment is due, as the shopper reads it. */
+  holdUntil?: string | null;
 }) {
   const [state, action, pending] = useActionState<BookState, FormData>(bookFlightAction, { shownCents: priceCents, n: 0 });
   const v = (k: string) => state.values?.[k] ?? prefill?.[k] ?? "";
@@ -131,6 +134,14 @@ export default function BookForm({
       <button className="btn primary lg block" disabled={pending}>
         {pending ? "Checking the fare…" : `Pay ${flightPrice({ priceCents: state.shownCents, currency })} and book`}
       </button>
+      {holdUntil !== undefined && (
+        <>
+          <button className="btn lg block fl-hold" name="intent" value="hold" disabled={pending}>
+            Hold this fare, pay later
+          </button>
+          <p className="muted small fl-hold-note">Nothing is charged now. The airline keeps your seats{holdUntil ? ` until ${holdUntil}` : " for a limited time"}; pay from your trip page before then.</p>
+        </>
+      )}
       <p className="muted small fl-fine">
         We re-check the fare with the airline before charging. Your ticket is booked the moment payment clears; if the airline can&apos;t confirm it,
         you&apos;re refunded in full automatically.

@@ -2419,3 +2419,17 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .chat-app .cx-empty .share-btn:hover { border-color: #CFCFD8; color: var(--nx-ink); }
 .chat-app .cx-empty .cx-share { margin-top: 0; }
 .chat-app .cx-cost { font: 500 11.5px/1.3 var(--im-font); font-variant-numeric: tabular-nums; color: #9A9AA5; margin: 0 0 0 2px; }
+
+/* fare types on a flight card (Basic, Standard, Flex…): pick one before booking */
+.cx-fares { display: grid; gap: 6px; margin: 2px 0 4px; }
+.cx-fare { display: grid; gap: 2px; text-align: left; font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--nx-line, #E8E8ED); background: #fff; cursor: pointer; }
+.cx-fare:hover { border-color: #CFCFD8; }
+.cx-fare.is-on { border-color: var(--nx-accent, #5B4BF5); background: var(--nx-accent-soft, #F1EFFF); box-shadow: 0 0 0 1px var(--nx-accent, #5B4BF5) inset; }
+.cx-fare-top { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13.5px; }
+.cx-fare-price { font-variant-numeric: tabular-nums; }
+.cx-fare-perks { font-size: 12px; color: var(--nx-sub, #6B6B76); }
+.chat-app .cx-flight:has(.cx-fares) { flex-basis: 288px; }
+.fl-flexpay { margin: 4px 0 12px; padding: 10px 12px; border-radius: 12px; background: #F1EFFF; border: 1px solid #DDD8FF; font-size: 14px; }
+.fl-hold { margin-top: 10px; background: #fff; border: 1px solid var(--line, #E4DFD5); }
+.fl-hold-note { margin: 6px 2px 0; }
+.fl-payheld { margin-top: 12px; }

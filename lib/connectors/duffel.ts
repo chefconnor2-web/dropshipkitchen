@@ -3,8 +3,8 @@
 // ranked in code, not AI scouts: faster, and they cost nothing in AI.
 
 import { duffelConfigured, duffelTestMode, placeSuggestions, DuffelError } from "@/lib/duffel";
-import { flightDetails, keep, rank, searchFlights, type FlightSearch } from "@/lib/flights";
-import { clock, dayShift, durationLabel, flightPrice, stopsLabel, type FlightCard } from "@/lib/flights-shared";
+import { flightDetails, groupFares, keep, rank, searchFlights, type FlightSearch } from "@/lib/flights";
+import { clock, dayShift, durationLabel, flightPrice, ruleLabel, stopsLabel, type FlightCard } from "@/lib/flights-shared";
 import type { Connector } from "./types";
 
 const MAX_SEARCHES = 6;
@@ -42,6 +42,7 @@ export function parseSearch(raw: unknown, today: string): FlightSearch | string 
     departAfter: str(o.depart_after, 5),
     departBefore: str(o.depart_before, 5),
     checkedBag: o.checked_bag === true,
+    fare: o.fare === "changeable" || o.fare === "refundable" ? o.fare : "",
   };
 }
 
@@ -55,6 +56,17 @@ export function describe(c: FlightCard): Record<string, unknown> {
     cabin: c.cabin + (c.fareBrand ? ` (${c.fareBrand})` : ""),
     bags: `${c.checkedBags} checked, ${c.carryOn} carry-on`,
     refundable: c.refundable,
+    rules: [ruleLabel(c.changeRule, "changes"), ruleLabel(c.refundRule, "refund")].filter(Boolean).join(", ") || "not stated",
+    ...(c.holdable ? { hold_available: true } : {}),
+    // Every fare type for these same flights: the card lets the shopper pick one.
+    ...(c.fares && c.fares.length > 1
+      ? {
+          fare_options: c.fares.map(
+            (f) =>
+              `${f.brand}: ${flightPrice({ priceCents: f.priceCents, currency: c.currency })}, ${f.checkedBags} checked bag${f.checkedBags === 1 ? "" : "s"}, ${[ruleLabel(f.changeRule, "changes"), ruleLabel(f.refundRule, "refund")].filter(Boolean).join(", ") || "rules not stated"}`,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -70,7 +82,9 @@ Flights:
 - If the destination or rough dates are missing, ask once. Otherwise assume 1 adult in economy, any number of stops, and say what you assumed.
 - Only mention flights find_flights returned, at the price it returned (our fee is included; show the currency as given). Never invent flights, times or prices. Times are local at each airport.
 - Lead with the best pick and why (price, time, stops, bags), then mention the alternatives. The shopper sees a card for every pick, so don't repeat every detail.
+- Airlines sell the same flights as several fare types (Basic, Standard, Flex…). Each pick shows the cheapest fare that fits, and fare_options lists the others with bags and change/refund rules; the shopper can switch fare on the card before booking. When they say they need flexibility, search with fare "changeable" (or "refundable"). When a flexible fare costs only a little more than the basic one, say so in a line (e.g. "Flex is $47 more and lets you change for free").
 - Use get_flight for fare rules (refunds, changes) and extra bag prices before answering those questions.
+- Paying: the booking page takes cards and, when the booking allows, pay-over-time (Klarna, Affirm, Afterpay; the shopper sees which at checkout). Fares marked hold_available can be held with the airline for free (Hold this fare on the booking page) and paid later from the trip page before the airline's deadline; mention it when they're not ready to pay yet.
 - To buy, the shopper taps Book on a flight card: they enter passenger names (as on the passport), pay by card, and the ticket is booked straight away with an emailed confirmation code. You can't book for them or take passenger details in the chat; point them to the Book button on the card they want. Fares can change until booked; the booking page re-checks the price first.
 - Travelling with friends or family who pay separately: tell them to tap Share on the flight card. Friends get a link with the same flights at today's price and book their own seats; after booking, the trip page has an Invite friends link too. For one booking paying for everyone, search with all the travellers instead.`,
   tools: [
@@ -117,8 +131,9 @@ Flights:
                 depart_after: { type: "string", description: "Earliest departure time of the first flight, HH:MM, or empty" },
                 depart_before: { type: "string", description: "Latest departure time of the first flight, HH:MM, or empty" },
                 checked_bag: { type: "boolean", description: "true when the shopper needs a checked bag included" },
+                fare: { type: "string", enum: ["any", "changeable", "refundable"], description: "'changeable' when they need to be able to change the flight, 'refundable' when they need their money back if they cancel; else 'any'" },
               },
-              required: ["label", "slices", "adults", "child_ages", "cabin", "max_stops", "depart_after", "depart_before", "checked_bag"],
+              required: ["label", "slices", "adults", "child_ages", "cabin", "max_stops", "depart_after", "depart_before", "checked_bag", "fare"],
               additionalProperties: false,
             },
           },
@@ -174,7 +189,8 @@ Flights:
           if (typeof s === "string") return { label: str((r as Record<string, unknown>)?.label, 30) || "Flights", error: s };
           try {
             const all = await searchFlights(s);
-            const fit = all.filter((c) => keep(c, s));
+            // One card per trip, carrying its fare types (Basic, Standard, Flex…); the shown fare fits the search.
+            const fit = groupFares(all, (c) => keep(c, s));
             const picks = rank(fit).map((c) => ({ ...c, group: s.label }));
             if (picks.length) ctx.show(s.label, picks);
             return { label: s.label, offers_found: all.length, matching: fit.length, picks: picks.map(describe) };

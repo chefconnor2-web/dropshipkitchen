@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { canHold } from "@/lib/flight-booking";
+import { flexPayTypes } from "@/lib/flex-pay";
 import { getOffer, DuffelError, duffelConfigured, duffelTestMode, type DuffelOffer } from "@/lib/duffel";
 import { toCard } from "@/lib/flights";
 import { passengerSlots } from "@/lib/flight-booking";
@@ -57,8 +59,25 @@ export default async function BookFlightPage({ params, searchParams }: { params:
           {card.changeable === true ? "Changes allowed (the airline may charge a fee)." : card.changeable === false ? "No changes allowed." : ""}
         </p>
       </div>
+      {flexNote(flexPayTypes(card.priceCents, Math.round(Number(offer.total_amount) * 100), card.currency))}
       <PrefillNote from={from} next={`/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`} />
-      <BookForm chatId={fromChat} prefill={prefill} offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} tripSlug={trip?.slug} />
+      <BookForm chatId={fromChat} prefill={prefill} offerId={offer.id} priceCents={card.priceCents} currency={card.currency} slots={slots} needPassport={offer.passenger_identity_documents_required === true} tripSlug={trip?.slug} {...(canHold(offer) ? { holdUntil: holdLabel(offer.payment_requirements?.payment_required_by) } : {})} />
     </div>
   );
+}
+
+/** "Pay in full, or over time with Klarna, Affirm or Afterpay": only the ones checkout will offer. */
+function flexNote(types: string[] | null) {
+  const names: Record<string, string> = { klarna: "Klarna", affirm: "Affirm", afterpay_clearpay: "Afterpay" };
+  const list = (types ?? []).map((t) => names[t]).filter(Boolean);
+  if (!list.length) return null;
+  const said = list.length > 1 ? `${list.slice(0, -1).join(", ")} or ${list[list.length - 1]}` : list[0];
+  return <p className="fl-flexpay">Pay in full, or over time with {said} at checkout (subject to their approval).</p>;
+}
+
+/** "Tue, Oct 15, 6:00 PM" (UTC) for a hold's payment deadline, or null when the airline doesn't say. */
+function holdLabel(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : `${d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" })} UTC`;
 }

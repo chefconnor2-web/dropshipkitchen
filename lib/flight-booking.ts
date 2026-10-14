@@ -15,13 +15,16 @@ import { stripe } from "@/lib/stripe";
 import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
-import { confirmOrderCancellation, createOrder, DuffelError, getOffer, quoteOrderCancellation, type DuffelOffer, type DuffelOrderCancellation, type DuffelOrderPassenger } from "@/lib/duffel";
+import { confirmOrderCancellation, createHoldOrder, createOrder, DuffelError, getOffer, getOrder, payOrder, quoteOrderCancellation, type DuffelOffer, type DuffelOrderCancellation, type DuffelOrderPassenger } from "@/lib/duffel";
 import { priceWithFee, toCard } from "@/lib/flights";
+import { checkoutWithFlexPay, flexPayTypes } from "@/lib/flex-pay";
 import { clock, flightPrice, shortDate, type FlightCard } from "@/lib/flights-shared";
 import type Stripe from "stripe";
 import { rememberTraveller } from "@/lib/traveller";
 
 export const FLIGHT_STATUS = {
+  /** A fare held with the airline (Duffel hold order), not paid yet. Nothing charged. */
+  HELD: "HELD",
   PENDING_PAYMENT: "PENDING_PAYMENT",
   BOOKING: "BOOKING",
   BOOKED: "BOOKED",
@@ -147,8 +150,8 @@ export interface StartResult {
   newPriceCents?: number;
 }
 
-/** Re-prices the offer, saves the booking and opens Stripe Checkout. */
-export async function startFlightCheckout(input: { offerId: string; shownCents: number; form: FormData; customerId: string | null }): Promise<StartResult> {
+/** The checks every booking starts with: the fare now, passengers, contact. Returns what booking needs. */
+async function prepareBooking(input: BookInput) {
   let offer: DuffelOffer;
   try {
     offer = await getOffer(input.offerId);
@@ -173,6 +176,21 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
   // Joining a friend's shared trip (from /trips/<slug>): the booking is listed on that trip.
   const tripSlug = String(input.form.get("trip") ?? "");
   const trip = tripSlug ? await prisma.sharedTrip.findUnique({ where: { slug: tripSlug }, select: { id: true, slug: true } }) : null;
+  return { offer, price, passengers, email, phone, card, trip };
+}
+
+type BookInput = { offerId: string; shownCents: number; form: FormData; customerId: string | null };
+
+/** Whether the airline lets this fare be held now and paid later. */
+export function canHold(offer: Pick<DuffelOffer, "payment_requirements">): boolean {
+  return offer.payment_requirements?.requires_instant_payment === false;
+}
+
+/** Re-prices the offer, saves the booking and opens Stripe Checkout. */
+export async function startFlightCheckout(input: BookInput): Promise<StartResult> {
+  const p = await prepareBooking(input);
+  if ("error" in p) return p;
+  const { offer, price, passengers, email, phone, card, trip } = p;
   const booking = await prisma.flightBooking.create({
     data: {
       number: newOrderNumber().replace(/^([^-]+)-/, "$1-FL-"),
@@ -189,7 +207,7 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
     },
   });
   const first = card.slices[0];
-  const session = await stripe().checkout.sessions.create({
+  const session = await checkoutWithFlexPay({
     mode: "payment",
     customer_email: email,
     line_items: [
@@ -209,9 +227,93 @@ export async function startFlightCheckout(input: { offerId: string; shownCents: 
     payment_intent_data: { metadata: { flightBookingId: booking.id } },
     success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
-  });
+  }, flexPayTypes(price, Math.round(Number(offer.total_amount) * 100), offer.total_currency));
   await prisma.flightBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   await rememberTraveller(input.customerId, { firstName: passengers[0]?.given_name ?? "", lastName: passengers[0]?.family_name ?? "", phone, email });
+  return { url: session.url! };
+}
+
+// ---------- hold now, pay later ----------
+
+/**
+ * Holds the fare with the airline (a Duffel hold order) without charging anything: the shopper pays from the
+ * trip page before the airline's deadline. Only for fares the airline lets us hold (canHold).
+ */
+export async function startFlightHold(input: BookInput): Promise<StartResult> {
+  const p = await prepareBooking(input);
+  if ("error" in p) return p;
+  const { offer, price, passengers, email, phone, card, trip } = p;
+  if (!canHold(offer)) return { error: "The airline needs this fare paid now, so it can't be held. Pay to book it." };
+  const booking = await prisma.flightBooking.create({
+    data: {
+      number: newOrderNumber().replace(/^([^-]+)-/, "$1-FL-"),
+      status: FLIGHT_STATUS.HELD,
+      offerId: offer.id,
+      cardJson: JSON.stringify(card),
+      duffelAmount: offer.total_amount,
+      currency: offer.total_currency,
+      priceCents: price,
+      passengersJson: JSON.stringify(passengers),
+      email,
+      phone,
+      customerId: input.customerId,
+      sharedTripId: trip?.id ?? null,
+    },
+  });
+  try {
+    const order = await createHoldOrder(offer.id, orderPassengers(passengers, passengerSlots(offer), email, phone), { booking: booking.number, hold: "1" });
+    const by = order.payment_status?.payment_required_by ?? offer.payment_requirements?.payment_required_by ?? null;
+    const guaranteed = order.payment_status?.price_guarantee_expires_at ?? offer.payment_requirements?.price_guarantee_expires_at ?? null;
+    await prisma.flightBooking.update({
+      where: { id: booking.id },
+      data: { duffelOrderId: order.id, bookingReference: order.booking_reference, holdUntil: by ? new Date(by) : null, priceGuaranteedUntil: guaranteed ? new Date(guaranteed) : null },
+    });
+  } catch (e) {
+    await prisma.flightBooking.delete({ where: { id: booking.id } }).catch(() => {});
+    return { error: `The airline couldn't hold this fare${e instanceof Error ? ` (${e.message})` : ""}. You can still pay to book it now.` };
+  }
+  await rememberTraveller(input.customerId, { firstName: passengers[0]?.given_name ?? "", lastName: passengers[0]?.family_name ?? "", phone, email });
+  await sendFlightEmail(booking.id, "held").catch(() => {});
+  return { url: `${await tripUrl(booking)}${chatParam(input.form)}` };
+}
+
+/** Pays a held fare: today's price for the hold (it can move unless guaranteed), then Stripe Checkout. */
+export async function payHeldFlight(bookingId: string): Promise<StartResult> {
+  const b = await prisma.flightBooking.findUnique({ where: { id: bookingId } });
+  if (!b || !b.duffelOrderId || (b.status !== FLIGHT_STATUS.HELD && b.status !== FLIGHT_STATUS.PENDING_PAYMENT)) return { error: "This hold isn't waiting for payment any more." };
+  // Tried before and left Checkout: that session must not be payable alongside a new one.
+  if (b.status === FLIGHT_STATUS.PENDING_PAYMENT && b.stripeSessionId) {
+    const old = await stripe().checkout.sessions.retrieve(b.stripeSessionId).catch(() => null);
+    if (old?.payment_status === "paid") {
+      await completeFlightBooking(old);
+      return { error: "You've already paid for this fare. Refresh the page to see your booking." };
+    }
+    if (old?.status === "open") await stripe().checkout.sessions.expire(old.id).catch(() => {});
+  }
+  if (b.holdUntil && b.holdUntil.getTime() < Date.now() + 60_000) return { error: "This hold has expired, so the airline released the seats. Ask the assistant to search again." };
+  let order;
+  try {
+    order = await getOrder(b.duffelOrderId);
+  } catch {
+    return { error: "We couldn't reach the airline just now. Please try again in a minute." };
+  }
+  if (order.payment_status && !order.payment_status.awaiting_payment) return { error: "The airline no longer has this hold waiting for payment. Ask the assistant to search again." };
+  const price = priceWithFee(order.total_amount);
+  const card = JSON.parse(b.cardJson) as FlightCard;
+  await prisma.flightBooking.update({ where: { id: b.id }, data: { duffelAmount: order.total_amount, currency: order.total_currency, priceCents: price } });
+  const session = await checkoutWithFlexPay(
+    {
+      mode: "payment",
+      customer_email: b.email,
+      line_items: [{ quantity: 1, price_data: { currency: order.total_currency.toLowerCase(), unit_amount: price, product_data: { name: `Flight ${routeLabel(card)}`, description: `Held fare · ${card.airline}` } } }],
+      metadata: { flightBookingId: b.id, bookingNumber: b.number },
+      payment_intent_data: { metadata: { flightBookingId: b.id } },
+      success_url: `${config.siteUrl}/flights/trip/${b.number}?s={CHECKOUT_SESSION_ID}`,
+      cancel_url: await tripUrl(b),
+    },
+    flexPayTypes(price, Math.round(Number(order.total_amount) * 100), order.total_currency),
+  );
+  await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.PENDING_PAYMENT, stripeSessionId: session.id } });
   return { url: session.url! };
 }
 
@@ -228,6 +330,7 @@ export async function completeFlightBooking(session: Pick<Stripe.Checkout.Sessio
   });
   if (locked.count === 0) return prisma.flightBooking.findUnique({ where: { id } });
   const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id } });
+  if (b.duffelOrderId) return payHeldOrder(b);
 
   let offer: DuffelOffer;
   try {
@@ -252,6 +355,31 @@ export async function completeFlightBooking(session: Pick<Stripe.Checkout.Sessio
     // Duffel said no (4xx): nothing was booked, refund. Anything else (timeout, 5xx): it may have been booked.
     if (e instanceof DuffelError && e.status >= 400 && e.status < 500) return refund(b.id, `The airline couldn't confirm the booking: ${e.message}`);
     const message = `Duffel didn't confirm in time (${e instanceof Error ? e.message : e}). Check the Duffel dashboard for booking ${b.number} before refunding.`;
+    const r = await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.NEEDS_REVIEW, error: message } });
+    await merchantAlert(r.number, message);
+    return r;
+  }
+}
+
+/** A held fare the shopper just paid for: pay the airline's hold from our balance, if the price still fits. */
+async function payHeldOrder(b: { id: string; number: string; duffelOrderId: string | null; duffelAmount: string; currency: string }) {
+  let order;
+  try {
+    order = await getOrder(b.duffelOrderId!);
+  } catch (e) {
+    return refund(b.id, `We couldn't re-check the held fare with the airline (${e instanceof Error ? e.message : e}).`);
+  }
+  if (order.payment_status && !order.payment_status.awaiting_payment) return refund(b.id, "The airline released the held seats before payment.");
+  if (order.total_currency !== b.currency || Number(order.total_amount) > Number(b.duffelAmount) + 0.005)
+    return refund(b.id, `The airline raised the held fare (now ${order.total_currency} ${order.total_amount}) before we could pay it.`);
+  try {
+    await payOrder(order.id, order.total_amount, order.total_currency);
+    const booked = await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.BOOKED, bookingReference: order.booking_reference, bookedAt: new Date(), error: null } });
+    await sendFlightEmail(booked.id, "confirmation");
+    return booked;
+  } catch (e) {
+    if (e instanceof DuffelError && e.status >= 400 && e.status < 500) return refund(b.id, `The airline couldn't take payment for the hold: ${e.message}`);
+    const message = `Duffel didn't confirm payment of hold ${b.duffelOrderId} in time (${e instanceof Error ? e.message : e}). Check the Duffel dashboard for booking ${b.number} before refunding.`;
     const r = await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.NEEDS_REVIEW, error: message } });
     await merchantAlert(r.number, message);
     return r;
@@ -284,7 +412,7 @@ export async function tripUrl(b: { id: string; number: string }): Promise<string
   return `${config.siteUrl}/flights/trip/${b.number}?t=${await tripToken(b.id)}`;
 }
 
-async function sendFlightEmail(bookingId: string, kind: "confirmation" | "refunded") {
+async function sendFlightEmail(bookingId: string, kind: "confirmation" | "refunded" | "held") {
   const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id: bookingId } });
   const card = JSON.parse(b.cardJson) as FlightCard;
   const url = await tripUrl(b);
@@ -295,8 +423,27 @@ async function sendFlightEmail(bookingId: string, kind: "confirmation" | "refund
   const trips = await import("@/lib/shared-trips");
   const inviteSlug = kind === "confirmation" ? await trips.shareFromBooking(b.id).catch(() => null) : null;
   const invite = inviteSlug ? `\n\nTravelling with friends? Send them this link to book the same flights: ${trips.sharedTripUrl(inviteSlug)}` : "";
+  const until = b.holdUntil ? `${b.holdUntil.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" })} UTC` : null;
   const m =
-    kind === "confirmation"
+    kind === "held"
+      ? {
+          subject: `Fare held: ${routeLabel(card)}${until ? `, pay by ${until}` : ""}`,
+          text: `${card.airline} is holding your seats. Nothing has been charged.
+
+Passengers: ${names}
+
+${lines}
+
+Price today: ${price}${b.priceGuaranteedUntil ? " (guaranteed for now)" : " (it can change until you pay)"}
+${until ? `Pay by: ${until}
+` : ""}
+Pay and book from your trip page: ${url}
+
+If you don't pay in time, the airline releases the seats.
+
+${config.storeName}`,
+        }
+      : kind === "confirmation"
       ? {
           subject: `Booked: ${routeLabel(card)} · confirmation ${b.bookingReference}`,
           text: `Your flight is booked.\n\nAirline confirmation (PNR): ${b.bookingReference}\nPassengers: ${names}\n\n${lines}\n\nPaid: ${price}\n\nYour trip: ${url}\n\nUse the confirmation code to check in with ${card.airline}.${invite}\n\n${config.storeName}`,

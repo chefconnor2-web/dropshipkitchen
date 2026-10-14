@@ -8,6 +8,7 @@
 // timeout), nothing is refunded and the merchant is alerted: refunding a room that was actually booked loses it.
 
 import { chatParam } from "@/lib/chat-session";
+import { checkoutWithFlexPay, flexPayTypes } from "@/lib/flex-pay";
 import type Stripe from "stripe";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
@@ -89,7 +90,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
       customerId: input.customerId,
     },
   });
-  const session = await stripe().checkout.sessions.create({
+  const session = await checkoutWithFlexPay({
     mode: "payment",
     customer_email: email,
     line_items: [
@@ -106,7 +107,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
     payment_intent_data: { metadata: { hotelBookingId: booking.id } },
     success_url: `${config.siteUrl}/hotels/stay/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(card.id)}`,
-  });
+  }, flexPayTypes(price, Math.round(Number(held.price) * 100), card.currency));
   await prisma.hotelBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   await rememberTraveller(input.customerId, { firstName, lastName, phone, email });
   return { url: session.url! };
