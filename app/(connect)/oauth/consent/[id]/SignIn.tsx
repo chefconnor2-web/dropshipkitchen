@@ -20,9 +20,9 @@ export default function SignIn({ next }: { next: string }) {
         <label className="cn-label" htmlFor="cn-email">
           Email
         </label>
-        <input id="cn-email" className="cn-input" name="email" type="email" required autoFocus autoComplete="email" inputMode="email" placeholder="you@example.com" defaultValue={sent?.email} />
+        <input id="cn-email" className="cn-input" name="email" type="email" required autoFocus autoComplete="email" inputMode="email" placeholder="you@example.com" defaultValue={sent?.email} aria-invalid={!!(sent && !sent.ok)} aria-describedby={sent && !sent.ok ? "cn-email-error" : undefined} />
         {sent && !sent.ok && sent.message ? (
-          <p className="cn-error" role="alert">
+          <p className="cn-error" id="cn-email-error" role="alert">
             {sent.message}
           </p>
         ) : null}
@@ -100,7 +100,7 @@ function CodeStep({
         <input type="hidden" name="email" value={email} />
         <input type="hidden" name="code" value={code} />
         <fieldset className={`cn-otp${error ? " bad" : ""}`} disabled={verifying}>
-          <legend className="cn-label">6-digit code</legend>
+          <legend className="cn-label">Code from your email</legend>
           {digits.map((d, i) => (
             <input
               key={i}
@@ -109,6 +109,8 @@ function CodeStep({
               }}
               value={d}
               aria-label={`Digit ${i + 1}`}
+              aria-invalid={!!error}
+              aria-describedby={error ? "cn-code-error" : undefined}
               inputMode="numeric"
               autoComplete={i === 0 ? "one-time-code" : "off"}
               maxLength={i === 0 ? LEN : 1}
@@ -135,7 +137,7 @@ function CodeStep({
           ))}
         </fieldset>
         {error ? (
-          <p className="cn-error" role="alert">
+          <p className="cn-error" id="cn-code-error" role="alert">
             {error}
           </p>
         ) : null}

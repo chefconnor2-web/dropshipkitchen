@@ -27,31 +27,29 @@ function AppTile({ name }: { name: string }) {
 
 function Pair({ app, linked }: { app: string; linked?: boolean }) {
   return (
-    <div className={`cn-pair${linked ? " linked" : ""}`} role="img" aria-label={`${app} and ${config.storeName}`}>
+    <div id="cn-pair" className={`cn-pair${linked ? " linked" : ""}`} role="img" aria-label={`${app} and ${config.storeName}`}>
       <span className="cn-tile cn-chit">
         <BrandMark size={46} />
       </span>
-      <span className="cn-wire" aria-hidden>
-        <i />
-        <i />
-        <i />
-      </span>
+      <span className="cn-wire" aria-hidden />
       <AppTile name={app} />
     </div>
   );
 }
 
 function Steps({ at }: { at: 1 | 2 }) {
-  const steps = ["Sign in", "Review access", "Connected"];
+  const names = ["Sign in", "Review access", "Connected"];
   return (
-    <ol className="cn-steps" aria-label="Steps">
-      {steps.map((s, i) => (
-        <li key={s} className={i + 1 < at ? "done" : i + 1 === at ? "now" : ""} aria-current={i + 1 === at ? "step" : undefined}>
-          <span>{i + 1 < at ? "✓" : i + 1}</span>
-          {s}
-        </li>
-      ))}
-    </ol>
+    <div className="cn-steps">
+      <div className="cn-bar" aria-hidden>
+        {names.map((n, i) => (
+          <i key={n} className={i + 1 <= at ? "on" : ""} />
+        ))}
+      </div>
+      <p>
+        Step {at} of 3: {names[at - 1]}
+      </p>
+    </div>
   );
 }
 
@@ -77,26 +75,13 @@ function Ico({ d }: { d: React.ReactNode }) {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="cn-main">
-      <div className="cn-aura" aria-hidden>
-        <span />
-        <span />
-        <span />
-      </div>
       <div className="cn-top">
         <span className="cn-word">{config.storeName}</span>
-        <span className="cn-secure">
-          <Ico d={Icon.lock} /> Secure connection
-        </span>
       </div>
       <section className="cn-card">{children}</section>
       <footer className="cn-foot">
         <Link href="/privacy">Privacy</Link>
-        <span aria-hidden>·</span>
         <Link href="/terms">Terms</Link>
-        <span aria-hidden>·</span>
-        <span>
-          © {new Date().getFullYear()} {config.storeName}
-        </span>
       </footer>
     </main>
   );
@@ -115,7 +100,7 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
             <Ico d={Icon.clock} />
           </span>
           <h1 className="cn-title">This link has expired</h1>
-          <p className="cn-sub">Connection links last a few minutes. Go back to your AI app and connect {config.storeName} again.</p>
+          <p className="cn-sub">Connection links last a few minutes. Go back to your AI app and connect {config.storeName} again to get a new one.</p>
         </div>
       </Shell>
     );
@@ -129,7 +114,7 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
         <Pair app={app} />
         <Steps at={1} />
         <h1 className="cn-title">Sign in to connect {app}</h1>
-        <p className="cn-sub">Use the email on your {config.storeName} account. We’ll send you a 6-digit code, no password needed.</p>
+        <p className="cn-sub">Enter the email on your {config.storeName} account and we’ll send you a 6-digit code.</p>
         <SignIn next={`/oauth/consent/${id}`} />
         <p className="cn-fine">New to {config.storeName}? Signing in with your email creates your account.</p>
       </Shell>
@@ -140,7 +125,7 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
       <Pair app={app} linked />
       <Steps at={2} />
       <h1 className="cn-title">
-        {app} wants to connect to your {config.storeName} account
+        Connect {app} to your {config.storeName} account
       </h1>
       <div className="cn-who">
         <span className="cn-avatar" aria-hidden>
@@ -156,7 +141,7 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
         </form>
       </div>
 
-      <h2 className="cn-h2">{app} will be able to</h2>
+      <h2 className="cn-h2">What {app} can do</h2>
       <ul className="cn-perms">
         <li>
           <Ico d={Icon.search} />
@@ -191,13 +176,11 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
       <form action={consentAction} id="cn-allow">
         <input type="hidden" name="id" value={id} />
         <fieldset className="cn-access">
-          <legend className="cn-h2">Choose access</legend>
+          <legend className="cn-h2">Access</legend>
           <label className="cn-opt">
             <input type="radio" name="access" value="full" defaultChecked />
             <span className="cn-opt-body">
-              <b>
-                Full access <em>Recommended</em>
-              </b>
+              <b>Full access</b>
               <small>Also book, add to your cart, cancel bookings you confirm and run Neon tasks</small>
             </span>
           </label>
@@ -215,17 +198,12 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
         <input type="hidden" name="allow" value="0" />
       </form>
 
-      <ul className="cn-trust">
-        <li>
-          <Ico d={Icon.lock} /> Never sees your card
-        </li>
-        <li>
-          <Ico d={Icon.shield} /> You pay in your own browser
-        </li>
-        <li>
-          <Ico d={Icon.undo} /> Disconnect any time
-        </li>
-      </ul>
+      <p className="cn-trust">
+        <Ico d={Icon.lock} />
+        <span>
+          {app} never sees your card. You pay on {config.storeName} in your own browser, and you can disconnect it any time.
+        </span>
+      </p>
 
       <div className="cn-actions">
         <AllowButton form="cn-allow" label={`Allow and connect`} />
