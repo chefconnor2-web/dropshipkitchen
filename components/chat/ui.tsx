@@ -13,7 +13,7 @@ import { useRunContext } from "./run-context";
 
 /** Book buttons in the chat carry the chat's id, so after paying the shopper lands back in this chat. */
 const chatQ = (id: string | null, sep = "?") => (id && /^[A-Za-z0-9_-]{1,40}$/.test(id) ? `${sep}chat=${encodeURIComponent(id)}` : "");
-import { clock, dayShift, durationLabel, flightPrice, ruleLabel, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, ruleLabel, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, payAtHotelLabel, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -724,7 +724,8 @@ export function HotelCard({ h, bookable = true }: { h: Hotel; bookable?: boolean
         </div>
         <div className="cx-hotel-room">
           {h.room} · {h.board}
-          {h.refundable === true ? " · Free cancellation" : h.refundable === false ? " · Non-refundable" : ""}
+          {h.refundable === true ? ` · Free cancellation${h.freeCancelUntil ? ` until ${h.freeCancelUntil}` : ""}` : h.refundable === false ? " · Non-refundable" : ""}
+          {payAtHotelLabel(h) ? ` · + ${payAtHotelLabel(h)} paid at check-in` : ""}
         </div>
         <div className="cx-hotel-foot">
           <div>

@@ -98,6 +98,10 @@ export interface HotelCard {
   room: string;
   board: string;
   refundable: boolean | null;
+  /** Free cancellation up to this moment ("2026-10-13 16:00 GMT"), when the rate is refundable and LiteAPI says. */
+  freeCancelUntil?: string | null;
+  /** Taxes and fees the hotel collects at check-in: not in `priceCents`, in their own currency ×100. */
+  payAtHotel?: Array<{ amountCents: number; currency: string; description: string }>;
   checkin: string;
   checkout: string;
   nights: number;
@@ -222,6 +226,22 @@ export type ConnectorItem = FlightCard | HotelCard | CarRentalCard | SupplierCar
 /** "$1,240" for a stay, in its own currency. */
 export function stayPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {
   return flightPrice({ priceCents: c.priceCents, currency: c.currency });
+}
+
+/** "CAD 1,240": the amount with its ISO code, so no price is ambiguous. */
+export function isoPrice(c: Pick<HotelCard, "priceCents" | "currency">): string {
+  const code = c.currency.toUpperCase();
+  const whole = c.priceCents % 100 === 0;
+  return `${code} ${(c.priceCents / 100).toLocaleString("en-US", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 })}`;
+}
+
+/** What the hotel collects at check-in ("CAD 49"), or null when nothing. */
+export function payAtHotelLabel(c: Pick<HotelCard, "payAtHotel">): string | null {
+  const fees = c.payAtHotel ?? [];
+  if (!fees.length) return null;
+  const byCur = new Map<string, number>();
+  for (const f of fees) byCur.set(f.currency, (byCur.get(f.currency) ?? 0) + f.amountCents);
+  return [...byCur].map(([currency, amountCents]) => isoPrice({ priceCents: amountCents, currency })).join(" + ");
 }
 
 /** Uber with the destination filled in (pickup is wherever the rider is). Opens the app on phones. */

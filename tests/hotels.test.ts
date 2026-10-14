@@ -4,10 +4,10 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { cardId, liteOfferId, pickHotels, stayWithFee, toCards } from "../lib/hotels";
-import { parseHotelSearch } from "../lib/connectors/liteapi";
+import { cardId, freeCancelUntil, keepSearch, keptSearch, liteOfferId, localCurrency, matchHotels, payAtHotel, pickHotels, stayWithFee, toCards } from "../lib/hotels";
+import { describeHotel, hotelPage, parseCursor, parseHotelSearch, rankHotels } from "../lib/connectors/liteapi";
 import { bookRate, LiteapiError, prebook } from "../lib/liteapi";
-import { uberLink } from "../lib/flights-shared";
+import { isoPrice, payAtHotelLabel, uberLink, type HotelCard } from "../lib/flights-shared";
 
 const q = { cityName: "Tokyo", countryCode: "JP", checkin: "2030-05-01", checkout: "2030-05-04", adults: 2, childAges: [], currency: "USD", guestNationality: "US" };
 const room = (offerId: string, amount: number, tag = "RFN") => ({ offerId, offerRetailRate: { amount, currency: "USD" }, rates: [{ name: "Double Room", boardName: "Breakfast", cancellationPolicies: { refundableTag: tag } }] });
@@ -112,4 +112,73 @@ test("prebook and book send the key and the guest, and errors keep LiteAPI's mes
   await assert.rejects(prebook("gone"), (e: unknown) => e instanceof LiteapiError && e.status === 400 && /offer expired/.test(e.message));
   delete process.env.LITEAPI_KEY;
   delete process.env.LITEAPI_BOOK_URL;
+});
+
+const hotel = (name: string, priceCents: number, extra: Partial<HotelCard> = {}): HotelCard => ({
+  kind: "hotel", id: cardId(name), offerId: name, hotelId: name, name, photo: null, stars: 3, rating: 8, address: "", city: "Winnipeg", latitude: null, longitude: null,
+  room: "Room", board: "Room only", refundable: true, checkin: "2030-10-15", checkout: "2030-10-17", nights: 2, adults: 1, childAges: [], priceCents, currency: "CAD", ...extra,
+});
+
+test("matchHotels finds the named hotel fuzzily (typo, case, generic words, city name) and nothing else", () => {
+  const cards = [hotel("Quality Inn & Suites", 237_00), hotel("Lakeview Signature, Trademark Collection by Wyndham", 300_00), hotel("Lakeview Inns & Suites Winnipeg", 180_00), hotel("Canad Inns Destination Centre Fort Garry", 208_00)];
+  assert.deepEqual(matchHotels(cards, "Lakeview", "Winnipeg").map((c) => c.name), ["Lakeview Inns & Suites Winnipeg", "Lakeview Signature, Trademark Collection by Wyndham"]);
+  assert.deepEqual(matchHotels(cards, "the lakeveiw signature hotel", "Winnipeg").map((c) => c.name), ["Lakeview Signature, Trademark Collection by Wyndham"]);
+  assert.deepEqual(matchHotels(cards, "Lakeview Winnipeg", "Winnipeg").length, 2);
+  assert.deepEqual(matchHotels(cards, "Fairmont", "Winnipeg"), []);
+  assert.deepEqual(matchHotels(cards, "quality inn", "Winnipeg").map((c) => c.name), ["Quality Inn & Suites"]);
+});
+
+test("rankHotels puts named hotels first even outside the budget, and pages come from the kept list", () => {
+  const all = Array.from({ length: 20 }, (_, i) => hotel(`Hotel ${String.fromCharCode(65 + i)}`, (100 + i * 10) * 100)).concat(hotel("Lakeview Signature", 900_00));
+  const { ranked, named } = rankHotels(all, { cityName: "Winnipeg", hotelName: "Lakeview Signature", maxPerNightCents: 200_00 });
+  assert.equal(named?.length, 1);
+  assert.equal(ranked[0].name, "Lakeview Signature");
+  const id = keepSearch(ranked);
+  const p1 = hotelPage(ranked, id, 0, 6);
+  assert.equal(p1.page.length, 6);
+  assert.equal(p1.next, `${id}.6`);
+  const c = parseCursor(p1.next!)!;
+  const p2 = hotelPage(keptSearch(c.id)!, c.id, c.offset, 6);
+  assert.ok(p2.page.every((h) => !p1.page.some((x) => x.id === h.id)));
+  const last = hotelPage(ranked, id, 18, 6);
+  assert.equal(last.next, undefined);
+  assert.equal(keptSearch("nope"), null);
+  assert.equal(parseCursor("bad cursor"), null);
+  assert.equal(rankHotels(all, { cityName: "Winnipeg", hotelName: "Fairmont" }).named?.length, 0);
+});
+
+test("pay-at-hotel taxes are kept apart from the total, and the free-cancellation deadline is read", () => {
+  const rates = [
+    { retailRate: { total: [{ amount: 200, currency: "CAD" }], taxesAndFees: [{ included: true, description: "VAT", amount: 20, currency: "CAD" }, { included: false, description: "City Tax", amount: 49, currency: "CAD" }] } },
+    { retailRate: { taxesAndFees: null } },
+  ];
+  assert.deepEqual(payAtHotel(rates), [{ amountCents: 49_00, currency: "CAD", description: "city tax" }]);
+  assert.equal(payAtHotelLabel({ payAtHotel: payAtHotel(rates) }), "CAD 49");
+  assert.equal(payAtHotelLabel({ payAtHotel: [] }), null);
+  const rfn = { cancellationPolicies: { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: "2030-10-14 16:00:00", amount: 120, currency: "CAD", type: "amount", timezone: "GMT" }, { cancelTime: "2030-10-12 16:00:00", amount: 0 }] } };
+  assert.equal(freeCancelUntil(rfn), "2030-10-14 16:00 GMT");
+  assert.equal(freeCancelUntil({ cancellationPolicies: { refundableTag: "NRFN", cancelPolicyInfos: rfn.cancellationPolicies.cancelPolicyInfos } }), null);
+  const [card] = toCards({ ...q, currency: "CAD" }, [{ hotelId: "h1", roomTypes: [{ offerId: "o1", offerRetailRate: { amount: 200, currency: "CAD" }, rates: [{ ...rates[0], ...rfn }] }] }], [{ id: "h1", name: "Quality Inn & Suites" }]);
+  assert.equal(card.freeCancelUntil, "2030-10-14 16:00 GMT");
+  assert.equal(card.priceCents, stayWithFee(200)); // the CAD 49 is not in the total
+  const d = describeHotel(card);
+  assert.equal(d.currency, "CAD");
+  assert.match(String(d.total), /^CAD \d/);
+  assert.equal(d.pay_at_hotel, "CAD 49");
+  assert.equal(d.free_cancellation_until, "2030-10-14 16:00 GMT");
+});
+
+test("prices carry their ISO currency, and the default currency is the customer's local one", () => {
+  assert.equal(isoPrice({ priceCents: 1_240_00, currency: "cad" }), "CAD 1,240");
+  assert.equal(isoPrice({ priceCents: 49_50, currency: "USD" }), "USD 49.50");
+  assert.equal(localCurrency("CA"), "CAD");
+  assert.equal(localCurrency("fr"), "EUR");
+  assert.equal(localCurrency(undefined), "USD");
+  const s = parseHotelSearch({ city: "Winnipeg", country_code: "CA", checkin: "2030-10-15", checkout: "2030-10-17", currency: "cad", hotel_name: " Lakeview ", max_results: 99 }, "2030-01-01");
+  assert.ok(typeof s !== "string");
+  assert.equal(s.currency, "CAD");
+  assert.equal(s.hotelName, "Lakeview");
+  assert.equal(s.maxResults, 30);
+  const d = parseHotelSearch({ city: "Winnipeg", country_code: "CA", checkin: "2030-10-15", checkout: "2030-10-17" }, "2030-01-01");
+  assert.ok(typeof d !== "string" && d.maxResults === 6 && d.currency === "USD");
 });

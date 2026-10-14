@@ -3,7 +3,7 @@
 // with absolute links that open Chit's own booking and checkout pages in the customer's browser.
 
 import { config } from "@/lib/config";
-import { clock, dayShift, durationLabel, flightPrice, ruleLabel, stayPrice, stopsLabel, uberLink, type ConnectorItem } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, isoPrice, payAtHotelLabel, ruleLabel, stopsLabel, uberLink, type ConnectorItem } from "@/lib/flights-shared";
 
 export interface ViewAction {
   label: string;
@@ -92,9 +92,13 @@ export function viewCards(items: ConnectorItem[], chatId?: string): ViewCard[] {
             title: it.name,
             subtitle: [it.stars ? `${"★".repeat(Math.round(it.stars))}` : null, it.rating ? `${it.rating.toFixed(1)}/10` : null, it.address || it.city].filter(Boolean).join(" · "),
             lines: [`${it.checkin} → ${it.checkout} · ${it.nights} night${it.nights === 1 ? "" : "s"}`, [it.room, it.board].filter(Boolean).join(" · ")],
-            badges: [it.refundable ? "Free cancellation" : it.refundable === false ? "Non-refundable" : null, it.group ?? null].filter((b): b is string => !!b),
-            price: stayPrice(it),
-            priceNote: `${stayPrice({ priceCents: Math.round(it.priceCents / Math.max(1, it.nights)), currency: it.currency })}/night, taxes included`,
+            badges: [
+              it.refundable ? (it.freeCancelUntil ? `Free cancellation until ${it.freeCancelUntil}` : "Free cancellation") : it.refundable === false ? "Non-refundable" : null,
+              payAtHotelLabel(it) ? `+ ${payAtHotelLabel(it)} at check-in` : null,
+              it.group ?? null,
+            ].filter((b): b is string => !!b),
+            price: isoPrice(it),
+            priceNote: `${isoPrice({ priceCents: Math.round(it.priceCents / Math.max(1, it.nights)), currency: it.currency })}/night, booking taxes and fee included${payAtHotelLabel(it) ? `; ${payAtHotelLabel(it)} more paid at the hotel` : ""}`,
             book: { tool: "book_hotel", args: { offer_id: it.id, ...(chatId ? { trip_id: chatId } : {}) } },
             actions: [
               { label: "Book", url: withChat(`/hotels/book/${encodeURIComponent(it.id)}`, chatId), primary: true },
