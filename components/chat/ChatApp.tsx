@@ -207,6 +207,13 @@ export default function ChatApp(props: { storeName: string; initials: string; co
             <IdIcon />
             <span>My details</span>
           </button>
+          <Link href="/company" className="sb-row">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <rect x="4" y="3" width="16" height="18" rx="2" />
+              <path d="M9 7h2M13 7h2M9 11h2M13 11h2M10 21v-4h4v4" />
+            </svg>
+            <span>Company</span>
+          </Link>
           <Link href="/account" className="sb-row">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
               <circle cx="12" cy="8" r="3.5" />

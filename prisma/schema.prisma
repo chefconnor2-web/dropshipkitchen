@@ -491,6 +491,8 @@ model AssistantChat {
   outputTokens Int      @default(0)
   /// The live browser (browser service session id) this chat drives; only this chat's owner gets view tokens for it.
   browserSessionId String?
+  /// Work travel: its bookings and expenses go to the owner's company (expense export, policy).
+  work         Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -805,4 +807,69 @@ model TravellerProfile {
   dataEnc    String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+/// A company using Chit for its team's travel (internal proof of concept): members, a travel policy in plain
+/// English that Neon follows, and expenses.
+model Company {
+  id        String          @id @default(cuid())
+  name      String
+  /// The travel policy as the admin wrote it ("Economy under 6 hours, hotels under $250 a night…")
+  policy    String          @default("")
+  /// Reports and the export total in this currency (expenses keep their own)
+  currency  String          @default("USD")
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  members   CompanyMember[]
+  invites   CompanyInvite[]
+  expenses  Expense[]
+}
+
+/// One person in a company. A person belongs to one company (this proof of concept).
+model CompanyMember {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId String   @unique
+  /// admin | approver | traveler
+  role       String   @default("traveler")
+  createdAt  DateTime @default(now())
+
+  @@index([companyId])
+}
+
+/// An emailed invitation to join a company (the link carries the token; accepted once, by that email).
+model CompanyInvite {
+  id         String    @id @default(cuid())
+  companyId  String
+  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  email      String
+  role       String    @default("traveler")
+  tokenHash  String    @unique
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([companyId])
+}
+
+/// A work expense from a receipt in any format (photo, PDF, email, screenshot), read by Neon or typed in.
+model Expense {
+  id          String   @id @default(cuid())
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  customerId  String
+  chatId      String?
+  merchant    String
+  /// flight | hotel | car | meals | taxi | transit | lodging | supplies | other
+  category    String   @default("other")
+  amountCents Int
+  currency    String
+  taxCents    Int?
+  /// YYYY-MM-DD, as on the receipt
+  spentOn     String
+  note        String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([companyId, spentOn])
+  @@index([customerId, spentOn])
 }
