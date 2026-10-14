@@ -4,7 +4,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { cardId, freeCancelUntil, keepSearch, keptSearch, liteOfferId, localCurrency, matchHotels, payAtHotel, pickHotels, stayWithFee, toCards } from "../lib/hotels";
+import { cardId, freeCancelUntil, starsFor, taxesInTotal, keepSearch, keptSearch, liteOfferId, localCurrency, matchHotels, payAtHotel, pickHotels, stayWithFee, toCards } from "../lib/hotels";
 import { describeHotel, hotelPage, parseCursor, parseHotelSearch, rankHotels } from "../lib/connectors/liteapi";
 import { bookRate, LiteapiError, prebook } from "../lib/liteapi";
 import { isoPrice, payAtHotelLabel, uberLink, type HotelCard } from "../lib/flights-shared";
@@ -181,4 +181,20 @@ test("prices carry their ISO currency, and the default currency is the customer'
   assert.equal(s.maxResults, 30);
   const d = parseHotelSearch({ city: "Winnipeg", country_code: "CA", checkin: "2030-10-15", checkout: "2030-10-17" }, "2030-01-01");
   assert.ok(typeof d !== "string" && d.maxResults === 6 && d.currency === "USD");
+});
+
+test("stars are capped for brands LiteAPI over-rates, and included taxes are shown, not added", () => {
+  assert.equal(starsFor("Quality Inn & Suites", 4), 3);
+  assert.equal(starsFor("Econo Lodge Downtown", 3), 2);
+  assert.equal(starsFor("Best Western Premier Freeport Inn Calgary Airport", 4), 4);
+  assert.equal(starsFor("Best Western Plus Hotel Montreal", 4), 3);
+  assert.equal(starsFor("The Hazelton Hotel", 5), 5);
+  assert.equal(starsFor("Quality Inn", null), null);
+  const rates = [{ retailRate: { total: [{ amount: 320.04, currency: "CAD" }], taxesAndFees: [{ included: true, description: "TaxPercent", amount: 49.51, currency: "CAD" }] } }];
+  assert.deepEqual(taxesInTotal(rates), { amountCents: 49_51, currency: "CAD" });
+  const [card] = toCards({ ...q, currency: "CAD" }, [{ hotelId: "lp1fd31", roomTypes: [{ offerId: "o", rates }] }], [{ id: "lp1fd31", name: "Quality Inn & Suites", stars: 4 }]);
+  assert.equal(card.stars, 3);
+  assert.equal(card.priceCents, stayWithFee(320.04));
+  assert.deepEqual(card.payAtHotel, []);
+  assert.equal(describeHotel(card).taxes_in_total, "CAD 49.51");
 });
