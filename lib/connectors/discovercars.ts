@@ -184,6 +184,25 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
     },
   },
   {
+    name: "rental_car_offers",
+    description:
+      "On Discover Cars' results: sorts by price (lowest first) and lists the car offers on the page, cheapest first, each with its index, total price and the card's text (car, supplier, rating, fuel, mileage, cancellation, terms). Use it instead of reading the screenshot or scrolling. Then open your pick with rental_car_open_offer.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "rental_car_open_offer",
+    description:
+      "Opens exactly one offer from rental_car_offers by its index (clicks that card's own deal button), then checks the offer page shows that car and doesn't exclude the shopper's country of residence. Never use Back or re-run the search to recover: list the offers again and open another.",
+    input_schema: {
+      type: "object",
+      properties: {
+        index: { type: "number", description: "The offer's index from rental_car_offers" },
+        car: { type: "string", description: "The car as the card names it, e.g. 'Kia Rio or similar'" },
+      },
+      required: ["index", "car"],
+    },
+  },
+  {
     name: "rental_car_vision",
     description:
       "Hand one goal on the live Discover Cars page to a fast vision helper that looks at the screen and taps, types and scrolls by itself until it's done (up to ~10 looks), e.g. 'Set the drop-off date to 2026-10-26 and time 10:00, then press Search' or 'Sort the cars by lowest price'. Use it for calendars, time pickers and anything rental_car_act's smart actions missed. Never for driver details or payment. Returns the final screenshot and what it did.",
@@ -256,10 +275,11 @@ export const discoverCarsConnector: Connector = {
       ? `
 Rental cars (Discover Cars):
 - For a rental car, use the live browser so the shopper sees real cars: rental_car_browse with the pickup place, dates and times (pick up about an hour after the flight lands; drop off a few hours before the flight home, or at checkout time). It fills in Discover Cars' whole search and submits it by itself, and tells you what (if anything) it couldn't fill. Call it on its own (no other browser tool in the same reply) and wait for its result. When a quick fill misses a date or time it runs a vision helper itself. For anything still wrong, or to sort by price / open a deal, give rental_car_vision one concrete goal (it looks and taps on its own), or use rental_car_act's smart actions when you know the exact field. Be quick: as few calls as possible.
-- Be fast: a few calls, several actions each. On extras or insurance screens, click_text "Skip", "No, I'll take the risk" or "Continue" (no paid extras unless asked).
-- When results show, sort them by price (lowest first) on the page (select "Sort by" "Price", or click_text the price sort) and recommend the most economical sensible car: the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close. Read the total for the whole rental from the page.
+- Be fast: a few calls, several actions each, and no long waits (pages settle by themselves). On extras or insurance screens, click_text "Skip", "No, I'll take the risk" or "Continue" (no paid extras unless asked).
+- The car's location is the trip's destination: the booked flight's arrival airport (or the hotel's city), never the shopper's home address.
+- When results show, call rental_car_offers: it sorts by price and lists every offer cheapest first with its card text. Recommend the most economical sensible car that accepts the shopper's country of residence (it's in the result): the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close; skip cards saying US residents only or a US licence is required. Don't sort or scroll by hand.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
-- "Book it for me" (or they ask you to book it): open that car's deal in the live browser (View deal / Select), call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one and ask for a screenshot of the booking confirmation; when they send it, call rental_car_save_booking with exactly what it shows (it goes on their trip itinerary), then carry on with the next step. If they send a car booking screenshot at any time, do the same.
+- "Book it for me" (or they ask you to book it): open exactly that car with rental_car_open_offer (its index from rental_car_offers; call rental_car_offers again first if the page changed). Never use Back or re-run the search to recover. Then call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one and ask for a screenshot of the booking confirmation; when they send it, call rental_car_save_booking with exactly what it shows (it goes on their trip itinerary), then carry on with the next step. If they send a car booking screenshot at any time, do the same.
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`
       : `
@@ -324,6 +344,39 @@ const liveCard = (session: string, handoff?: string): BrowserCard => ({ kind: "b
 
 // The payment page each chat handed to the shopper: never screenshotted for the model while it's still showing.
 const paymentPages = processSingleton("discovercars-payment-pages", () => new Map<string, string>());
+// Each chat's latest offer list (rental_car_offers), to check the page rental_car_open_offer lands on.
+const lastOffers = processSingleton("discovercars-last-offers", () => new Map<string, Array<{ index: number; total: number; price: string; text: string }>>());
+// Each chat's results page, to return to (one step) when an opened offer turns out wrong.
+const resultsPages = processSingleton("discovercars-results-pages", () => new Map<string, string>());
+/** The shopper's country of residence: saved details, then passport; Canada for this market otherwise. */
+async function residence(chatId: string): Promise<{ code: string; name: string }> {
+  const chat = await prisma.assistantChat.findUnique({ where: { id: chatId }, select: { customerId: true, visitorId: true } });
+  const saved = chat ? await getProfile({ customerId: chat.customerId, visitorId: chat.visitorId }) : null;
+  const code = (saved?.country || saved?.passportCountry || "CA").toUpperCase();
+  let name = code;
+  try {
+    name = new Intl.DisplayNames(["en"], { type: "region" }).of(code) || code;
+  } catch {}
+  return { code, name };
+}
+/** Offer terms that shut out a resident of `country` (e.g. "US residents only", "US driving licence required"). */
+export function excludesResident(text: string, country: { code: string; name: string }): string | null {
+  if (country.code === "US") return null;
+  const t = text.replace(/\s+/g, " ");
+  const demonym: Record<string, string> = { CA: "Canadian", GB: "British", AU: "Australian", MX: "Mexican" };
+  const patterns = [
+    /\b(?:only|exclusively) (?:available|open) (?:to|for) (?:US|U\.S\.|United States) residents\b/i,
+    /\b(?:US|U\.S\.|United States) residents only\b/i,
+    /\bmust (?:be|hold) an? (?:US|U\.S\.|United States) (?:resident|driver'?s? licen[cs]e|driving licen[cs]e)\b/i,
+    /\b(?:US|U\.S\.) (?:driver'?s?|driving) licen[cs]e (?:is )?required\b/i,
+    new RegExp(`\\bnot (?:available|valid|accepted) (?:to|for) (?:residents of )?(?:${country.name}|${demonym[country.code] ?? country.name} residents)\\b`, "i"),
+  ];
+  for (const re of patterns) {
+    const m = re.exec(t);
+    if (m) return m[0];
+  }
+  return null;
+}
 // Each chat's latest car search, for the pay card.
 const lastSearch = processSingleton("discovercars-last-search", () => new Map<string, { location: string; pickup: string; dropoff: string }>());
 
@@ -368,6 +421,11 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
             note: "Not yet: the car comes after the hotel is booked. Don't open the browser now. Tell the shopper in one line to book the flight and hotel with their Book buttons, and that you'll find the cheapest car at the airport as soon as the hotel is booked. When the chat says the hotel is booked, call rental_car_browse again.",
           }),
         };
+      // A booked flight decides where the car is: its arrival airport, never the shopper's home.
+      const arrival = (await bookingsForChat(ctx.chatId)).flights[0]?.slices[0]?.to ?? "";
+      const arriveCode = /\(([A-Z]{3})\)/.exec(arrival)?.[1];
+      if (arriveCode && s.airport && s.airport.toUpperCase() !== arriveCode)
+        return { content: `The booked flight lands at ${arrival}, but this search is for ${s.airport}. Search the car at the arrival airport (${arriveCode}) with its city and country, not the shopper's home.`, isError: true };
       lastSearch.set(ctx.chatId, { location: s.location, pickup: s.pickup, dropoff: s.dropoff });
       const pickupTime = TIME.test(str(input.pickup_time, 5)) ? str(input.pickup_time, 5) : "";
       const dropoffTime = TIME.test(str(input.dropoff_time, 5)) ? str(input.dropoff_time, 5) : "";
@@ -423,6 +481,9 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         { type: "date", field: "pick-up date", value: s.pickup },
       ]);
       steps.push(...(first.results ?? []).slice(1));
+      // Country of residence on the search form, when there is one (it changes which offers show): best effort.
+      const who = await residence(ctx.chatId);
+      await run([{ type: "select", field: "country of residence", value: who.name, alternates: [who.code] }]).catch(() => null);
       // If the pick-up date didn't take, the rest of the quick fill won't either on this page: skip straight to
       // the browser helper (it reads the page's real elements) instead of spending seconds on more misses.
       if (steps.every((x) => x.ok)) {
@@ -447,7 +508,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         ctx.progress("Looking at the page to set the dates…");
         vision = await visionAgent(
           ctx.chatId,
-          `On Discover Cars' search form, set: pick-up location ${s.airport ? `${s.city || s.location} airport (${s.airport})` : s.location}, same drop-off location; pick-up date ${longDate(s.pickup)}${pickupTime ? ` at ${pickupTime}` : ""}; drop-off date ${longDate(s.dropoff)}${dropoffTime ? ` at ${dropoffTime}` : ""}. The location must be one of the site's own suggestions: if it isn't already set to the right airport, click the location box, type the airport code or city, and click the matching airport in the dropdown list (never leave typed text). Close any dropdown or popup left open. Then press Search. Done when the page lists cars with prices.`,
+          `On Discover Cars' search form, set: pick-up location ${s.airport ? `${s.city || s.location} airport (${s.airport})` : s.location}, same drop-off location; pick-up date ${longDate(s.pickup)}${pickupTime ? ` at ${pickupTime}` : ""}; drop-off date ${longDate(s.dropoff)}${dropoffTime ? ` at ${dropoffTime}` : ""}. The location must be one of the site's own suggestions: if it isn't already set to the right airport, click the location box, type the airport code or city, and click the matching airport in the dropdown list (never leave typed text). Close any dropdown or popup left open. If the form has a driver's country of residence, set it to ${(await residence(ctx.chatId)).name}. Then press Search. Done when the page lists cars with prices.`,
           { signal, start: p, progress: ctx.progress },
         );
         p = vision.page;
@@ -474,6 +535,77 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         vision?.micros,
       );
     }
+    if (tool === "rental_car_offers") {
+      ctx.progress("Sorting the cars by price…");
+      const run = async (actions: unknown[], noShot = true) => (await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal, { noShot }), signal)).result;
+      // Sort by price on the page (the cheapest are loaded first), then read every card.
+      const sorted = await run([{ type: "select", field: "sort by", value: "price", alternates: ["Price (lowest first)", "Lowest price", "Price: low to high", "Cheapest"] }]);
+      const sortOk = sorted.results?.[0]?.ok ?? false;
+      if (!sortOk) await run([{ type: "click_text", text: "Lowest price" }]);
+      const listed = await run([{ type: "list_offers" }], false);
+      const r = (listed.results?.[0] ?? { ok: false }) as { ok: boolean; why?: string; offers?: Array<{ index: number; total: number; price: string; text: string }> };
+      if (!r.ok || !r.offers?.length) return shot(listed, { offers: [] }, `${r.why ?? "No offers found."} If the results are still loading, call rental_car_offers again; if this isn't the results page, finish the search first.`, ctx.chatId);
+      lastOffers.set(ctx.chatId, r.offers);
+      resultsPages.set(ctx.chatId, listed.url);
+      const who = await residence(ctx.chatId);
+      return shot(
+        listed,
+        { sorted_by_price: sortOk, residence: who.name, offers: r.offers.map((o) => ({ index: o.index, total: o.price, card: o.text })) },
+        `Cheapest first. Pick the cheapest sensible car that accepts ${who.name} residents: full-to-full fuel, enough mileage, supplier rated about 7/10 or better, free cancellation when the price is close. Skip any card whose terms say US residents only or a US licence is required. Then rental_car_continue with your pick (or rental_car_open_offer if they already asked you to book).`,
+        ctx.chatId,
+      );
+    }
+    if (tool === "rental_car_open_offer") {
+      const index = Number(input.index);
+      const car = str(input.car, 80);
+      if (!Number.isInteger(index) || index < 0) return { content: "Give the offer's index from rental_car_offers.", isError: true };
+      ctx.progress("Opening that car…");
+      const opened = (await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "open_offer", index }], signal, { noShot: true }), signal)).result;
+      const res = opened.results?.[0];
+      if (!res?.ok) return { content: JSON.stringify({ opened: false, why: res?.why ?? "Couldn't open it.", next: "Call rental_car_offers again (the list re-rendered), then open your pick by its new index. Don't go Back." }) };
+      // What the offer page says: is it the car we picked, and does it take this shopper's residents?
+      const page = (await inBrowser(ctx.chatId, (id) => browserApi.tool(id, [{ name: "get_page_text", input: {} }], signal), signal)).result;
+      const text = (page.results[0]?.content ?? []).map((c) => String((c as { text?: string }).text ?? "")).join(" ");
+      const words = car.toLowerCase().replace(/or similar/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+      // Wrong car only when the page names a car ("… or similar") and it isn't ours; a page without one passes.
+      const sameCar = !words.length || words.some((w) => text.toLowerCase().includes(w)) || !/or similar/i.test(text);
+      const who = await residence(ctx.chatId);
+      const excluded = excludesResident(text, who);
+      if (excluded || !sameCar) {
+        // Wrong offer: straight back to the results (one step, the same search) with a fresh list to pick from.
+        ctx.progress("Back to the results…");
+        const back = resultsPages.get(ctx.chatId);
+        let again = (await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "back" }, { type: "list_offers" }], signal, { noShot: true }), signal)).result;
+        let listed = again.results?.find((x) => x.type === "list_offers") as { ok: boolean; offers?: Array<{ index: number; total: number; price: string; text: string }> } | undefined;
+        if (!listed?.ok && back) {
+          again = (await inBrowser(ctx.chatId, (id) => browserApi.act(id, [{ type: "goto", url: back }, { type: "wait", ms: 800 }, { type: "list_offers" }], signal, { noShot: true }), signal)).result;
+          listed = again.results?.find((x) => x.type === "list_offers") as typeof listed;
+        }
+        if (listed?.ok && listed.offers?.length) lastOffers.set(ctx.chatId, listed.offers);
+        const offers = (listed?.offers ?? []).map((o) => ({ index: o.index, total: o.price, card: o.text }));
+        return {
+          content: JSON.stringify({
+            opened: true,
+            car,
+            same_car: sameCar,
+            residence: who.name,
+            ...(excluded ? { excludes_residence: excluded } : {}),
+            back_on_results: offers.length > 0,
+            offers,
+            next: excluded
+              ? `That offer says "${excluded}", so a ${who.name} resident can't book it. You're back on the results: open the next cheapest sensible offer from this list with rental_car_open_offer (skip any whose card says US residents only).`
+              : `That page wasn't the ${car}. You're back on the results: open the right card from this list with rental_car_open_offer.`,
+          }),
+        };
+      }
+      const now = (await inBrowser(ctx.chatId, (id) => browserApi.state(id, signal), signal)).result;
+      return shot(
+        now,
+        { opened: true, car, same_car: sameCar, residence: who.name },
+        "This is the car. Carry on: skip paid extras, then rental_car_driver_details.",
+        ctx.chatId,
+      );
+    }
     if (tool === "rental_car_vision") {
       const goal = str(input.goal, 400);
       if (!goal) return { content: "No goal given.", isError: true };
@@ -483,7 +615,11 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
     }
     if (tool === "rental_car_act") {
       const allowed = new Set(["fill", "select", "date", "click_text", "tap", "type", "key", "scroll", "back", "wait"]);
-      const actions = (Array.isArray(input.actions) ? input.actions : []).slice(0, 8).filter((a) => allowed.has(String((a as { type?: unknown })?.type)));
+      const actions = (Array.isArray(input.actions) ? input.actions : [])
+        .slice(0, 8)
+        .filter((a) => allowed.has(String((a as { type?: unknown })?.type)))
+        // Pages settle on their own after each step: long fixed waits only slow the booking down.
+        .map((a) => ((a as { type?: unknown }).type === "wait" ? { ...(a as object), ms: Math.min(1500, Number((a as { ms?: unknown }).ms) || 800) } : a));
       if (!actions.length) return { content: "No actions given.", isError: true };
       ctx.progress("Filling in Discover Cars…");
       const { result: p, session } = await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal), signal);
@@ -584,11 +720,42 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       done.push(...(await fill([{ type: "fill", field: "email", value: email }])));
       if (phone) done.push(...(await fill([{ type: "fill", field: "phone", value: phone }])));
       if (flightNumber) done.push(...(await fill([{ type: "fill", field: "flight number", value: flightNumber }])));
+      // Country of residence (it decides which offers and prices apply) and date of birth, when the form asks.
+      const who = await residence(ctx.chatId);
+      const misses: string[] = [];
+      const resR = (await fill([{ type: "select", field: "country of residence", value: who.name, alternates: [who.code] }]))[0];
+      if (resR) {
+        done.push({ ...resR, field: "country of residence" });
+        if (!resR.ok && !/^No dropdown/.test(resR.why ?? "")) misses.push(`country of residence: ${who.name}`);
+      }
+      const dob = /^(\d{4})-(\d{2})-(\d{2})$/.exec(saved?.bornOn ?? "");
+      if (dob) {
+        const [, y, m, d] = dob;
+        const monthName = new Date(`${saved!.bornOn}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+        const one = (await fill([{ type: "fill", field: "date of birth", value: `${d}/${m}/${y}` }]))[0];
+        if (one?.ok) done.push({ ...one, field: "date of birth" });
+        else {
+          const parts = await fill([
+            { type: "select", field: "day", value: String(Number(d)), alternates: [d] },
+            { type: "select", field: "month", value: monthName, alternates: [m, String(Number(m)), monthName.slice(0, 3)] },
+            { type: "select", field: "year", value: y },
+          ]);
+          const named = parts.map((r, k) => ({ ...r, field: ["birth day", "birth month", "birth year"][k] }));
+          done.push(...named.filter((r) => r.ok || !/^No dropdown/.test(r.why ?? "")));
+          if (named.some((r) => !r.ok && !/^No dropdown/.test(r.why ?? ""))) misses.push(`date of birth: ${Number(d)} ${monthName} ${y}`);
+        }
+      }
+      // The quick fill missed a dropdown: the browser helper sets exactly these values on the page.
+      let helper: VisionResult | null = null;
+      if (misses.length) {
+        ctx.progress("Setting the last few fields…");
+        helper = await visionAgent(ctx.chatId, `On Discover Cars' driver details form, set ${misses.join("; ")}. Use form_input for native dropdowns; for custom ones click to open, type to filter and click the option. Change nothing else, and don't press Continue. Done when those fields show these values.`, { signal, progress: ctx.progress });
+      }
       const sid = await chatBrowserId(ctx.chatId);
       const now = sid ? await browserApi.state(sid, signal).catch(() => null) : null;
-      const report = { approved: true, details, filled: done.map((x) => `${x.ok ? "✓" : "✗"} ${x.field}: ${x.ok ? x.did : x.why}`) };
+      const report = { approved: true, details, residence: who.name, filled: done.map((x) => `${x.ok ? "✓" : "✗"} ${x.field}: ${x.ok ? x.did : x.why}`), ...(helper ? { helper: { ok: helper.ok, log: helper.log, ...(helper.why ? { why: helper.why } : {}) } } : {}) };
       const next = "Already filled where marked ✓; fix only ✗ fields with rental_car_act (exactly these details). Leave paid extras unticked unless the shopper asked. Then go to the payment step (click_text the continue button) and call rental_car_hand_over with reason payment.";
-      return now ? shot(now, report, next, ctx.chatId) : { content: JSON.stringify({ ...report, next }) };
+      return now ? shot(now, report, next, ctx.chatId, helper?.micros) : { content: JSON.stringify({ ...report, next }), ...(helper ? { micros: helper.micros } : {}) };
     }
     if (tool === "rental_car_continue") {
       const location = str(input.location, 80);
