@@ -16,7 +16,7 @@ import type { ConnectorContext, ToolResult } from "@/lib/connectors/types";
 import type { CarRentalCard, ConnectorItem } from "@/lib/flights-shared";
 import { CATEGORIES, logExpense, membershipOf } from "@/lib/company";
 import { tripsFor } from "@/lib/trips";
-import { viewCards, type ViewCard } from "@/lib/mcp-cards";
+import { browserCard, viewCards, type ViewCard } from "@/lib/mcp-cards";
 import { randomBytes } from "node:crypto";
 import { acting } from "@/lib/acting";
 import { assistantConfigured, catalogTool } from "@/lib/assistant";
@@ -28,6 +28,7 @@ import { aiAllowance, limitMessage } from "@/lib/membership";
 import { priceOrder } from "@/lib/volume";
 import { formatMoney } from "@/lib/money";
 import { VIEW_URI, viewHtml } from "@/lib/mcp-view";
+import { browserConfigured, liveOrigin, mintLiveUrl } from "@/lib/browser";
 
 /** Tool calls per customer: per minute and per hour. */
 const PER_MINUTE = 40;
@@ -136,7 +137,37 @@ export function chitMcpServer(who: Who): McpServer {
     "chit-cards",
     VIEW_URI,
     { title: "Chit cards", description: "Flights, hotels, cars and carts from Chit, with Book and Check out buttons.", mimeType: "text/html;profile=mcp-app" },
-    async () => ({ contents: [{ uri: VIEW_URI, mimeType: "text/html;profile=mcp-app", text: viewHtml(), _meta: { ui: { prefersBorder: false } } }] }),
+    async () => {
+      // The view streams Neon's live browser over a WebSocket to the browser service.
+      const live = liveOrigin();
+      const ui = { prefersBorder: false, ...(live ? { csp: { connectDomains: [live] } } : {}) };
+      return { contents: [{ uri: VIEW_URI, mimeType: "text/html;profile=mcp-app", text: viewHtml(), _meta: { ui } }] };
+    },
+  );
+
+  // For the view only (not the model): a live-view address for the customer's own chat browser, and "I'm done"
+  // after they finished a step in it (a robot check, a sign-in) so Neon carries on.
+  const APP_ONLY = { ui: { resourceUri: VIEW_URI, visibility: ["app"] } };
+  server.registerTool(
+    "browser_live",
+    { title: "Live browser address", description: "For the Chit view: a short-lived live-view address for Neon's browser in one of the customer's chats.", inputSchema: { chat_id: z.string().max(40), session: z.string().max(80) }, annotations: { readOnlyHint: true, openWorldHint: false }, _meta: APP_ONLY },
+    guarded(who, "browser_live", async ({ chat_id, session }) => {
+      if (!browserConfigured()) return txt("The live browser isn't switched on.", true);
+      const c = await prisma.assistantChat.findUnique({ where: { id: chat_id }, select: { customerId: true, browserSessionId: true } });
+      if (c?.customerId !== who.customerId || c.browserSessionId !== session) return txt("This browser has closed.", true);
+      return { ...txt("ok"), structuredContent: mintLiveUrl(session) };
+    }),
+  );
+  server.registerTool(
+    "browser_done",
+    { title: "Done in the browser", description: "For the Chit view: the customer finished the step Neon asked for in its browser.", inputSchema: { run_id: z.string().max(40), step_id: z.string().max(40) }, annotations: { readOnlyHint: false, openWorldHint: false }, _meta: APP_ONLY },
+    guarded(who, "browser_done", async ({ run_id, step_id }) => {
+      const r = await getRun(run_id);
+      const c = r ? await prisma.assistantChat.findUnique({ where: { id: r.chatId }, select: { customerId: true } }) : null;
+      if (!r || c?.customerId !== who.customerId) return txt("Unknown run.", true);
+      const res = await resumeRun(run_id, step_id);
+      return res.status === 200 ? txt("Neon is carrying on.") : txt(JSON.stringify(res.body), true);
+    }),
   );
 
   if (duffelConnector.enabled()) {
@@ -542,8 +573,8 @@ async function cartView(cartId: string) {
 
 type NeonResult =
   | { state: "error"; message: string }
-  | { state: "working"; runId: string; chatId: string; note: string }
-  | { state: "waiting"; runId: string; chatId: string; step: { id: string; kind: string; message: string; inBrowser: boolean }; partial: string; items: ConnectorItem[] }
+  | { state: "working"; runId: string; chatId: string; note: string; session?: string | null }
+  | { state: "waiting"; runId: string; chatId: string; step: { id: string; kind: string; message: string; inBrowser: boolean; session?: string }; partial: string; items: ConnectorItem[] }
   | { state: "done"; runId: string; chatId: string; text: string; items: ConnectorItem[] }
   | { state: "failed"; runId: string; chatId: string; message: string };
 
@@ -577,9 +608,12 @@ async function waitNeon(runId: string): Promise<NeonResult> {
     const { run, done, chatId } = r;
     if (run.status === "completed" && done) return { state: "done", runId, chatId, text: done.entry.text, items: ((done.entry as { items?: ConnectorItem[] }).items ?? []) };
     if (run.status === "waiting" && run.pending)
-      return { state: "waiting", runId, chatId, step: { id: run.pending.id, kind: run.pending.kind, message: run.pending.message, inBrowser: !!run.pending.browser }, partial: run.partial.text, items: (run.partial as { items?: ConnectorItem[] }).items ?? [] };
+      return { state: "waiting", runId, chatId, step: { id: run.pending.id, kind: run.pending.kind, message: run.pending.message, inBrowser: !!run.pending.browser, session: run.pending.browser?.sessionId }, partial: run.partial.text, items: (run.partial as { items?: ConnectorItem[] }).items ?? [] };
     if (!isActive(run.status)) return { state: "failed", runId, chatId, message: run.error ?? `Neon stopped (${run.status}).` };
-    if (Date.now() - t0 > NEON_WAIT_MS) return { state: "working", runId, chatId, note: "Neon is still working. Call neon_status with this run_id." };
+    if (Date.now() - t0 > NEON_WAIT_MS) {
+      const session = (await prisma.assistantChat.findUnique({ where: { id: chatId }, select: { browserSessionId: true } }))?.browserSessionId;
+      return { state: "working", runId, chatId, session, note: "Neon is still working (the customer can watch its browser in the card). Call neon_status with this run_id." };
+    }
     await new Promise((res) => setTimeout(res, 800));
   }
 }
@@ -588,7 +622,10 @@ function neonOut(r: NeonResult): Out {
   if (r.state === "error") return txt(r.message, true);
   const chat_url = `${config.siteUrl}/c/${r.chatId}`;
   if (r.state === "failed") return txt({ run_id: r.runId, chat_url, error: r.message }, true);
-  if (r.state === "working") return txt({ status: "working", run_id: r.runId, chat_id: r.chatId, chat_url, note: r.note });
+  if (r.state === "working") {
+    const out = { status: "working", run_id: r.runId, chat_id: r.chatId, chat_url, note: r.note };
+    return r.session ? withCards(out, [browserCard(r.chatId, r.session)], { title: "Neon is working" }) : txt(out);
+  }
   if (r.state === "waiting")
     return withCards(
       {
@@ -599,11 +636,14 @@ function neonOut(r: NeonResult): Out {
         step: r.step,
         so_far: r.partial.slice(0, 3000),
         how: r.step.inBrowser
-          ? "This step happens in Neon's live browser (or the customer's own browser, for payment). Give the customer chat_url; Neon carries on by itself once it's done. Then call neon_status."
+          ? "This step happens in Neon's live browser, shown in the card: the customer taps Take over, does it, then taps I'm done (or opens chat_url in Chit). For payment it's their own browser via the pay link; Neon notices by itself. Then call neon_status."
           : "Show the customer exactly what Neon is asking. Only if they say yes, call approve_neon_step with run_id and step.id.",
       },
-      viewCards(r.items, r.chatId),
-      { title: "Neon is waiting for you", footer: r.step.message },
+      [
+        ...viewCards(r.items.filter((i) => !(r.step.session && i.kind === "browser")), r.chatId),
+        ...(r.step.session ? [browserCard(r.chatId, r.step.session, undefined, { runId: r.runId, stepId: r.step.id, needs: r.step.message })] : []),
+      ],
+      { title: "Neon is waiting for you", ...(r.step.session ? {} : { footer: r.step.message }) },
     );
   return withCards({ status: "done", run_id: r.runId, chat_id: r.chatId, chat_url, neon: r.text, cards: r.items.map((i) => i.kind) }, viewCards(r.items, r.chatId), { title: "From Neon" });
 }

@@ -74,6 +74,16 @@ export function mintLiveUrl(sessionId: string, ttlSeconds = 600): { url: string;
   return { url: `${pub}/live?id=${encodeURIComponent(sessionId)}&exp=${exp}&token=${token}`, expiresAt: new Date(exp * 1000).toISOString() };
 }
 
+/** The live view's WebSocket origin (wss://…), for the Chit MCP view's connect-src; null when not set up. */
+export function liveOrigin(): string | null {
+  const pub = process.env.BROWSER_PUBLIC_URL?.trim() || serviceUrl();
+  try {
+    return pub ? new URL(pub.replace(/^http/, "ws")).origin : null;
+  } catch {
+    return null;
+  }
+}
+
 async function remember(chatId: string, session: Session | null) {
   if (session) byChat.set(chatId, session);
   else byChat.delete(chatId);
