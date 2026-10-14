@@ -215,7 +215,7 @@ const BROWSER_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "rental_car_hand_over",
     description:
-      "Hand over to the shopper on Discover Cars for something only they can do: a robot check, a choice only they can make (which car), or payment. Payment: call it on the payment page; they get a Pay on Discover Cars button that opens that exact checkout in their own browser (saved card or Apple Pay), and you carry on automatically once it's booked (you never see card details). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now (after payment: only where it went, plus a screenshot once it has left the payment page).",
+      "Hand over to the shopper on Discover Cars for something only they can do: a robot check, a choice only they can make (which car), or payment. Payment: call it on the payment page (or on the driver form when rental_car_driver_details says to); they get a Pay on Discover Cars button that opens that exact checkout in their own browser (saved card or Apple Pay), and you carry on automatically once it's booked (you never see card details). It opens full screen with your one-line message; your turn pauses until they tap Approve & next, then you get the page as it is now (after payment: only where it went, plus a screenshot once it has left the payment page).",
     input_schema: {
       type: "object",
       properties: {
@@ -279,7 +279,7 @@ Rental cars (Discover Cars):
 - The car's location is the trip's destination: the booked flight's arrival airport (or the hotel's city), never the shopper's home address.
 - When results show, call rental_car_offers: it sorts by price and lists every offer cheapest first with its card text. Recommend the most economical sensible car that accepts the shopper's country of residence (it's in the result): the cheapest with a full-to-full fuel policy, unlimited (or enough) mileage and a supplier rated about 7/10 or better, free cancellation when the price is close; skip cards saying US residents only or a US licence is required. Don't sort or scroll by hand.
 - Finish with rental_car_continue with your pick. The card shows it with "Book it for me" and a link to continue on Discover Cars themselves.
-- "Book it for me" (or they ask you to book it): open exactly that car with rental_car_open_offer (its index from rental_car_offers; call rental_car_offers again first if the page changed). Never use Back or re-run the search to recover. Then call rental_car_driver_details (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one and ask for a screenshot of the booking confirmation; when they send it, call rental_car_save_booking with exactly what it shows (it goes on their trip itinerary), then carry on with the next step. If they send a car booking screenshot at any time, do the same.
+- "Book it for me" (or they ask you to book it): open exactly that car with rental_car_open_offer (its index from rental_car_offers; call rental_car_offers again first if the page changed). Never use Back or re-run the search to recover. Then call rental_car_driver_details (it clicks past the extras pages and fills the driver form itself; never fill the driver form with rental_car_act or rental_car_vision) (it shows the details for approval, then fills the driver form itself); fix only what it couldn't fill. Leave paid extras unticked unless they asked. At the payment step call rental_car_hand_over with reason payment: they get a Pay on Discover Cars button that opens that checkout in their own browser (saved card or Apple Pay), and the tool returns by itself once the booking goes through. Never type or look for card details, and never tap the final Book/Pay button yourself. Afterwards tell them the confirmation number if the tool returned one and ask for a screenshot of the booking confirmation; when they send it, call rental_car_save_booking with exactly what it shows (it goes on their trip itinerary), then carry on with the next step. If they send a car booking screenshot at any time, do the same.
 - If Discover Cars won't load or the form won't fill after a few tries, don't stall: use rental_car_link (a card that opens Discover Cars for that place) and say they can enter the dates there.
 - After a flight or hotel is booked or chosen, offer a car for those dates at the destination airport, once.`
       : `
@@ -647,7 +647,7 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
           dropoff: search?.dropoff ?? "",
           url: link,
           filled: true,
-          pay: { step: "payment" },
+          pay: { step: /\/offer\/driver/i.test(now.url) ? "driver" : "payment" },
         };
         ctx.show("", [pay]);
         const watching = new AbortController();
@@ -707,7 +707,23 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
         browser: null,
       });
       if (w.outcome !== "resumed") return { content: "The shopper didn't approve the driver details, so don't type them. Ask what to change." };
-      // Approved: fill the driver form right away (the page finds each field), one screenshot at the end.
+      // Approved. First get past the upgrade / coverage / extras pages (no paid extras) to the driver form.
+      ctx.progress("Getting to the driver form…");
+      const step = async (actions: unknown[]) => (await inBrowser(ctx.chatId, (id) => browserApi.act(id, actions, signal, { noShot: true }), signal)).result;
+      for (let i = 0; i < 6; i++) {
+        const at = await step([]);
+        if (/\/offer\/driver|\/(payment|checkout)\b/i.test(at.url) || /driver|payment|checkout/i.test(at.title)) break;
+        let moved = false;
+        for (const text of ["Skip", "No, I'll take the risk", "No thanks", "Continue"]) {
+          const r = (await step([{ type: "click_text", text }])).results?.[0];
+          if (r?.ok) {
+            moved = true;
+            break;
+          }
+        }
+        if (!moved) break;
+      }
+      // Fill the driver form right away (the page finds each field), one screenshot at the end.
       ctx.progress("Filling in the driver details…");
       const [first, ...rest] = name.split(/\s+/);
       const last = rest.join(" ");
@@ -749,12 +765,15 @@ async function browse(tool: string, input: Record<string, unknown>, ctx: Connect
       let helper: VisionResult | null = null;
       if (misses.length) {
         ctx.progress("Setting the last few fields…");
-        helper = await visionAgent(ctx.chatId, `On Discover Cars' driver details form, set ${misses.join("; ")}. Use form_input for native dropdowns; for custom ones click to open, type to filter and click the option. Change nothing else, and don't press Continue. Done when those fields show these values.`, { signal, progress: ctx.progress });
+        helper = await visionAgent(ctx.chatId, `On Discover Cars' driver details form, set ${misses.join("; ")}. Use form_input for native dropdowns; for custom ones click to open, type to filter and click the option. Change nothing else, and don't press Continue. Done when those fields show these values.`, { signal, progress: ctx.progress, maxMs: 30_000 });
       }
       const sid = await chatBrowserId(ctx.chatId);
       const now = sid ? await browserApi.state(sid, signal).catch(() => null) : null;
       const report = { approved: true, details, residence: who.name, filled: done.map((x) => `${x.ok ? "✓" : "✗"} ${x.field}: ${x.ok ? x.did : x.why}`), ...(helper ? { helper: { ok: helper.ok, log: helper.log, ...(helper.why ? { why: helper.why } : {}) } } : {}) };
-      const next = "Already filled where marked ✓; fix only ✗ fields with rental_car_act (exactly these details). Leave paid extras unticked unless the shopper asked. Then go to the payment step (click_text the continue button) and call rental_car_hand_over with reason payment.";
+      const left = misses.length && !helper?.ok ? misses : [];
+      const next = left.length
+        ? `Don't fight these dropdowns any longer: call rental_car_hand_over with reason payment now. The shopper gets the Pay link and sets ${left.join("; ")} themselves in their own browser before paying. Tell them that in one line.`
+        : "Filled. click_text the continue button to the payment step, then call rental_car_hand_over with reason payment right away. Only if a field shows an error, fix that one field first.";
       return now ? shot(now, report, next, ctx.chatId, helper?.micros) : { content: JSON.stringify({ ...report, next }), ...(helper ? { micros: helper.micros } : {}) };
     }
     if (tool === "rental_car_continue") {
