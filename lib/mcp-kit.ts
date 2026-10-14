@@ -36,8 +36,11 @@ export interface Out {
 
 export const txt = (o: unknown, isError = false): Out => ({ content: [{ type: "text" as const, text: typeof o === "string" ? o : JSON.stringify(o) }], ...(isError ? { isError: true } : {}) });
 
-/** A result with cards for the in-chat view (the model gets `o` as text; the view draws the cards). */
-export const withCards = (o: unknown, cards: ViewCard[], view: { title?: string; footer?: string } = {}): Out => ({ ...txt(o), structuredContent: { cards, ...view } });
+/**
+ * A result with cards for the in-chat view. Some clients give the model only structuredContent when it's present,
+ * so it also carries the model's answer (`result`); the view ignores it.
+ */
+export const withCards = (o: unknown, cards: ViewCard[], view: { title?: string; footer?: string } = {}): Out => ({ ...txt(o), structuredContent: { result: o, cards, ...view } });
 
 /** Tools whose results the in-chat view draws (MCP Apps; the second key is the older spelling hosts still read). */
 export const UI = { ui: { resourceUri: VIEW_URI }, "ui/resourceUri": VIEW_URI, "openai/outputTemplate": VIEW_URI };
