@@ -36,7 +36,7 @@ test("hotel card: book and ride links; browser cards need a chat", () => {
 test("embedded checkout params: return_url from success_url, no hosted URLs", async () => {
   const { forCustomer } = await import("../lib/stripe-customer");
   const p = await forCustomer({ mode: "payment", success_url: "https://x/ok?s={CHECKOUT_SESSION_ID}", cancel_url: "https://x/back", customer_email: "a@b.c" }, null, true);
-  assert.equal(p.ui_mode, "embedded");
+  assert.equal(p.ui_mode, "embedded_page");
   assert.equal(p.return_url, "https://x/ok?s={CHECKOUT_SESSION_ID}");
   assert.equal(p.redirect_on_completion, "if_required");
   assert.equal(p.success_url, undefined);

@@ -1,5 +1,5 @@
 import { stripe } from "@/lib/stripe";
-import { publishableKey } from "@/lib/stripe-customer";
+import { isEmbedded, publishableKey } from "@/lib/stripe-customer";
 import EmbeddedPay from "./EmbeddedPay";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const metadata = { title: "Pay", robots: { index: false } };
 export default async function PayPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const s = /^cs_[A-Za-z0-9_]+$/.test(id) ? await stripe().checkout.sessions.retrieve(id).catch(() => null) : null;
-  if (!s || s.ui_mode !== "embedded" || s.status !== "open" || !s.client_secret)
+  if (!s || !isEmbedded(s.ui_mode) || s.status !== "open" || !s.client_secret)
     return (
       <div className="wrap page narrow">
         <h1 className="page-title">{s?.status === "complete" ? "Paid" : "This payment link has expired"}</h1>
