@@ -94,7 +94,13 @@ export function chitMcpServer(who: Who): McpServer {
     async () => {
       // The view streams Neon's live browser over a WebSocket to the browser service.
       const live = liveOrigin();
-      const ui = { prefersBorder: false, ...(live ? { csp: { connectDomains: [live] } } : {}) };
+      // Stripe's embedded checkout and its card fields load inside the card (Stripe's own frames: Chit never sees the card).
+      const stripeCsp = {
+        connectDomains: ["https://api.stripe.com", "https://checkout.stripe.com", "https://merchant-ui-api.stripe.com", "https://m.stripe.network", "https://q.stripe.com", "https://r.stripe.com", "https://errors.stripe.com"],
+        resourceDomains: ["https://js.stripe.com", "https://*.js.stripe.com", "https://b.stripecdn.com"],
+        frameDomains: ["https://js.stripe.com", "https://*.js.stripe.com", "https://hooks.stripe.com", "https://checkout.stripe.com"],
+      };
+      const ui = { prefersBorder: false, csp: { ...stripeCsp, connectDomains: [...stripeCsp.connectDomains, ...(live ? [live] : [])] } };
       return { contents: [{ uri: VIEW_URI, mimeType: "text/html;profile=mcp-app", text: viewHtml(), _meta: { ui } }] };
     },
   );

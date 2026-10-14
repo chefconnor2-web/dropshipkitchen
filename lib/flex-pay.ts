@@ -5,6 +5,8 @@
 
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
+import { forCustomer } from "@/lib/stripe-customer";
+import { actingAs } from "@/lib/acting";
 
 // Where each method works (Stripe's supported currencies for the shopper's charge).
 const METHODS: Array<[string, string[]]> = [
@@ -31,7 +33,20 @@ export function flexPayTypes(priceCents: number, costCents: number, currency: st
  * Creates the Checkout session with pay later when it fits. If Stripe refuses a method (not switched on in
  * the Dashboard, or not available for this amount or currency), it tries cards and Klarna, then cards only.
  */
-export async function checkoutWithFlexPay(params: Stripe.Checkout.SessionCreateParams, types: string[] | null): Promise<Stripe.Checkout.Session> {
+export async function checkoutWithFlexPay(params: Stripe.Checkout.SessionCreateParams, types: string[] | null, customerId?: string | null): Promise<Stripe.Checkout.Session> {
+  // Signed in: their Stripe customer, with "save my card". From the Chit card in Claude: Stripe's embedded form.
+  params = await forCustomer(params, customerId, actingAs()?.embedded === true);
+  try {
+    return await createWithFallback(params, types);
+  } catch (e) {
+    // Never lose a sale over "save my card": if Stripe refuses it, check out without it.
+    if (!params.saved_payment_method_options || (e as { type?: string })?.type !== "StripeInvalidRequestError") throw e;
+    const { saved_payment_method_options: _s, ...rest } = params;
+    return createWithFallback(rest, types);
+  }
+}
+
+async function createWithFallback(params: Stripe.Checkout.SessionCreateParams, types: string[] | null): Promise<Stripe.Checkout.Session> {
   const tries: Array<string[] | null> = types ? [types, types.filter((t) => t === "card" || t === "klarna"), null] : [null];
   let last: unknown;
   for (const t of tries) {

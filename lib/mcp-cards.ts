@@ -31,6 +31,11 @@ export interface ViewCard {
   options?: Array<{ label: string; price: string; detail: string; url: string; offerId?: string }>;
   /** "Book with my details": the view calls this tool and opens the pay link it returns. */
   book?: { tool: "book_flight" | "book_hotel"; args: Record<string, string> };
+  /**
+   * Paying from the card: Stripe's embedded form inside the card (sessionId of an embedded session), the
+   * customer's saved card in one tap, and a live "Paid ✅ / Booked" once the booking number reports it.
+   */
+  pay?: { number?: string; sessionId?: string; savedCard?: string; url: string };
   /** Cart lines the view can change in place (+, −, remove). */
   cartLines?: Array<{ id: string; label: string; quantity: number; total: string }>;
   actions: ViewAction[];

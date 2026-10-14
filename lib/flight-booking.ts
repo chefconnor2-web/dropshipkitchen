@@ -21,6 +21,7 @@ import { checkoutWithFlexPay, flexPayTypes } from "@/lib/flex-pay";
 import { clock, flightPrice, shortDate, type FlightCard } from "@/lib/flights-shared";
 import type Stripe from "stripe";
 import { rememberTraveller } from "@/lib/traveller";
+import { checkoutUrl } from "@/lib/stripe-customer";
 
 export const FLIGHT_STATUS = {
   /** A fare held with the airline (Duffel hold order), not paid yet. Nothing charged. */
@@ -227,10 +228,10 @@ export async function startFlightCheckout(input: BookInput): Promise<StartResult
     payment_intent_data: { metadata: { flightBookingId: booking.id } },
     success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
-  }, flexPayTypes(price, Math.round(Number(offer.total_amount) * 100), offer.total_currency));
+  }, flexPayTypes(price, Math.round(Number(offer.total_amount) * 100), offer.total_currency), input.customerId);
   await prisma.flightBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   await rememberTraveller(input.customerId, { firstName: passengers[0]?.given_name ?? "", lastName: passengers[0]?.family_name ?? "", phone, email });
-  return { url: session.url! };
+  return { url: checkoutUrl(session) };
 }
 
 // ---------- hold now, pay later ----------
@@ -312,9 +313,10 @@ export async function payHeldFlight(bookingId: string): Promise<StartResult> {
       cancel_url: await tripUrl(b),
     },
     flexPayTypes(price, Math.round(Number(order.total_amount) * 100), order.total_currency),
+    b.customerId,
   );
   await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.PENDING_PAYMENT, stripeSessionId: session.id } });
-  return { url: session.url! };
+  return { url: checkoutUrl(session) };
 }
 
 // ---------- after payment ----------

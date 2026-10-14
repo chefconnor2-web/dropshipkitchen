@@ -46,9 +46,11 @@ button.a{border:0;border-radius:10px;padding:8px 14px;font:600 13px/1 inherit;fo
 button.a.primary{background:var(--accent);color:var(--accent-ink)}
 .foot{font-size:11px;color:var(--muted)}
 .empty{color:var(--muted);font-size:13px;padding:6px 2px}
+.paybox{display:flex;flex-direction:column;gap:8px}.paystat{font-size:13px;display:flex;gap:6px;align-items:center}.paystat:empty{display:none}
+[data-embedbox]:not(:empty){border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;min-height:200px}
 .neon .ntext{font-size:14px;line-height:1.5}.neon .ntext a{color:var(--accent);font-weight:600}
 .nstat{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}.nstat:empty{display:none}
-.nstat .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1s infinite alternate}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1s infinite alternate}
 @keyframes pulse{from{opacity:.3}to{opacity:1}}.muted{color:var(--muted)}
 .stack,[data-pane]{display:flex;flex-direction:column;gap:10px}
 .line{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;font-size:13px}
@@ -187,8 +189,60 @@ function cardHtml(c, n) {
     (c.live ? '<div class="live" data-live><canvas width="390" height="300"></canvas><div class="lv-st"><i></i><span data-st>Connecting…</span></div></div>' +
       '<div class="lv-type" data-typebar hidden><input data-text placeholder="Type into the page" autocomplete="off"><button class="a" data-send>Send</button><button class="a" data-key="Enter">⏎</button><button class="a" data-back>Back</button></div>' +
       '<div class="acts"><button class="a primary" data-take>Take over</button>' + (c.live.stepId ? '<button class="a" data-done>I&rsquo;m done</button>' : '') + '</div>' : '') +
-    ((c.actions || []).length || c.book ? '<div class="acts">' + (c.book ? '<button class="a primary" data-book>Book with my details</button>' : '') + (c.actions || []).map((a, i) => '<button class="a' + (a.primary && !c.book ? ' primary' : '') + '" data-act="' + i + '">' + esc(c.book && a.primary ? a.label + " on Chit" : a.label) + '</button>').join('') + '</div>' : '') +
+    (c.pay ? '<div class="paybox"><div class="acts">' + (c.pay.savedCard && c.pay.number ? '<button class="a primary" data-saved>Pay ' + esc(c.price || "") + ' with ' + esc(c.pay.savedCard) + '</button>' : '') + (c.pay.sessionId ? '<button class="a' + (c.pay.savedCard ? '' : ' primary') + '" data-embed>' + (c.pay.savedCard ? 'Use another card' : 'Pay here') + '</button>' : '') + '</div><div data-embedbox></div><div class="paystat" data-paystat></div></div>' : '') +
+    ((c.actions || []).length || c.book ? '<div class="acts">' + (c.book ? '<button class="a primary" data-book>Book with my details</button>' : '') + (c.actions || []).map((a, i) => '<button class="a' + (a.primary && !c.book && !(c.pay && (c.pay.savedCard || c.pay.sessionId)) ? ' primary' : '') + '" data-act="' + i + '">' + esc(c.pay && a.primary ? "Pay in browser" : c.book && a.primary ? a.label + " on Chit" : a.label) + '</button>').join('') + '</div>' : '') +
     '</div>';
+}
+
+// Paying in the card. After a payment, the booking number is checked until it reports booked (or two minutes).
+function wirePay(el, c) {
+  const stat = el.querySelector("[data-paystat]"), box = el.querySelector("[data-embedbox]");
+  const say = (t) => { stat.innerHTML = t; };
+  async function confirmPaid() {
+    el.querySelectorAll("[data-saved],[data-embed]").forEach((b) => b.remove());
+    el.querySelectorAll("[data-act]").forEach((b) => { if (b.textContent === "Pay in browser") b.remove(); });
+    say('<span class="dot"></span> Paid. Confirming your booking…');
+    if (!c.pay.number) return say("✅ Paid. Your confirmation is on its way by email.");
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      let j = null;
+      try { const r = await app.callServerTool({ name: "payment_status", arguments: { number: c.pay.number } }); j = JSON.parse(r.content[0].text); } catch {}
+      if (j && /BOOKED/.test(j.status)) {
+        say("✅ Booked" + (j.confirmation ? " · confirmation <b>" + esc(j.confirmation) + "</b>" : ""));
+        app.updateModelContext({ content: [{ type: "text", text: "The customer paid in the Chit card and " + c.pay.number + " is booked" + (j.confirmation ? ", confirmation " + j.confirmation : "") + "." }] }).catch(() => {});
+        return;
+      }
+      if (j && /REFUND|FAILED|REVIEW/.test(j.status)) return say("⚠ " + esc(j.status.toLowerCase().replace(/_/g, " ")) + ". Check your email for details.");
+    }
+    say("✅ Paid. The confirmation will arrive by email shortly.");
+  }
+  const saved = el.querySelector("[data-saved]");
+  if (saved) saved.addEventListener("click", async () => {
+    saved.disabled = true; saved.textContent = "Paying…";
+    try {
+      const r = await app.callServerTool({ name: "pay_with_saved_card", arguments: { number: c.pay.number } });
+      if (!r.isError) return confirmPaid();
+      let why = "It didn't go through."; try { why = JSON.parse(r.content[0].text).problem || why; } catch { why = r.content[0].text || why; }
+      say("⚠ " + esc(why)); saved.remove();
+    } catch { say("⚠ Couldn't reach Chit. Try again."); saved.disabled = false; saved.textContent = "Pay with saved card"; }
+  });
+  const emb = el.querySelector("[data-embed]");
+  if (emb) emb.addEventListener("click", async () => {
+    emb.disabled = true; say('<span class="dot"></span> Opening secure payment…');
+    try {
+      const r = await app.callServerTool({ name: "checkout_secret", arguments: { session_id: c.pay.sessionId } });
+      const cfg = !r.isError && r.structuredContent;
+      if (!cfg || !cfg.publishable_key) throw new Error("no");
+      if (!window.Stripe) await new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://js.stripe.com/v3/"; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+      const checkout = await window.Stripe(cfg.publishable_key).initEmbeddedCheckout({ fetchClientSecret: async () => cfg.client_secret, onComplete: () => { checkout.destroy(); box.innerHTML = ""; confirmPaid(); } });
+      say(""); emb.remove();
+      checkout.mount(box);
+    } catch {
+      say("This card can't show the payment form here, so it opens in your browser.");
+      emb.disabled = false;
+      open(c.pay.url);
+    }
+  });
 }
 
 /** Draws cards into a container and wires their buttons. onReplace(i, card) swaps one card after a change. */
@@ -210,6 +264,7 @@ function drawCards(box, cards, onReplace) {
       await runTool(el, c.book.tool, args, "Help me book " + c.title + (picked ? " (" + picked.label + ")" : "") + " with my details.");
       book.disabled = false; book.textContent = "Book with my details";
     });
+    if (c.pay) wirePay(el, c);
     el.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
       const a = c.actions[Number(b.dataset.act)];
       if (a.tool) return runTool(el, a.tool.name, a.tool.args, "Help me with: " + a.label + ".");
