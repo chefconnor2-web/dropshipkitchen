@@ -11,6 +11,8 @@ export const ACCESS_TTL_S = 3600;
 const REFRESH_TTL_MS = 60 * 86_400_000;
 const REQUEST_TTL_MS = 15 * 60_000;
 export const SCOPE = "chit";
+/** Read-only access: the app can look (trips, cart, chats, searches) but never buy, book, cancel or change. */
+export const READ_SCOPE = "chit:read";
 
 const sha256 = (t: string) => createHash("sha256").update(t).digest("hex");
 const token = (bytes = 32) => randomBytes(bytes).toString("base64url");
@@ -30,7 +32,7 @@ export function authServerMetadata() {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: [SCOPE],
+    scopes_supported: [SCOPE, READ_SCOPE],
     service_documentation: `${s}/connect`,
   };
 }
@@ -39,7 +41,7 @@ export function resourceMetadata() {
   return {
     resource: mcpUrl(),
     authorization_servers: [config.siteUrl],
-    scopes_supported: [SCOPE],
+    scopes_supported: [SCOPE, READ_SCOPE],
     bearer_methods_supported: ["header"],
     resource_name: `${config.storeName} travel`,
     resource_documentation: `${config.siteUrl}/connect`,
@@ -118,7 +120,7 @@ export async function pendingRequest(id: string) {
 }
 
 /** The customer approved (or declined): where to send their browser next. */
-export async function decide(id: string, customerId: string, allow: boolean): Promise<string | null> {
+export async function decide(id: string, customerId: string, allow: boolean, readOnly = false): Promise<string | null> {
   const r = await pendingRequest(id);
   if (!r) return null;
   const u = new URL(r.redirectUri);
@@ -130,7 +132,7 @@ export async function decide(id: string, customerId: string, allow: boolean): Pr
   }
   const code = token();
   // A short window to swap the code for tokens.
-  await prisma.mcpAuthRequest.update({ where: { id }, data: { customerId, codeHash: sha256(code), expiresAt: new Date(Date.now() + 10 * 60_000) } });
+  await prisma.mcpAuthRequest.update({ where: { id }, data: { customerId, codeHash: sha256(code), scope: readOnly ? READ_SCOPE : SCOPE, expiresAt: new Date(Date.now() + 10 * 60_000) } });
   u.searchParams.set("code", code);
   u.searchParams.set("iss", config.siteUrl);
   return u.toString();
@@ -141,17 +143,17 @@ export interface TokenError {
   error_description: string;
 }
 
-async function issue(clientId: string, customerId: string, grantId: string) {
+async function issue(clientId: string, customerId: string, grantId: string, scope: string) {
   const access = token();
   const refresh = token();
   const now = Date.now();
   await prisma.mcpToken.createMany({
     data: [
-      { tokenHash: sha256(access), kind: "access", grantId, clientId, customerId, expiresAt: new Date(now + ACCESS_TTL_S * 1000) },
-      { tokenHash: sha256(refresh), kind: "refresh", grantId, clientId, customerId, expiresAt: new Date(now + REFRESH_TTL_MS) },
+      { tokenHash: sha256(access), kind: "access", scope, grantId, clientId, customerId, expiresAt: new Date(now + ACCESS_TTL_S * 1000) },
+      { tokenHash: sha256(refresh), kind: "refresh", scope, grantId, clientId, customerId, expiresAt: new Date(now + REFRESH_TTL_MS) },
     ],
   });
-  return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refresh, scope: SCOPE };
+  return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refresh, scope };
 }
 
 const pkceOk = (verifier: string, challenge: string) => {
@@ -180,7 +182,7 @@ export async function exchange(f: URLSearchParams): Promise<TokenError | Awaited
     if (!pkceOk(f.get("code_verifier") ?? "", r.codeChallenge)) return bad("invalid_grant", "PKCE check failed.");
     const claimed = await prisma.mcpAuthRequest.updateMany({ where: { id: r.id, usedAt: null }, data: { usedAt: new Date() } });
     if (claimed.count !== 1) return bad("invalid_grant", "The code was already used.");
-    return issue(r.clientId, r.customerId, r.id);
+    return issue(r.clientId, r.customerId, r.id, r.scope === READ_SCOPE ? READ_SCOPE : SCOPE);
   }
   if (grant === "refresh_token") {
     const t = await prisma.mcpToken.findUnique({ where: { tokenHash: sha256(f.get("refresh_token") ?? "") } });
@@ -193,7 +195,7 @@ export async function exchange(f: URLSearchParams): Promise<TokenError | Awaited
     if (clientId && clientId !== t.clientId) return bad("invalid_grant", "The token belongs to another app.");
     const claimed = await prisma.mcpToken.updateMany({ where: { id: t.id, revokedAt: null }, data: { revokedAt: new Date() } });
     if (claimed.count !== 1) return bad("invalid_grant", "The refresh token was already used.");
-    return issue(t.clientId, t.customerId, t.grantId);
+    return issue(t.clientId, t.customerId, t.grantId, t.scope);
   }
   return bad("unsupported_grant_type", "Use authorization_code or refresh_token.");
 }
@@ -205,19 +207,19 @@ export async function revoke(raw: string): Promise<void> {
 }
 
 /** The customer and app behind a Bearer header, or null. */
-export async function bearer(header: string | null): Promise<{ customerId: string; clientId: string; token: string } | null> {
+export async function bearer(header: string | null): Promise<{ customerId: string; clientId: string; token: string; readOnly: boolean } | null> {
   const m = /^Bearer\s+([A-Za-z0-9_-]{43})$/i.exec(header ?? "");
   if (!m) return null;
   const t = await prisma.mcpToken.findUnique({ where: { tokenHash: sha256(m[1]) } });
   if (!t || t.kind !== "access" || t.revokedAt || t.expiresAt <= new Date()) return null;
-  return { customerId: t.customerId, clientId: t.clientId, token: m[1] };
+  return { customerId: t.customerId, clientId: t.clientId, token: m[1], readOnly: t.scope === READ_SCOPE };
 }
 
 /** Apps connected to this customer's account (for the Connect page), newest first. */
 export async function connectedApps(customerId: string) {
   const live = await prisma.mcpToken.findMany({ where: { customerId, kind: "refresh", revokedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } });
-  const grants = new Map<string, { grantId: string; clientId: string; since: Date }>();
-  for (const t of live) if (!grants.has(t.grantId)) grants.set(t.grantId, { grantId: t.grantId, clientId: t.clientId, since: t.createdAt });
+  const grants = new Map<string, { grantId: string; clientId: string; since: Date; readOnly: boolean }>();
+  for (const t of live) if (!grants.has(t.grantId)) grants.set(t.grantId, { grantId: t.grantId, clientId: t.clientId, since: t.createdAt, readOnly: t.scope === READ_SCOPE });
   const clients = new Map((await prisma.mcpClient.findMany({ where: { id: { in: [...grants.values()].map((g) => g.clientId) } } })).map((c) => [c.id, c.name]));
   return [...grants.values()].map((g) => ({ ...g, name: clients.get(g.clientId) ?? "An app" }));
 }

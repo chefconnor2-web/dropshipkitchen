@@ -28,39 +28,21 @@ import { aiAllowance, limitMessage } from "@/lib/membership";
 import { priceOrder } from "@/lib/volume";
 import { formatMoney } from "@/lib/money";
 import { VIEW_URI, viewHtml } from "@/lib/mcp-view";
+import { guarded, txt, UI, withCards, type Out, type Who } from "@/lib/mcp-kit";
+import { registerMoreTools } from "@/lib/mcp-tools-more";
 import { browserConfigured, liveOrigin, mintLiveUrl } from "@/lib/browser";
 
-/** Tool calls per customer: per minute and per hour. */
-const PER_MINUTE = 40;
-const PER_HOUR = 300;
 
 export const INSTRUCTIONS = `Chit is the signed-in customer's shopping and travel account: live flights (Duffel), hotels (LiteAPI), rental cars (Discover Cars), a product catalog with their Chit cart, their trips and receipts, company travel policy and expenses, and Neon (Chit's own agent, with a live browser).
 - Payment always happens in the customer's own browser: give them the Book / Check out / Pay link from the result (the cards show them as buttons). Never ask for card details.
 - Every travel search returns a trip_id. Pass it to later searches for the same trip (flights, then hotel, then car) so they stay together in the customer's Chit trips.
+- To buy: book_flight / book_hotel use the customer's saved details and return a Stripe pay link (no form); checkout_cart pays for the cart. After they pay, payment_status confirms it.
+- Cancelling is always two calls: first get the quote, tell the customer exactly what they'd get back, and only after a clear yes call again with the quote.
+- open_chit shows their whole Chit (trips, cart, orders, chats) in the chat.
 - Use the direct tools first (search_flights, search_hotels, search_products, add_to_cart…). Use ask_neon for what needs Neon's live browser or several steps: booking a rental car up to payment, filling an Amazon cart, emailing a hotel. It uses the customer's AI allowance.
 - Prices include Chit's fee. Only quote prices and options the tools returned.
 - For work trips call company_policy first and stay within it, then call set_work_trip.`;
 
-interface Who {
-  customerId: string;
-  clientId: string;
-  clientName: string;
-}
-
-interface Out {
-  [key: string]: unknown;
-  content: Array<{ type: "text"; text: string }>;
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
-
-const txt = (o: unknown, isError = false): Out => ({ content: [{ type: "text" as const, text: typeof o === "string" ? o : JSON.stringify(o) }], ...(isError ? { isError: true } : {}) });
-
-/** A result with cards for the in-chat view (the model gets `o` as text; the view draws the cards). */
-const withCards = (o: unknown, cards: ViewCard[], view: { title?: string; footer?: string } = {}): Out => ({ ...txt(o), structuredContent: { cards, ...view } });
-
-/** Tools whose results the in-chat view draws (MCP Apps; the second key is the older spelling hosts still read). */
-const UI = { ui: { resourceUri: VIEW_URI }, "ui/resourceUri": VIEW_URI, "openai/outputTemplate": VIEW_URI };
 
 /** The customer's chat for this trip: theirs when trip_id is given, else a new one. */
 async function tripChat(who: Who, tripId: string | undefined, title: string): Promise<string> {
@@ -100,30 +82,6 @@ async function runConnector(run: (tool: string, input: Record<string, unknown>, 
 
 const link = (path: string, chatId: string) => `${config.siteUrl}${path}?chat=${encodeURIComponent(chatId)}`;
 
-async function rateLimited(customerId: string): Promise<boolean> {
-  const [minute, hour] = await Promise.all([
-    prisma.mcpCall.count({ where: { customerId, createdAt: { gt: new Date(Date.now() - 60_000) } } }),
-    prisma.mcpCall.count({ where: { customerId, createdAt: { gt: new Date(Date.now() - 3600_000) } } }),
-  ]);
-  return minute >= PER_MINUTE || hour >= PER_HOUR;
-}
-
-/** Wraps a tool: rate limit, audit row, and errors as tool errors (never a thrown protocol error). */
-function guarded<A>(who: Who, name: string, fn: (a: A) => Promise<Out>) {
-  return async (a: A): Promise<Out> => {
-    if (await rateLimited(who.customerId)) return txt("Too many requests for this account right now. Wait a minute and try again.", true);
-    const t0 = Date.now();
-    let out: Out;
-    try {
-      out = await fn(a);
-    } catch (e) {
-      console.error(`[mcp] ${name} failed:`, e instanceof Error ? e.message : e);
-      out = txt(`${name} failed: ${e instanceof Error ? e.message : "an error"}. Try again.`, true);
-    }
-    await prisma.mcpCall.create({ data: { customerId: who.customerId, clientId: who.clientId, tool: name, ok: !("isError" in out), ms: Date.now() - t0 } }).catch(() => {});
-    return out;
-  };
-}
 
 const tripIdField = z.string().max(40).optional().describe("trip_id from an earlier search for the same trip; leave out to start a new trip");
 const isDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
@@ -385,6 +343,12 @@ export function chitMcpServer(who: Who): McpServer {
     }),
   );
 
+  server.registerTool(
+    "open_chit",
+    { title: "Open Chit", description: "Show the customer's Chit in the chat: tabs for their trips, cart, orders and Neon chats, with buttons (full screen available). Use when they ask to see their Chit, account or everything.", inputSchema: {}, annotations: { readOnlyHint: true, openWorldHint: false }, _meta: UI },
+    guarded(who, "open_chit", async () => ({ ...txt({ shown: "The customer's Chit (trips, cart, orders, chats) is open in the card." }), structuredContent: { home: true } })),
+  );
+
   /* ---------- Shopping: Chit's catalog and the customer's Chit cart (the same cart as on their phone) ---------- */
 
   server.registerTool(
@@ -532,6 +496,8 @@ export function chitMcpServer(who: Who): McpServer {
     }),
   );
 
+  registerMoreTools(server, who);
+
   return server;
 }
 
@@ -559,12 +525,13 @@ async function cartView(cartId: string) {
           kind: "cart",
           id: cartId,
           title: "Your Chit cart",
-          subtitle: parsed.shipping ? `Shipping ${parsed.shipping}` : undefined,
+          subtitle: parsed.shipping ? (/: from /.test(parsed.shipping) ? `Shipping to ${parsed.shipping}` : parsed.shipping) : undefined,
           lines: lines.map((l) => `${l.quantity} × ${l.product}${l.option && l.option !== "Default" ? ` (${l.option})` : ""} · ${l.line_total}`),
           price: summary.subtotal,
           priceNote: "subtotal",
           badges: parsed.bulk_savings ? [`Bulk savings ${parsed.bulk_savings}`] : [],
-          actions: [{ label: "Check out", url: checkout, primary: true }],
+          cartLines: lines.map((l) => ({ id: l.line_id, label: `${l.product}${l.option && l.option !== "Default" ? ` (${l.option})` : ""}`, quantity: l.quantity, total: l.line_total })),
+          actions: [{ label: "Check out", tool: { name: "checkout_cart", args: {} }, primary: true }, { label: "Open cart in Chit", url: checkout }],
         },
       ]
     : [];

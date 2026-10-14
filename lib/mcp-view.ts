@@ -46,6 +46,14 @@ button.a{border:0;border-radius:10px;padding:8px 14px;font:600 13px/1 inherit;fo
 button.a.primary{background:var(--accent);color:var(--accent-ink)}
 .foot{font-size:11px;color:var(--muted)}
 .empty{color:var(--muted);font-size:13px;padding:6px 2px}
+.stack,[data-pane]{display:flex;flex-direction:column;gap:10px}
+.line{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;font-size:13px}
+.qty{display:flex;align-items:center;gap:4px}.qty button{width:26px;height:26px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;cursor:pointer;font:inherit}
+.qty b{min-width:18px;text-align:center}.lt{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{position:relative}.toast{position:absolute;left:12px;right:12px;bottom:10px;background:rgba(20,20,28,.88);color:#fff;font-size:12px;border-radius:8px;padding:6px 10px}
+.tabs{display:flex;gap:6px}.tab{border:1px solid var(--line);background:transparent;color:inherit;border-radius:999px;padding:6px 12px;font:600 13px inherit;font-family:inherit;cursor:pointer}
+.tab[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.brand .fs{margin-left:auto;padding:4px 10px;font-size:11px}
 .live{position:relative;border-radius:10px;overflow:hidden;background:#0d0d12;border:1px solid var(--line)}
 .live canvas{display:block;width:100%;height:auto;min-height:160px;touch-action:none}
 .live.ctl canvas{cursor:pointer;outline:2px solid var(--accent);outline-offset:-2px}
@@ -140,40 +148,119 @@ function startLive(live, el) {
   return () => { gone = true; if (ws) ws.close(); };
 }
 
+// A tool's pay link from its result (book_flight, book_hotel, checkout_cart, subscribe…).
+function payUrlOf(r) {
+  const c = r && r.structuredContent && r.structuredContent.cards && r.structuredContent.cards[0];
+  const a = c && (c.actions || []).find((x) => x.url);
+  if (a) return a.url;
+  try { const t = JSON.parse(r.content[0].text); return t.pay_url || t.held_url || t.share_url || t.url || null; } catch { return null; }
+}
+function problemOf(r) {
+  try { const t = JSON.parse(r.content[0].text); return t.problem || t.error || r.content[0].text; } catch { return (r && r.content && r.content[0] && r.content[0].text) || "That didn't work."; }
+}
+function flash(el, t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; el.appendChild(d); setTimeout(() => d.remove(), 3200); }
+
+async function runTool(el, name, args, what) {
+  try {
+    const r = await app.callServerTool({ name, arguments: args });
+    const url = !r.isError && payUrlOf(r);
+    if (url) return open(url);
+    const why = problemOf(r);
+    flash(el, why.length > 140 ? why.slice(0, 140) + "…" : why);
+    if (r.isError && what) app.sendMessage({ role: "user", content: [{ type: "text", text: what + " It said: " + why }] }).catch(() => {});
+  } catch { flash(el, "Couldn't reach Chit. Try again."); }
+}
+
+function cardHtml(c, n) {
+  const opts = (c.options || []);
+  const lines = c.cartLines ? c.cartLines.map((l, i) => '<div class="line"><span>' + esc(l.label) + '</span><span class="qty"><button data-q="' + i + '" data-d="-1" aria-label="Less">−</button><b>' + l.quantity + '</b><button data-q="' + i + '" data-d="1" aria-label="More">+</button><button data-q="' + i + '" data-d="x" aria-label="Remove">✕</button></span><span class="lt">' + esc(l.total) + '</span></div>').join('') : (c.lines || []).filter(Boolean).map((l) => '<div class="l">' + esc(l) + '</div>').join('');
+  return '<div class="card" data-n="' + n + '">' +
+    '<div class="top"><div><div class="t">' + esc(c.title) + '</div>' + (c.subtitle ? '<div class="s">' + esc(c.subtitle) + '</div>' : '') + '</div>' +
+    (c.price ? '<div class="p"><b data-price>' + esc(c.price) + '</b>' + (c.priceNote ? '<span>' + esc(c.priceNote) + '</span>' : '') + '</div>' : '') + '</div>' +
+    lines +
+    (c.badges && c.badges.length ? '<div class="badges">' + c.badges.map((b) => '<span class="badge">' + esc(b) + '</span>').join('') + '</div>' : '') +
+    (opts.length ? '<div class="opts">' + opts.map((o, i) => '<button class="opt" data-opt="' + i + '" aria-pressed="' + (o.price === c.price && i === opts.findIndex((x) => x.price === c.price)) + '"><b>' + esc(o.label) + ' · ' + esc(o.price) + '</b><span>' + esc(o.detail) + '</span></button>').join('') + '</div>' : '') +
+    (c.live ? '<div class="live" data-live><canvas width="390" height="300"></canvas><div class="lv-st"><i></i><span data-st>Connecting…</span></div></div>' +
+      '<div class="lv-type" data-typebar hidden><input data-text placeholder="Type into the page" autocomplete="off"><button class="a" data-send>Send</button><button class="a" data-key="Enter">⏎</button><button class="a" data-back>Back</button></div>' +
+      '<div class="acts"><button class="a primary" data-take>Take over</button>' + (c.live.stepId ? '<button class="a" data-done>I&rsquo;m done</button>' : '') + '</div>' : '') +
+    ((c.actions || []).length || c.book ? '<div class="acts">' + (c.book ? '<button class="a primary" data-book>Book with my details</button>' : '') + (c.actions || []).map((a, i) => '<button class="a' + (a.primary && !c.book ? ' primary' : '') + '" data-act="' + i + '">' + esc(c.book && a.primary ? a.label + " on Chit" : a.label) + '</button>').join('') + '</div>' : '') +
+    '</div>';
+}
+
+/** Draws cards into a container and wires their buttons. onReplace(i, card) swaps one card after a change. */
+function drawCards(box, cards, onReplace) {
+  box.innerHTML = cards.map(cardHtml).join('');
+  box.querySelectorAll(".card").forEach((el) => {
+    const c = cards[Number(el.dataset.n)];
+    if (c.live) lives.push(startLive(c.live, el));
+    let picked = null;
+    el.querySelectorAll("[data-opt]").forEach((b) => b.addEventListener("click", () => {
+      picked = c.options[Number(b.dataset.opt)];
+      el.querySelectorAll("[data-opt]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      const p = el.querySelector("[data-price]"); if (p) p.textContent = picked.price;
+    }));
+    const book = el.querySelector("[data-book]");
+    if (book) book.addEventListener("click", async () => {
+      book.disabled = true; book.textContent = "Getting your pay link…";
+      const args = { ...c.book.args, ...(picked && picked.offerId ? { offer_id: picked.offerId } : {}) };
+      await runTool(el, c.book.tool, args, "Help me book " + c.title + (picked ? " (" + picked.label + ")" : "") + " with my details.");
+      book.disabled = false; book.textContent = "Book with my details";
+    });
+    el.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
+      const a = c.actions[Number(b.dataset.act)];
+      if (a.tool) return runTool(el, a.tool.name, a.tool.args, "Help me with: " + a.label + ".");
+      if (a.message) return app.sendMessage({ role: "user", content: [{ type: "text", text: a.message }] }).catch(() => {});
+      open(a.primary && picked ? picked.url : a.url);
+    }));
+    el.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", async () => {
+      const l = c.cartLines[Number(b.dataset.q)];
+      const q = b.dataset.d === "x" ? 0 : Math.max(0, l.quantity + Number(b.dataset.d));
+      el.querySelectorAll("[data-q]").forEach((x) => (x.disabled = true));
+      try {
+        const r = await app.callServerTool({ name: "update_cart", arguments: { line_id: l.id, quantity: q } });
+        if (r.isError) { flash(el, problemOf(r)); el.querySelectorAll("[data-q]").forEach((x) => (x.disabled = false)); return; }
+        const next = r.structuredContent && r.structuredContent.cards && r.structuredContent.cards[0];
+        onReplace(Number(el.dataset.n), next || { kind: "cart", id: c.id, title: "Your Chit cart", lines: ["Your cart is empty."], actions: [] });
+        app.updateModelContext && app.updateModelContext({ content: [{ type: "text", text: "The customer changed their Chit cart in the card: " + l.label + " → " + q + "." }] }).catch(() => {});
+      } catch { flash(el, "Couldn't reach Chit."); }
+    }));
+  });
+}
+
+const TABS = [["Trips", "my_trips"], ["Cart", "view_cart"], ["Orders", "my_orders"], ["Chats", "my_chats"]];
+
+/** "Open Chit": tabs over the customer's trips, cart, orders and chats, each loaded through its tool. */
+function renderHome() {
+  root.innerHTML = '<div class="brand"><i></i>Chit<button class="a fs" data-fs>Full screen</button></div><div class="tabs">' + TABS.map(([t], i) => '<button class="tab" data-tab="' + i + '">' + t + '</button>').join('') + '</div><div data-pane></div>';
+  const pane = root.querySelector("[data-pane]");
+  root.querySelector("[data-fs]").addEventListener("click", () => app.requestDisplayMode({ mode: "fullscreen" }).catch(() => {}));
+  async function show(i) {
+    lives.forEach((stop) => stop()); lives = [];
+    root.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.tab) === i)));
+    pane.innerHTML = '<div class="empty">Loading…</div>';
+    try {
+      const r = await app.callServerTool({ name: TABS[i][1], arguments: {} });
+      let cards = (r.structuredContent && r.structuredContent.cards) || [];
+      if (TABS[i][1] === "my_chats") { try { cards = JSON.parse(r.content[0].text).chats.map((c) => ({ kind: "trip", id: c.chat_id, title: c.title, subtitle: c.updated, lines: [], actions: [{ label: "Open in Chit", url: c.url, primary: true }, { label: "Continue here", message: "Continue my Neon chat '" + c.title + "' (chat_id " + c.chat_id + ")." }] })); } catch {} }
+      if (!cards.length) { pane.innerHTML = '<div class="empty">' + esc(problemOf(r) && r.isError ? problemOf(r) : "Nothing here yet.") + '</div>'; return; }
+      const redraw = () => drawCards(pane, cards, (n, card) => { cards[n] = card; redraw(); });
+      redraw();
+    } catch { pane.innerHTML = '<div class="empty">Couldn&rsquo;t load this.</div>'; }
+  }
+  root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => show(Number(b.dataset.tab))));
+  show(0);
+}
+
 function render(data) {
   lives.forEach((stop) => stop());
   lives = [];
+  if (data && data.home) return renderHome();
   const cards = (data && Array.isArray(data.cards)) ? data.cards : [];
   if (!cards.length) { root.innerHTML = data && data.note ? '<div class="empty">' + esc(data.note) + '</div>' : ""; return; }
-  root.innerHTML = '<div class="brand"><i></i>Chit' + (data.title ? ' · ' + esc(data.title) : '') + '</div>' + cards.map((c, n) => {
-    const opts = (c.options || []);
-    return '<div class="card" data-n="' + n + '">' +
-      '<div class="top"><div><div class="t">' + esc(c.title) + '</div>' + (c.subtitle ? '<div class="s">' + esc(c.subtitle) + '</div>' : '') + '</div>' +
-      (c.price ? '<div class="p"><b data-price>' + esc(c.price) + '</b>' + (c.priceNote ? '<span>' + esc(c.priceNote) + '</span>' : '') + '</div>' : '') + '</div>' +
-      (c.lines || []).filter(Boolean).map((l) => '<div class="l">' + esc(l) + '</div>').join('') +
-      (c.badges && c.badges.length ? '<div class="badges">' + c.badges.map((b) => '<span class="badge">' + esc(b) + '</span>').join('') + '</div>' : '') +
-      (opts.length ? '<div class="opts">' + opts.map((o, i) => '<button class="opt" data-opt="' + i + '" aria-pressed="' + (o.price === c.price && i === opts.findIndex((x) => x.price === c.price)) + '"><b>' + esc(o.label) + ' · ' + esc(o.price) + '</b><span>' + esc(o.detail) + '</span></button>').join('') + '</div>' : '') +
-      (c.live ? '<div class="live" data-live><canvas width="390" height="300"></canvas><div class="lv-st"><i></i><span data-st>Connecting…</span></div></div>' +
-        '<div class="lv-type" data-typebar hidden><input data-text placeholder="Type into the page" autocomplete="off"><button class="a" data-send>Send</button><button class="a" data-key="Enter">⏎</button><button class="a" data-back>Back</button></div>' +
-        '<div class="acts"><button class="a primary" data-take>Take over</button>' + (c.live.stepId ? '<button class="a" data-done>I&rsquo;m done</button>' : '') + '</div>' : '') +
-      ((c.actions || []).length ? '<div class="acts">' + c.actions.map((a, i) => '<button class="a' + (a.primary ? ' primary' : '') + '" data-act="' + i + '">' + esc(a.label) + '</button>').join('') + '</div>' : '') +
-      '</div>';
-  }).join('') + (data.footer ? '<div class="foot">' + esc(data.footer) + '</div>' : '');
-  root.querySelectorAll(".card").forEach((el) => {
-    const c = cards[Number(el.dataset.n)];
-    if (c.live) lives.push(startLive(c.live, el));
-    let bookUrl = null;
-    el.querySelectorAll("[data-opt]").forEach((b) => b.addEventListener("click", () => {
-      const o = c.options[Number(b.dataset.opt)];
-      bookUrl = o.url;
-      el.querySelectorAll("[data-opt]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      const p = el.querySelector("[data-price]"); if (p) p.textContent = o.price;
-    }));
-    el.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
-      const a = c.actions[Number(b.dataset.act)];
-      open(a.primary && bookUrl ? bookUrl : a.url);
-    }));
-  });
+  root.innerHTML = '<div class="brand"><i></i>Chit' + (data.title ? ' · ' + esc(data.title) : '') + '</div><div data-cards class="stack"></div>' + (data.footer ? '<div class="foot">' + esc(data.footer) + '</div>' : '');
+  const box = root.querySelector("[data-cards]");
+  const redraw = () => { lives.forEach((stop) => stop()); lives = []; drawCards(box, cards, (n, card) => { cards[n] = card; redraw(); }); };
+  redraw();
 }
 
 app.ontoolresult = (r) => render(r && r.structuredContent);

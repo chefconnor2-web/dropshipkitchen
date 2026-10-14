@@ -7,7 +7,12 @@ import { clock, dayShift, durationLabel, flightPrice, ruleLabel, stayPrice, stop
 
 export interface ViewAction {
   label: string;
-  url: string;
+  /** Opens in the customer's browser. */
+  url?: string;
+  /** Instead of a link: sends this as the customer's message to the assistant (e.g. "Cancel booking CS-FL-…"). */
+  message?: string;
+  /** Instead of a link: the view calls this tool and opens the pay link it returns. */
+  tool?: { name: string; args: Record<string, unknown> };
   primary?: boolean;
 }
 
@@ -23,7 +28,11 @@ export interface ViewCard {
   /** Neon's live browser for this chat: the view streams it and lets the customer take over. */
   live?: { chatId: string; session: string; site?: string; runId?: string; stepId?: string; needs?: string };
   /** Fare types (Basic, Standard, Flex…): each one books its own offer. */
-  options?: Array<{ label: string; price: string; detail: string; url: string }>;
+  options?: Array<{ label: string; price: string; detail: string; url: string; offerId?: string }>;
+  /** "Book with my details": the view calls this tool and opens the pay link it returns. */
+  book?: { tool: "book_flight" | "book_hotel"; args: Record<string, string> };
+  /** Cart lines the view can change in place (+, −, remove). */
+  cartLines?: Array<{ id: string; label: string; quantity: number; total: string }>;
   actions: ViewAction[];
 }
 
@@ -61,9 +70,11 @@ export function viewCards(items: ConnectorItem[], chatId?: string): ViewCard[] {
                     price: flightPrice({ priceCents: f.priceCents, currency: it.currency }),
                     detail: [`${f.checkedBags} bag${f.checkedBags === 1 ? "" : "s"}`, ruleLabel(f.changeRule, "changes"), ruleLabel(f.refundRule, "refund")].filter(Boolean).join(" · "),
                     url: withChat(`/flights/book/${encodeURIComponent(f.id)}`, chatId),
+                    offerId: f.id,
                   })),
                 }
               : {}),
+            book: { tool: "book_flight", args: { offer_id: it.id, ...(chatId ? { trip_id: chatId } : {}) } },
             actions: [{ label: "Book", url: book, primary: true }],
           },
         ];
@@ -79,6 +90,7 @@ export function viewCards(items: ConnectorItem[], chatId?: string): ViewCard[] {
             badges: [it.refundable ? "Free cancellation" : it.refundable === false ? "Non-refundable" : null, it.group ?? null].filter((b): b is string => !!b),
             price: stayPrice(it),
             priceNote: `${stayPrice({ priceCents: Math.round(it.priceCents / Math.max(1, it.nights)), currency: it.currency })}/night, taxes included`,
+            book: { tool: "book_hotel", args: { offer_id: it.id, ...(chatId ? { trip_id: chatId } : {}) } },
             actions: [
               { label: "Book", url: withChat(`/hotels/book/${encodeURIComponent(it.id)}`, chatId), primary: true },
               ...(it.address ? [{ label: "Ride there", url: uberLink({ name: it.name, address: it.address, latitude: it.latitude, longitude: it.longitude }) }] : []),

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getMemberId } from "@/lib/session";
 import { connectedApps, mcpUrl } from "@/lib/mcp-auth";
+import { prisma } from "@/lib/db";
 import { disconnectAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,9 @@ export const metadata = { title: "Use Chit in Claude and ChatGPT" };
 export default async function ConnectPage() {
   const me = await getMemberId();
   const apps = me ? await connectedApps(me) : [];
+  // What connected apps did, newest first (one row per tool call).
+  const calls = me ? await prisma.mcpCall.findMany({ where: { customerId: me }, orderBy: { createdAt: "desc" }, take: 30 }) : [];
+  const appNames = new Map((await prisma.mcpClient.findMany({ where: { id: { in: [...new Set(calls.map((c) => c.clientId))] } }, select: { id: true, name: true } })).map((c) => [c.id, c.name]));
   return (
     <div className="wrap page narrow co">
       <p className="eyebrow">Connectors</p>
@@ -52,7 +56,7 @@ export default async function ConnectPage() {
             {apps.map((a) => (
               <li key={a.grantId}>
                 <span>
-                  {a.name} <span className="muted small">· last signed in {a.since.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  {a.name} <span className="muted small">· {a.readOnly ? "read-only" : "full access"} · last signed in {a.since.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
                 </span>
                 <form action={disconnectAction}>
                   <input type="hidden" name="grant" value={a.grantId} />
@@ -63,6 +67,27 @@ export default async function ConnectPage() {
           </ul>
         )}
       </section>
+      {calls.length > 0 && (
+        <section className="co-card">
+          <h2 className="section-title">Recent activity</h2>
+          <ul className="co-people">
+            {calls.map((c) => (
+              <li key={c.id}>
+                <span>
+                  {c.tool.replace(/_/g, " ")} <span className="muted small">· {appNames.get(c.clientId) ?? "an app"}</span>
+                </span>
+                <span className={c.ok ? "muted small" : "small"}>
+                  {c.ok ? "" : "failed · "}
+                  {c.createdAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <p className="muted small">
+        <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link>
+      </p>
       <p>
         <Link href="/">← Back to Neon</Link>
       </p>

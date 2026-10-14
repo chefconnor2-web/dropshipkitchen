@@ -37,18 +37,28 @@ export default async function ConsentPage({ params }: { params: Promise<{ id: st
         </ul>
         <p className="muted small">It can’t pay for anything or see card details. You pay on Chit’s own checkout page, in your browser. Disconnect it any time on the Connect page.</p>
       </div>
-      <div className="co-actions">
-        <form action={consentAction}>
-          <input type="hidden" name="id" value={id} />
-          <input type="hidden" name="allow" value="1" />
-          <button className="btn primary">Allow</button>
-        </form>
-        <form action={consentAction}>
-          <input type="hidden" name="id" value={id} />
-          <input type="hidden" name="allow" value="0" />
-          <button className="btn">Deny</button>
-        </form>
-      </div>
+      <form action={consentAction}>
+        <input type="hidden" name="id" value={id} />
+        <fieldset className="co-card co-access">
+          <legend>Access</legend>
+          <label>
+            <input type="radio" name="access" value="full" defaultChecked /> <b>Full access</b>: it can also book, add to your cart, cancel bookings you confirm, and ask Neon to do things.
+          </label>
+          <label>
+            <input type="radio" name="access" value="read" /> <b>Read-only</b>: it can search and look at your trips, cart and chats, but never buy or change anything.
+          </label>
+        </fieldset>
+        <div className="co-actions">
+          <button className="btn primary" name="allow" value="1">
+            Allow
+          </button>
+        </div>
+      </form>
+      <form action={consentAction} className="co-actions">
+        <input type="hidden" name="id" value={id} />
+        <input type="hidden" name="allow" value="0" />
+        <button className="btn">Deny</button>
+      </form>
     </div>
   );
 }
