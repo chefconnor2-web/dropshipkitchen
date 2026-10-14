@@ -102,6 +102,8 @@ export interface HotelCard {
   freeCancelUntil?: string | null;
   /** Taxes and fees the hotel collects at check-in: not in `priceCents`, in their own currency ×100. */
   payAtHotel?: Array<{ amountCents: number; currency: string; description: string }>;
+  /** Taxes already inside `priceCents` (shown so nobody pays them twice). */
+  taxesIncluded?: { amountCents: number; currency: string } | null;
   checkin: string;
   checkout: string;
   nights: number;

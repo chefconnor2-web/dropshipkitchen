@@ -34,7 +34,7 @@ export function parseCursor(cursor: string): { id: string; offset: number } | nu
 }
 
 export const PRICE_NOTE =
-  "total = the whole stay: room, the taxes and fees charged when booking, and Chit's fee. It does NOT include pay_at_hotel (local taxes or resort fees the hotel collects at check-in, in the hotel's currency). per_night = total ÷ nights.";
+  "total = the whole stay: room, the taxes and fees charged when booking (taxes_in_total shows how much of it is tax), and Chit's fee. It does NOT include pay_at_hotel (local taxes or resort fees the hotel collects at check-in, in the hotel's currency). per_night = total ÷ nights.";
 
 /** Validates the model's search; returns why it's unusable instead of throwing. */
 export function parseHotelSearch(o: Record<string, unknown>, today: string): HotelSearch | string {
@@ -86,6 +86,7 @@ export function describeHotel(c: HotelCard): Record<string, unknown> {
     currency: c.currency.toUpperCase(),
     total: isoPrice(c),
     per_night: isoPrice({ priceCents: Math.round(c.priceCents / Math.max(1, c.nights)), currency: c.currency }),
+    taxes_in_total: c.taxesIncluded ? isoPrice({ priceCents: c.taxesIncluded.amountCents, currency: c.taxesIncluded.currency }) : undefined,
     pay_at_hotel: payAtHotelLabel(c) ?? "none listed",
     nights: c.nights,
   };

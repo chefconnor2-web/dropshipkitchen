@@ -56,6 +56,33 @@ export function payAtHotel(rates: LiteRate[]): NonNullable<HotelCard["payAtHotel
   return [...out.values()];
 }
 
+/** Taxes already inside the total (LiteAPI marks them `included: true`), e.g. GST/PST in Canada. */
+export function taxesInTotal(rates: LiteRate[]): HotelCard["taxesIncluded"] {
+  let cents = 0;
+  let currency = "";
+  for (const r of rates)
+    for (const t of r.retailRate?.taxesAndFees ?? [])
+      if (t.included === true && Number(t.amount) > 0 && t.currency && (!currency || currency === t.currency.toUpperCase())) {
+        cents += Math.round(Number(t.amount) * 100);
+        currency = t.currency.toUpperCase();
+      }
+  return cents > 0 ? { amountCents: cents, currency } : null;
+}
+
+// LiteAPI's catalog over-rates some chain hotels (it sends 4 stars for a Quality Inn). These brands are never
+// above their class anywhere, so their stars are capped: [brand pattern, most stars].
+const BRAND_STARS: Array<[RegExp, number]> = [
+  [/\b(econo lodge|rodeway inn|super 8|motel 6|red roof|days inn|knights inn|travelodge|microtel|americas best value|studio 6|howard johnson)\b/i, 2],
+  [/\b(quality inn|comfort inn|comfort suites|sleep inn|mainstay suites|suburban studios|clarion|best western(?! premier)|holiday inn express|hampton inn|fairfield inn|la quinta|country inn & suites|baymont|wingate|ramada|candlewood suites|tru by hilton|home2 suites|avid hotel)\b/i, 3],
+];
+
+/** The supplier's stars, capped for brands that are never rated higher. */
+export function starsFor(name: string, stars: number | null): number | null {
+  if (stars == null) return null;
+  for (const [brand, most] of BRAND_STARS) if (brand.test(name)) return Math.min(stars, most);
+  return stars;
+}
+
 /** When free cancellation ends: the first moment cancelling costs money ("2026-10-13 16:00 GMT"). */
 export function freeCancelUntil(rate: LiteRate | undefined): string | null {
   if (rate?.cancellationPolicies?.refundableTag !== "RFN") return null;
@@ -89,7 +116,7 @@ export function toCards(q: RatesQuery, data: Array<{ hotelId: string; roomTypes?
       hotelId: h.hotelId,
       name: meta?.name?.trim() || "Hotel",
       photo: meta?.main_photo || meta?.thumbnail || null,
-      stars: Number.isFinite(stars) && stars > 0 ? stars : null,
+      stars: starsFor(meta?.name ?? "", Number.isFinite(stars) && stars > 0 ? stars : null),
       rating: Number.isFinite(rating) && rating > 0 ? rating : null,
       address: meta?.address ?? "",
       city: meta?.city ?? q.cityName,
@@ -100,6 +127,7 @@ export function toCards(q: RatesQuery, data: Array<{ hotelId: string; roomTypes?
       refundable: tag === "RFN" ? true : tag === "NRFN" ? false : null,
       freeCancelUntil: freeCancelUntil(rate),
       payAtHotel: payAtHotel(best.rt.rates ?? []),
+      taxesIncluded: taxesInTotal(best.rt.rates ?? []),
       checkin: q.checkin,
       checkout: q.checkout,
       nights,
