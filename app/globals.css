@@ -2464,3 +2464,15 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 /* Owner decisions on a booking or dispute card (admin). */
 .a-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .a-actions form { margin: 0; }
+
+/* Vetted picks catalogue (/picks) */
+.picks-lede { max-width: 68ch; color: var(--muted, #555); }
+.picks-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+.picks-nav a { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; color: var(--ink); font-size: 14px; }
+.picks-sector { padding-top: 28px; scroll-margin-top: 72px; }
+.picks-sector h2 { margin: 0 0 16px; }
+.picks-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 6px; }
+.picks-tag { font-size: 11px; letter-spacing: 0.02em; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted, #555); }
+.picks-tag.top { background: #e8f5ec; border-color: #b9dfc6; color: #1d6b3a; }
+.picks-tag.warn { background: #fff4e0; border-color: #f0d49a; color: #8a5a00; }
+.picks-why { font-size: 13px; line-height: 1.45; color: var(--muted, #555); margin: 4px 0 8px; }
