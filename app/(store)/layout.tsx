@@ -72,6 +72,9 @@ export default async function StoreLayout({ children }: { children: React.ReactN
                 <Link href="/cart">Your cart</Link>
               </li>
               <li>
+                <Link href="/refunds">Refund policy</Link>
+              </li>
+              <li>
                 <Link href="/track">Track an order</Link>
               </li>
               <li>

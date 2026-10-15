@@ -20,6 +20,7 @@ import { orderViewToken } from "@/lib/session";
 import { bookRate, cancelBooking, LiteapiError, prebook } from "@/lib/liteapi";
 import { hotelFxPct, liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
 import { checkoutExpiry } from "@/lib/margin";
+import { checkoutNote, emailTerms, hotelTerms } from "@/lib/refund-terms";
 import { shortDate, stayPrice, type HotelCard } from "@/lib/flights-shared";
 import { normalizePhone } from "@/lib/flight-booking";
 import { rememberTraveller } from "@/lib/traveller";
@@ -106,7 +107,8 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
       },
     ],
     metadata: { hotelBookingId: booking.id, bookingNumber: booking.number },
-    payment_intent_data: { metadata: { hotelBookingId: booking.id } },
+    payment_intent_data: { metadata: { hotelBookingId: booking.id }, statement_descriptor_suffix: "HOTEL" },
+    custom_text: { submit: { message: checkoutNote(hotelTerms(card)) } },
     success_url: `${config.siteUrl}/hotels/stay/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(card.id)}`,
       expires_at: checkoutExpiry(null, 60),
@@ -181,7 +183,7 @@ async function sendStayEmail(bookingId: string, kind: "confirmation" | "refunded
     kind === "confirmation"
       ? {
           subject: `Booked: ${card.name} · ${shortDate(card.checkin)} – ${shortDate(card.checkout)}`,
-          text: `Your hotel is booked.\n\nConfirmation: ${b.confirmationCode}\nHotel: ${card.name}\n${card.address ? card.address + "\n" : ""}Check-in: ${shortDate(card.checkin)} · Check-out: ${shortDate(card.checkout)} (${card.nights} night${card.nights === 1 ? "" : "s"})\nRoom: ${card.room} · ${card.board}\nLead guest: ${b.firstName} ${b.lastName}\n\nPaid: ${price}${card.refundable === false ? " (non-refundable)" : ""}\n\nYour stay: ${await stayUrl(b)}\n\nShow the confirmation and your ID at the front desk. Some hotels collect a local city tax at check-in.\n\n${config.storeName}`,
+          text: `Your hotel is booked.\n\nConfirmation: ${b.confirmationCode}\nHotel: ${card.name}\n${card.address ? card.address + "\n" : ""}Check-in: ${shortDate(card.checkin)} · Check-out: ${shortDate(card.checkout)} (${card.nights} night${card.nights === 1 ? "" : "s"})\nRoom: ${card.room} · ${card.board}\nLead guest: ${b.firstName} ${b.lastName}\n\nPaid: ${price}${card.refundable === false ? " (non-refundable)" : ""}\n\nYour stay: ${await stayUrl(b)}\n\nShow the confirmation and your ID at the front desk. Some hotels collect a local city tax at check-in.\n\n${emailTerms(hotelTerms(card), await stayUrl(b))}\n\n${config.storeName}`,
         }
       : {
           subject: `We couldn't book your hotel, refunded ${price}`,

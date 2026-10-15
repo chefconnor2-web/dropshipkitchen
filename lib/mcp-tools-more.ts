@@ -27,6 +27,7 @@ import { flightPrice, stayPrice, type FlightCard, type HotelCard } from "@/lib/f
 import { parsePersonalizeConfig } from "@/lib/personalize-shared";
 import { cardLabel, isEmbedded, payBookingWithSavedCard, publishableKey, savedCard } from "@/lib/stripe-customer";
 import { stripe } from "@/lib/stripe";
+import { flightTerms, hotelTerms } from "@/lib/refund-terms";
 
 const isDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
 const abs = (p: string) => (p.startsWith("http") ? p : `${config.siteUrl}${p}`);
@@ -125,7 +126,7 @@ export function registerMoreTools(server: McpServer, who: Who) {
         const route = card ? `${card.slices[0].from} → ${card.slices[card.slices.length - 1].to}` : "Flight";
         return withCards(
           { ok: true, [hold ? "held_url" : "pay_url"]: r.url, price: flightPrice({ priceCents: price, currency: offer.total_currency }), note: hold ? "Held with the airline. Pay before the deadline from that page (or pay_held_flight)." : "The customer pays on this Stripe page in their browser; the ticket is booked straight away and emailed." },
-          [payCard(offer_id, hold ? `Fare held · ${route}` : `Pay for your flight · ${route}`, [hold ? "Held free with the airline. Pay before the deadline." : "Passengers filled in from your saved details."], flightPrice({ priceCents: price, currency: offer.total_currency }), r.url, hold ? "View hold" : "Pay", hold ? undefined : await payOptions(who, r.url, row?.number))],
+          [payCard(offer_id, hold ? `Fare held · ${route}` : `Pay for your flight · ${route}`, [hold ? "Held free with the airline. Pay before the deadline." : "Passengers filled in from your saved details.", ...(card ? [`Refunds: ${flightTerms(card)}`] : [])], flightPrice({ priceCents: price, currency: offer.total_currency }), r.url, hold ? "View hold" : "Pay", hold ? undefined : await payOptions(who, r.url, row?.number))],
         );
       }, embed),
     ),
@@ -155,7 +156,7 @@ export function registerMoreTools(server: McpServer, who: Who) {
         if (!r.url) return txt({ booked: false, problem: r.error, how: "Ask the customer for what's missing, then call book_hotel again." }, true);
         const sid = /(cs_[A-Za-z0-9_]+)/.exec(r.url)?.[1];
         const row = sid ? await prisma.hotelBooking.findUnique({ where: { stripeSessionId: sid }, select: { number: true } }) : null;
-        return withCards({ ok: true, pay_url: r.url, price: stayPrice(card) }, [payCard(card.id, `Pay for your stay · ${card.name}`, [`${card.checkin} → ${card.checkout} · ${card.room}`], stayPrice(card), r.url, "Pay", await payOptions(who, r.url, row?.number))]);
+        return withCards({ ok: true, pay_url: r.url, price: stayPrice(card) }, [payCard(card.id, `Pay for your stay · ${card.name}`, [`${card.checkin} → ${card.checkout} · ${card.room}`, `Refunds: ${hotelTerms(card)}`], stayPrice(card), r.url, "Pay", await payOptions(who, r.url, row?.number))]);
       }, embed),
     ),
   );
@@ -168,7 +169,7 @@ export function registerMoreTools(server: McpServer, who: Who) {
       if (!b) return txt("That booking isn't one of the customer's.", true);
       const r = await asMe(() => payHeldFlight(b.id), embed);
       if (!r.url) return txt(r.error ?? "Couldn't open payment.", true);
-      return withCards({ pay_url: r.url }, [payCard(b.id, `Pay for held fare ${b.number}`, [], flightPrice({ priceCents: b.priceCents, currency: b.currency }), r.url, "Pay", await payOptions(who, r.url, b.number))]);
+      return withCards({ pay_url: r.url }, [payCard(b.id, `Pay for held fare ${b.number}`, [`Refunds: ${flightTerms(JSON.parse(b.cardJson) as FlightCard)}`], flightPrice({ priceCents: b.priceCents, currency: b.currency }), r.url, "Pay", await payOptions(who, r.url, b.number))]);
     }),
   );
 

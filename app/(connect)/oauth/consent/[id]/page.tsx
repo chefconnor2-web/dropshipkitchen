@@ -82,6 +82,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <footer className="cn-foot">
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>
+        <Link href="/refunds">Refunds</Link>
       </footer>
     </main>
   );
