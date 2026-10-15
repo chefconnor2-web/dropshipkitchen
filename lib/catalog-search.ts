@@ -5,19 +5,22 @@ import { listProductsV2 } from "@/lib/cj/client";
 import { parseListV2, suggestTitle } from "@/lib/cj/normalize";
 import { retailCents } from "@/lib/money";
 import { processSingleton } from "@/lib/singleton";
+import { curatedPick, impossibleClaim, picksFirst } from "@/lib/curated";
 
 /** Listings we won't sell: brand names that are almost always counterfeit on wholesale sites, and restricted goods. */
 const BLOCKED =
-  /\b(nike|adidas|gucci|louis\s?vuitton|chanel|rolex|prada|dior|hermes|supreme|yeezy|jordan|balenciaga|versace|fendi|cartier|disney|marvel|pokemon|hello\s?kitty|apple\s?watch|airpods|beats|vape|e-?cig\w*|cigarette|nicotine|tobacco|cbd|thc|weed|cannabis|gun|pistol|rifle|airsoft|ammo|taser|stun\s?gun|pepper\s?spray|brass\s?knuckle|switchblade|sex|sexy|erotic|adult\s?toy|dildo|vibrator|lingerie|drug|pill|medicine|steroid|knockoff|replica)\b/i;
+  /\b(nike|adidas|gucci|louis\s?vuitton|chanel|rolex|prada|dior|hermes|supreme|yeezy|jordan|balenciaga|versace|fendi|cartier|disney|marvel|pokemon|hello\s?kitty|apple\s?watch|airpods|beats|vape|e-?cig\w*|cigarette|nicotine|tobacco|cbd|thc|weed|cannabis|gun|pistol|rifle|airsoft|ammo|taser|stun\s?gun|pepper\s?spray|brass\s?knuckle|switchblade|sex|sexy|erotic|adult\s?toy|dildo|vibrator|lingerie|drug|(?<!(?:blue|black)\s?)pill|medicine|steroid|knockoff|replica)\b/i;
 
 export function blockedListing(name: string): boolean {
-  return BLOCKED.test(name);
+  return BLOCKED.test(name) || impossibleClaim(name);
 }
 
 export interface CatalogHit {
   pid: string;
   title: string;
   fromCents: number;
+  /** Set on curated picks: why our buyer chose it. */
+  pick?: string;
 }
 
 const resultCache = processSingleton("catalog-results", () => new Map<string, { at: number; hits: CatalogHit[]; total: number | null }>());
@@ -41,9 +44,10 @@ export async function searchCatalog(q: string, page: number, from?: string): Pro
       if (imageByPid.size >= MAX_IMAGES) imageByPid.delete(imageByPid.keys().next().value!);
       imageByPid.set(r.pid, r.image);
     }
-    hits.push({ pid: r.pid, title: suggestTitle(r.name), fromCents: retailCents(r.priceCents) });
+    const pick = curatedPick(r.pid);
+    hits.push({ pid: r.pid, title: suggestTitle(r.name), fromCents: retailCents(r.priceCents), ...(pick ? { pick: pick.why } : {}) });
   }
-  const out = { at: Date.now(), hits, total };
+  const out = { at: Date.now(), hits: picksFirst(hits), total };
   resultCache.set(key, out);
   if (resultCache.size > 500) resultCache.delete(resultCache.keys().next().value!);
   return out;

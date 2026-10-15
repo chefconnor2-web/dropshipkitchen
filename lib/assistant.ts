@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { searchCatalog, type CatalogHit } from "@/lib/catalog-search";
+import { SPECIALTY } from "@/lib/curated";
 import { openCjProduct, prewarmProducts } from "@/lib/open-product";
 import { addVariantToCart } from "@/lib/cart-add";
 import { cartBoxPicks, cartShipItems, getShipTo, loadCart } from "@/lib/cart";
@@ -117,7 +118,7 @@ export type AssistantEvent =
   | { type: "react"; emoji: string };
 
 function systemPrompt(): string {
-  return `You are Neon, the lead agent of ${config.storeName}, the shopper's own personal point-of-sale system in a chat (Aurora, the other ${config.storeName} agent, runs the product searches you start; if asked, say so): they text what they need and you find it, price it and get it checked out. Products come from Chinese factories (businesses and makers order almost anything). Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
+  return `You are Neon, the lead agent of ${config.storeName}, the shopper's own personal point-of-sale system in a chat (Aurora, the other ${config.storeName} agent, runs the product searches you start; if asked, say so): they text what they need and you find it, price it and get it checked out. Products come from Chinese factories (businesses and makers order almost anything). ${config.storeName}'s specialty is ${SPECIALTY}: builders come for parts that are actually good, so be the expert in those. Picks marked "vetted" passed our buyer's quality check (realistic specs, named chips and models, real stock); prefer them and say so briefly. For lithium chargers, check the charge voltage matches the pack (54.6V for 13S lithium-ion, 58.4V for 16S LiFePO4); for 18650/21700 cells, real capacities top out around 3,600 and 5,000 mAh. Shoppers describe what they're building or need; you turn that into a concrete parts list, find real products, and add the ones they approve to their cart.
 
 How to work:
 - Think through everything the project needs: the main components, the parts that connect them (wiring, connectors, mounts, fuses), and the tools to do it yourself.
@@ -404,7 +405,7 @@ export interface Part {
 }
 export interface ScoutResult {
   part: string;
-  picks: Array<{ pid: string; title: string; from_price_usd: string; note: string }>;
+  picks: Array<{ pid: string; title: string; from_price_usd: string; note: string; vetted?: string }>;
 }
 
 async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) => void, usage: { in: number; out: number; micros: number }, signal?: AbortSignal): Promise<ScoutResult> {
@@ -426,7 +427,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `Find the best products for this part.\nPart: ${part.name}\nMust have: ${part.need}\nOther queries you can try: ${part.queries.slice(1).join(", ") || "(your own)"}\n\nResults for "${part.queries[0] ?? part.name}":\n${JSON.stringify(first.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2) })))}\n\nIf at least one result fits, call submit_picks now. Only if none fit, search once more with different short keywords, then call submit_picks with the best 1-3 that genuinely fit the need. Skip accessories, parts or mismatched specs.`,
+      content: `Find the best products for this part.\nPart: ${part.name}\nMust have: ${part.need}\nOther queries you can try: ${part.queries.slice(1).join(", ") || "(your own)"}\n\nResults for "${part.queries[0] ?? part.name}":\n${JSON.stringify(first.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2), ...(h.pick ? { vetted: h.pick } : {}) })))}\n\nIf at least one result fits, call submit_picks now. Only if none fit, search once more with different short keywords, then call submit_picks with the best 1-3 that genuinely fit the need. Skip accessories, parts or mismatched specs. Results marked "vetted" passed our buyer's quality check: prefer them when they fit.`,
     },
   ];
 
@@ -460,7 +461,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
         results.push({
           type: "tool_result",
           tool_use_id: c.id,
-          content: hits.length ? JSON.stringify(hits.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2) }))) : "No results.",
+          content: hits.length ? JSON.stringify(hits.map((h) => ({ pid: h.pid, title: h.title, price: (h.fromCents / 100).toFixed(2), ...(h.pick ? { vetted: h.pick } : {}) }))) : "No results.",
         });
       }
     }
@@ -473,7 +474,7 @@ async function scout(client: Anthropic, part: Part, emit: (e: AssistantEvent) =>
     .slice(0, 3);
   const out = chosen.map((p) => {
     const h = seen.get(p.pid)!;
-    return { pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2), note: String(p.note ?? "").slice(0, 200) };
+    return { pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2), note: String(p.note ?? "").slice(0, 200), ...(h.pick ? { vetted: h.pick } : {}) };
   });
   emit({ type: "found", group: part.name, cards: chosen.map((p) => ({ ...seen.get(p.pid)!, group: part.name })), done: true });
   return { part: part.name, picks: out };
