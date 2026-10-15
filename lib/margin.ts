@@ -18,6 +18,12 @@ export function noLossCents(costCents: number, opts: { fixedCostCents?: number; 
   return Math.ceil((costCents * (1 + (opts.extraPct ?? 0) / 100) + fixed) / (1 - pct / 100));
 }
 
+/** Stripe's fee on a charge in the worst case (an international card). */
+export function worstCardFeeCents(chargeCents: number): number {
+  const pct = Math.min(20, num(process.env.CARD_WORST_PCT, 4.4));
+  return Math.ceil((chargeCents * pct) / 100) + num(process.env.CARD_FIXED_CENTS, 30);
+}
+
 /**
  * When a checkout stops being payable (Stripe's expires_at, unix seconds): just before the price it shows stops
  * holding (the airline's offer expiry, a hold's deadline), so nobody pays for a fare we can no longer book at that

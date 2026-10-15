@@ -33,8 +33,12 @@ export function suggestRetailCents(supplierCents: number | null, markup: number)
   return Math.max(raw, 1) * 100 - 1;
 }
 
-/** Store pricing rule: 30% over the supplier cost, but never less than $10 profit per unit. */
-export const MARKUP = 0.3;
+/**
+ * Store pricing rule: 120% over the supplier cost (a $10 item sells for $22.99), never less than $10 profit per
+ * unit. Products ship from overseas and a lost parcel or a dispute costs the whole sale, so each good sale is
+ * priced to pay for a bad one.
+ */
+export const MARKUP = 1.2;
 export const MIN_PROFIT_CENTS = 1000;
 
 /** Retail price for a supplier cost under the store rule, rounded UP to the next .99 so it never drops below the rule. */

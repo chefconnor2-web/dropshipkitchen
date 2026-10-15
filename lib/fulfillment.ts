@@ -7,6 +7,9 @@
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { priceToCents } from "@/lib/money";
+import { worstCardFeeCents } from "@/lib/margin";
+import { stripe } from "@/lib/stripe";
+import { ownerAlert } from "@/lib/owner-alert";
 import { ORDER_STATUS } from "@/lib/orders";
 import { sendOrderEmail } from "@/lib/order-emails";
 import { canShipFrom } from "@/lib/warehouses";
@@ -200,6 +203,60 @@ export async function quoteShipping(orderId: string): Promise<CjFreightOption[]>
   return options;
 }
 
+// ---------- profit check: never pay CJ for an order that would lose money ----------
+
+/** The least a product order must keep after paying CJ and the worst-case card fee (orders priced under the old 30% rule still clear it). */
+export const MIN_KEEP_CENTS = 5_00;
+
+/** What a paid order keeps after CJ's cost and the worst-case card fee. */
+export function orderKeepCents(paidCents: number, cjCostCents: number): number {
+  return paidCents - worstCardFeeCents(paidCents) - cjCostCents;
+}
+
+/** Orders the customer paid for at checkout. Gifts (nothing charged) and subscription boxes (priced by the plan) aren't checked. */
+function soldAtCheckout(o: { stripePaymentIntent: string | null; stripeInvoiceId: string | null }): boolean {
+  return !!o.stripePaymentIntent && !o.stripeInvoiceId;
+}
+
+/** CJ's cost before an order is created: the current cost of each item plus the shipping method chosen. */
+async function estimatedCjCostCents(items: Array<{ supplierVariantId: string; quantity: number; supplierPriceAtOrderCents: number | null }>, freightCents: number): Promise<number> {
+  const svs = await prisma.cjSupplierVariant.findMany({ where: { cjVariantId: { in: items.map((i) => i.supplierVariantId) } }, select: { cjVariantId: true, supplierPriceCents: true } });
+  const now = new Map(svs.map((s) => [s.cjVariantId, s.supplierPriceCents]));
+  return items.reduce((n, i) => n + Math.max(now.get(i.supplierVariantId) ?? 0, i.supplierPriceAtOrderCents ?? 0) * i.quantity, 0) + freightCents;
+}
+
+/**
+ * Refunds the customer in full and closes the order instead of paying CJ at a loss. Nothing is spent with CJ: a CJ
+ * order that was already created stays unpaid, and the owners are told to cancel it in the CJ dashboard.
+ */
+async function refundForLoss(orderId: string, why: string) {
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+  if (order.status === ORDER_STATUS.DECLINED_REFUNDED) return order;
+  const refund = await stripe().refunds.create({ payment_intent: order.stripePaymentIntent! }, { idempotencyKey: `loss-refund-${order.id}` });
+  const updated = await prisma.order.update({
+    where: { id: order.id },
+    data: { status: ORDER_STATUS.DECLINED_REFUNDED, decidedAt: new Date(), stripeRefundId: refund.id, cjError: why, decisionNote: `Refunded automatically: ${why} CJ was not paid.` },
+  });
+  await sendOrderEmail(order.id, "order_refunded");
+  await ownerAlert(
+    "product_loss_refund",
+    `Order ${order.number} refunded: it would have lost money`,
+    `${why}\n\nThe customer was refunded in full and CJ was not paid.${order.cjOrderId ? `\n\nCJ order ${order.cjOrderNumber ?? order.cjOrderId} was created but left unpaid: cancel it in your CJ dashboard.` : ""}`,
+  );
+  return updated;
+}
+
+/** Throws (after refunding) when paying CJ `cjCostCents` would leave less than MIN_KEEP_CENTS. */
+async function guardProfit(order: { id: string; subtotalCents: number; shippingCents: number; stripePaymentIntent: string | null; stripeInvoiceId: string | null }, cjCostCents: number | null, stage: string) {
+  if (!soldAtCheckout(order) || cjCostCents == null) return;
+  const paid = order.subtotalCents + order.shippingCents;
+  const keep = orderKeepCents(paid, cjCostCents);
+  if (keep >= MIN_KEEP_CENTS) return;
+  const why = `${stage} CJ would cost $${(cjCostCents / 100).toFixed(2)} against $${(paid / 100).toFixed(2)} paid, keeping $${(keep / 100).toFixed(2)} after the card fee (the minimum is $${MIN_KEEP_CENTS / 100}).`;
+  await refundForLoss(order.id, why);
+  throw new Error(`Order refunded instead of placed: ${why}`);
+}
+
 /**
  * Creates the CJ order (unpaid), then pays it from the CJ balance. `sandbox` orders never charge.
  * The status moves AWAITING_MERCHANT_APPROVAL → PLACING_SUPPLIER_ORDER atomically first, so a
@@ -212,7 +269,10 @@ export async function placeCjOrder(orderId: string, opts: { logisticName: string
 
   const { order, fromCountry, ship } = await loadOrder(orderId);
   const quote = JSON.parse(order.cjQuoteJson || "[]") as CjFreightOption[];
-  if (!quote.some((q) => q.logisticName === opts.logisticName)) throw new Error("Get a fresh shipping quote and choose one of its methods.");
+  const chosen = quote.find((q) => q.logisticName === opts.logisticName);
+  if (!chosen) throw new Error("Get a fresh shipping quote and choose one of its methods.");
+  if (order.status === ORDER_STATUS.AWAITING_MERCHANT_APPROVAL)
+    await guardProfit(order, await estimatedCjCostCents(order.items, Math.round(Number(chosen.logisticPrice) * 100) || 0), "Before ordering:");
   if (opts.logisticName === SPLIT_METHOD) return placeSplitCjOrder(orderId, opts.sandbox);
 
   const pod = await podPropertiesForItems(order.items);
@@ -283,6 +343,13 @@ export function orderAmountCents(d: { orderAmount?: unknown; actualPayment?: unk
 export async function payCjOrder(orderId: string) {
   const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
   if (order.cjPaidAt) return order;
+  if (order.status === ORDER_STATUS.DECLINED_REFUNDED) throw new Error("This order was refunded; CJ won't be paid for it.");
+  // CJ's own total for the created order(s), checked before any money goes to CJ.
+  const cjCost =
+    order.cjLogisticName === SPLIT_METHOD
+      ? (await prisma.orderParcel.findMany({ where: { orderId, cjOrderId: { not: null } }, select: { cjAmountCents: true } })).reduce<number | null>((n, p) => (n == null || p.cjAmountCents == null ? null : n + p.cjAmountCents), 0)
+      : order.cjAmountCents;
+  await guardProfit(order, cjCost, "CJ's order total:");
   if (order.cjLogisticName === SPLIT_METHOD) return paySplitCjOrder(orderId);
   if (!order.cjShipmentOrderId && !order.cjOrderId) throw new Error("CJ returned no order id to pay. Check the order in your CJ dashboard.");
   if (!order.cjSandbox && supplierMode() !== "live") throw new Error("Paying a real CJ order needs SUPPLIER_MODE=live.");
@@ -419,7 +486,7 @@ async function placeSplitCjOrder(orderId: string, sandbox: boolean) {
         : `Approved. ${placed} real CJ parcel orders were created.`,
     },
   });
-  return paySplitCjOrder(order.id);
+  return payCjOrder(order.id);
 }
 
 async function paySplitCjOrder(orderId: string) {

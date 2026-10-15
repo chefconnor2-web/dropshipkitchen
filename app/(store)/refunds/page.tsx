@@ -60,6 +60,25 @@ export default function RefundsPage() {
         </li>
       </ul>
 
+      <h2>Products</h2>
+      <ul>
+        <li>
+          <b>If we can&rsquo;t fulfil your order</b> (out of stock, or the supplier&rsquo;s price changed): you get every cent back, automatically.
+        </li>
+        <li>
+          <b>Shipping:</b> most products ship from overseas warehouses and take about 10&ndash;20 business days (the estimate is shown before you pay). Every parcel is tracked.
+        </li>
+        <li>
+          <b>Lost or arrived damaged:</b> email us within 14 days of the expected delivery date (with a photo if it&rsquo;s damaged). We send a replacement, or refund you if a replacement isn&rsquo;t possible.
+        </li>
+        <li>
+          <b>No change-of-mind returns.</b> Personalized items can&rsquo;t be returned, so check the preview before you order.
+        </li>
+        <li>
+          <b>Import duties and taxes</b> charged by your country on delivery are paid by you.
+        </li>
+      </ul>
+
       <h2>Plans</h2>
       <ul>
         <li>Plans renew monthly until you cancel. Cancel any time in billing; you keep access until the end of the month you&rsquo;ve paid for.</li>

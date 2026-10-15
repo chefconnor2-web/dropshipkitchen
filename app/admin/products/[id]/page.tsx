@@ -215,7 +215,7 @@ export default async function EditProduct({
                 </td>
                 <td>
                   <span className="strong">{formatMoney(v.priceCents)}</span>
-                  <div className="muted small">auto: +30%, min $10</div>
+                  <div className="muted small">auto: +120%, min $10</div>
                 </td>
                 <td>
                   <code>{v.offer?.supplierVariantId ?? "UNMAPPED"}</code>
