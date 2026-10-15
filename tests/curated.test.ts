@@ -11,6 +11,8 @@ test("impossible claims are caught", () => {
   assert.ok(impossibleClaim("15,000,000 LM Flashlight Tactical"));
   assert.ok(blockedListing("2PCS Brightest 9900000LM Headlamp"));
   assert.ok(blockedListing("Diet pill fast slimming"));
+  assert.ok(impossibleClaim("48v 29Ah 18650 Li-Ion Battery Pack 13S3P"));
+  assert.ok(impossibleClaim("48v Lithium Ion Battery 20Ah 1000W 13S3P 18650"));
 });
 
 test("honest listings pass", () => {
@@ -20,6 +22,8 @@ test("honest listings pass", () => {
     "EVE LF280K LiFePO4 280Ah prismatic cell",
     "Rechargeable Headlamp 1200 Lumen",
     "Power bank 20000mAh 65W",
+    "48V 30Ah 21700 13S6P pack",
+    "48V 10.4Ah 18650 13S4P e-bike battery",
     "72V 3000W Electric Bike Conversion Kit Rear Drive",
     "DS3225 25kg Metal Gear High Torque Waterproof Digital Servo",
     "STM32F103C8T6 Minimum System Board Blue Pill",
