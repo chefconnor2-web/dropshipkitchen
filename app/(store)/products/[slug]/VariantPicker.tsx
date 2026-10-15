@@ -76,7 +76,7 @@ export default function VariantPicker({
     <>
     <form action={action} className="picker">
       <div className="price">{match ? money(match.priceCents) : "—"}</div>
-      <div className="vol-tiers small">{bulkPricingLabel()}</div>
+      {bulkPricingLabel() && <div className="vol-tiers small">{bulkPricingLabel()}</div>}
       {match && optionNames.length === 0 && variants.length > 1 && <div className="muted small">{match.name}</div>}
       {optionNames
         .filter((name) => values[name].length > 1)

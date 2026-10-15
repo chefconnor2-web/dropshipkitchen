@@ -1,5 +1,5 @@
-// Bulk pricing for the whole transaction. Small orders pay list price (30% over cost, at least $10 profit
-// per unit). Bigger orders are priced as one deal: the markup steps down as the order's cost grows and as
+// Bulk pricing for the whole transaction. It's off unless BULK_DISCOUNTS=on: every order pays list price
+// (120% over cost, at least $10 profit per unit), so each sale covers a lost parcel or a dispute. When on, bigger orders are priced as one deal: the markup steps down as the order's cost grows and as
 // a line's quantity grows, and the whole order only has to clear a minimum profit, not $10 per unit.
 // Order prices can only be lower than list, never higher. Tune the numbers here.
 
@@ -43,6 +43,10 @@ export function orderMarkup(costCents: number): number {
   return ORDER_TIERS.find((t) => costCents >= t.minCostCents)!.markup;
 }
 
+export function bulkDiscountsOn(): boolean {
+  return (process.env.BULK_DISCOUNTS ?? "").trim().toLowerCase() === "on";
+}
+
 /** Prices a whole cart/order. Lines without a known supplier cost always pay list price. */
 export function priceOrder(lines: PriceLine[]): PricedOrder {
   const listTotalCents = lines.reduce((n, l) => n + l.listCents * l.quantity, 0);
@@ -50,7 +54,7 @@ export function priceOrder(lines: PriceLine[]): PricedOrder {
   const costTotal = costed.reduce((n, l) => n + l.costCents! * l.quantity, 0);
   const units = costed.reduce((n, l) => n + l.quantity, 0);
   const atList: PricedOrder = { unitCents: lines.map((l) => l.listCents), listTotalCents, totalCents: listTotalCents, savingsCents: 0, markup: null };
-  if (!costed.length || (costTotal < BULK_MIN_COST_CENTS && units < BULK_MIN_UNITS)) return atList;
+  if (!bulkDiscountsOn() || !costed.length || (costTotal < BULK_MIN_COST_CENTS && units < BULK_MIN_UNITS)) return atList;
 
   const markup = orderMarkup(costTotal);
   const unitCents = lines.map((l) => {
@@ -79,8 +83,9 @@ export function priceOrder(lines: PriceLine[]): PricedOrder {
   return { unitCents, listTotalCents, totalCents, savingsCents: listTotalCents - totalCents, markup };
 }
 
-/** One line for product pages and the assistant. */
-export function bulkPricingLabel(): string {
+/** One line for product pages and the assistant, or null when bulk discounts are off. */
+export function bulkPricingLabel(): string | null {
+  if (!bulkDiscountsOn()) return null;
   return `Bulk pricing: orders of ${BULK_MIN_UNITS}+ units or $${BULK_MIN_COST_CENTS / 100}+ get lower margins automatically, down to ${Math.round(
     ORDER_TIERS[0].markup * 100,
   )}% on the biggest orders`;
