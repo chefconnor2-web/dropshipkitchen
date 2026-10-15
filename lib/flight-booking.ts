@@ -15,6 +15,7 @@ import { stripe } from "@/lib/stripe";
 import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
+import { checkoutExpiry, flight3ds } from "@/lib/margin";
 import { confirmOrderCancellation, createHoldOrder, createOrder, DuffelError, getOffer, getOrder, payOrder, quoteOrderCancellation, type DuffelOffer, type DuffelOrderCancellation, type DuffelOrderPassenger } from "@/lib/duffel";
 import { priceWithFee, toCard } from "@/lib/flights";
 import { checkoutWithFlexPay, flexPayTypes } from "@/lib/flex-pay";
@@ -228,6 +229,8 @@ export async function startFlightCheckout(input: BookInput): Promise<StartResult
     payment_intent_data: { metadata: { flightBookingId: booking.id } },
     success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
+    expires_at: checkoutExpiry(offer.expires_at),
+    ...(flight3ds() ? { payment_method_options: flight3ds() } : {}),
   }, flexPayTypes(price, Math.round(Number(offer.total_amount) * 100), offer.total_currency), input.customerId);
   await prisma.flightBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   await rememberTraveller(input.customerId, { firstName: passengers[0]?.given_name ?? "", lastName: passengers[0]?.family_name ?? "", phone, email });
@@ -311,6 +314,8 @@ export async function payHeldFlight(bookingId: string): Promise<StartResult> {
       payment_intent_data: { metadata: { flightBookingId: b.id } },
       success_url: `${config.siteUrl}/flights/trip/${b.number}?s={CHECKOUT_SESSION_ID}`,
       cancel_url: await tripUrl(b),
+      expires_at: checkoutExpiry(order.payment_status?.price_guarantee_expires_at ?? order.payment_status?.payment_required_by ?? b.holdUntil),
+      ...(flight3ds() ? { payment_method_options: flight3ds() } : {}),
     },
     flexPayTypes(price, Math.round(Number(order.total_amount) * 100), order.total_currency),
     b.customerId,
@@ -355,7 +360,10 @@ export async function completeFlightBooking(session: Pick<Stripe.Checkout.Sessio
     return booked;
   } catch (e) {
     // Duffel said no (4xx): nothing was booked, refund. Anything else (timeout, 5xx): it may have been booked.
-    if (e instanceof DuffelError && e.status >= 400 && e.status < 500) return refund(b.id, `The airline couldn't confirm the booking: ${e.message}`);
+    if (e instanceof DuffelError && e.status >= 400 && e.status < 500) {
+      await balanceAlert(b.number, e);
+      return refund(b.id, `The airline couldn't confirm the booking: ${e.message}`);
+    }
     const message = `Duffel didn't confirm in time (${e instanceof Error ? e.message : e}). Check the Duffel dashboard for booking ${b.number} before refunding.`;
     const r = await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.NEEDS_REVIEW, error: message } });
     await merchantAlert(r.number, message);
@@ -380,7 +388,10 @@ async function payHeldOrder(b: { id: string; number: string; duffelOrderId: stri
     await sendFlightEmail(booked.id, "confirmation");
     return booked;
   } catch (e) {
-    if (e instanceof DuffelError && e.status >= 400 && e.status < 500) return refund(b.id, `The airline couldn't take payment for the hold: ${e.message}`);
+    if (e instanceof DuffelError && e.status >= 400 && e.status < 500) {
+      await balanceAlert(b.number, e);
+      return refund(b.id, `The airline couldn't take payment for the hold: ${e.message}`);
+    }
     const message = `Duffel didn't confirm payment of hold ${b.duffelOrderId} in time (${e instanceof Error ? e.message : e}). Check the Duffel dashboard for booking ${b.number} before refunding.`;
     const r = await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.NEEDS_REVIEW, error: message } });
     await merchantAlert(r.number, message);
@@ -455,6 +466,12 @@ ${config.storeName}`,
           text: `Sorry, we couldn't book your flight ${routeLabel(card)}.\n\n${b.error ?? ""}\n\nYour payment of ${price} has been refunded in full to your card (it can take 5-10 days to appear).\n\nAsk the assistant to search again for current fares: ${config.siteUrl}\n\n${config.storeName}`,
         };
   await sendEmail({ to: b.email, kind: `flight_${kind}`, subject: m.subject, text: m.text, html: `<pre style="font:15px/1.5 -apple-system,Segoe UI,sans-serif;white-space:pre-wrap">${esc(m.text)}</pre>` });
+}
+
+/** Duffel refused because our balance can't cover the ticket: every flight sale fails until it's topped up. */
+async function balanceAlert(number: string, e: DuffelError) {
+  if (!/balance|insufficient|funds/i.test(e.message)) return;
+  await merchantAlert(number, `Top up the Duffel balance now: Duffel refused ${number} for lack of funds (${e.message}). The customer was refunded; every flight sale will fail the same way until the balance is topped up.`);
 }
 
 async function merchantAlert(number: string, message: string) {

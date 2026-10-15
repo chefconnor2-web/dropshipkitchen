@@ -44,14 +44,14 @@ test("durations from Duffel's ISO format", () => {
 
 test("an offer becomes a card", () => {
   const c = toCard(offer("off_1", "812.40", [seg("YVR", "HND", "2026-11-03T13:05:00", "2026-11-04T15:35:00")], "PT10H30M"), fee);
-  assert.equal(c.priceCents, 852_00);
+  assert.equal(c.priceCents, 854_00); // $812.40 + 3% + $15 = $852, lifted to the no-loss floor (Duffel fee + worst-case card fees)
   assert.equal(c.slices[0].stops, 0);
   assert.equal(stopsLabel(c.slices[0]), "Nonstop");
   assert.equal(dayShift(c.slices[0].depart, c.slices[0].arrive), "+1");
   assert.equal(c.checkedBags, 1);
   assert.equal(c.refundable, false);
   assert.equal(c.changeable, true);
-  assert.equal(flightPrice(c), "$852");
+  assert.equal(flightPrice(c), "$854");
   const d = describeCard(c);
   assert.deepEqual(d.flights, ["YVR 13:05 → HND 15:35+1 (2026-11-03), 10h 30m, Nonstop"]);
 });

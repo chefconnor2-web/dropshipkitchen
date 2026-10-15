@@ -4,6 +4,11 @@ import assert from "node:assert/strict";
 import { groupFares, keep, rank, toCard } from "../lib/flights";
 import { describe as describeCard, parseSearch } from "../lib/connectors/duffel";
 import { ruleLabel } from "../lib/flights-shared";
+
+// These tests are about fare grouping, not pricing: no cost floor, so prices are the fares themselves.
+process.env.CARD_WORST_PCT = "0";
+process.env.CARD_FIXED_CENTS = "0";
+process.env.DUFFEL_ORDER_FEE_CENTS = "0";
 import type { DuffelOffer } from "../lib/duffel";
 
 const seg = (dep: string, arr: string, checked: number, num = "101") => ({

@@ -90,6 +90,9 @@ export async function payBookingWithSavedCard(kind: "flight" | "hotel", bookingI
       if (!expired) return { ok: false, error: "Payment is in progress on the checkout page. Finish it there." };
     }
   }
+  // Charge only what we can still book at that price: a refund afterwards would cost us Stripe's fee.
+  const stale = await stillBookable(kind, b);
+  if (stale) return { ok: false, error: stale };
   const metaKey = kind === "flight" ? "flightBookingId" : "hotelBookingId";
   let pi: Stripe.PaymentIntent;
   try {
@@ -118,6 +121,25 @@ export async function payBookingWithSavedCard(kind: "flight" | "hotel", bookingI
   if (kind === "flight") await (await import("@/lib/flight-booking")).completeFlightBooking(done);
   else await (await import("@/lib/hotel-booking")).completeHotelBooking(done);
   return { ok: true };
+}
+
+/** Why a booking can't be paid for now (its fare or room price no longer holds), or null when it can. */
+async function stillBookable(kind: "flight" | "hotel", b: { createdAt: Date } & Record<string, unknown>): Promise<string | null> {
+  if (kind === "hotel") return Date.now() - b.createdAt.getTime() > 60 * 60_000 ? "The hotel's price hold has ended. Search again for today's price." : null;
+  const { getOffer, getOrder } = await import("@/lib/duffel");
+  const paid = Number(b.duffelAmount);
+  try {
+    if (b.duffelOrderId) {
+      const o = await getOrder(String(b.duffelOrderId));
+      if (o.payment_status && !o.payment_status.awaiting_payment) return "The airline no longer holds this fare. Search again.";
+      return o.total_currency !== b.currency || Number(o.total_amount) > paid + 0.005 ? "The airline changed the price of this held fare. Open the pay link to see today's price." : null;
+    }
+    const offer = await getOffer(String(b.offerId));
+    if (Date.parse(offer.expires_at) < Date.now() + 60_000) return "This fare has expired. Search again for current prices.";
+    return offer.total_currency !== b.currency || Number(offer.total_amount) > paid + 0.005 ? "The airline changed this fare. Search again for today's price." : null;
+  } catch {
+    return "We couldn't re-check the fare with the airline just now. Try again in a minute, or use the pay link.";
+  }
 }
 
 /** Stripe's embedded checkout (called "embedded_page" since the 2026 API; "embedded" before). */

@@ -18,7 +18,8 @@ import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
 import { bookRate, cancelBooking, LiteapiError, prebook } from "@/lib/liteapi";
-import { liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
+import { hotelFxPct, liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
+import { checkoutExpiry } from "@/lib/margin";
 import { shortDate, stayPrice, type HotelCard } from "@/lib/flights-shared";
 import { normalizePhone } from "@/lib/flight-booking";
 import { rememberTraveller } from "@/lib/traveller";
@@ -71,7 +72,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
     return { error: e instanceof LiteapiError && e.status && e.status < 500 ? "This room is no longer available at that price. Go back to the chat and search again." : "We couldn't reach the hotel just now. Please try again in a minute." };
   }
   if (held.currency && held.currency !== card.currency) return { error: "The hotel changed the price currency. Go back to the chat and search again." };
-  const price = stayWithFee(held.price);
+  const price = stayWithFee(held.price, undefined, held.currency || card.currency);
   // Never charge more than the shopper saw without asking again.
   if (price > input.shownCents) return { newPriceCents: price, error: `The hotel changed this stay to ${stayPrice({ priceCents: price, currency: card.currency })}. Check the details and book again.` };
 
@@ -108,7 +109,8 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
     payment_intent_data: { metadata: { hotelBookingId: booking.id } },
     success_url: `${config.siteUrl}/hotels/stay/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/hotels/book/${encodeURIComponent(card.id)}`,
-  }, flexPayTypes(price, Math.round(Number(held.price) * 100), card.currency), input.customerId);
+      expires_at: checkoutExpiry(null, 60),
+  }, flexPayTypes(price, Math.round(Number(held.price) * 100 * (1 + hotelFxPct(card.currency) / 100)), card.currency), input.customerId);
   await prisma.hotelBooking.update({ where: { id: booking.id }, data: { stripeSessionId: session.id } });
   await rememberTraveller(input.customerId, { firstName, lastName, phone, email });
   return { url: checkoutUrl(session) };
@@ -127,10 +129,13 @@ export async function completeHotelBooking(session: Pick<Stripe.Checkout.Session
   const b = await prisma.hotelBooking.findUniqueOrThrow({ where: { id } });
   try {
     const r = await bookRate(b.prebookId, { firstName: b.firstName, lastName: b.lastName, email: b.email }, b.number);
-    // The account card pays LiteAPI's price for the hold: it must not be more than the shopper paid for.
+    // The account card pays LiteAPI's price for the hold: it must not be more than the shopper paid for. If it
+    // is, undo the booking and refund rather than pay the difference; only if LiteAPI won't cancel, flag it.
     if (r.price != null && Number(r.price) > Number(b.liteAmount) + 0.005) {
-      const message = `LiteAPI booked ${r.bookingId} at ${r.currency ?? b.currency} ${r.price}, above the held ${b.liteAmount}. Check it in the LiteAPI dashboard.`;
-      await merchantAlert(b.number, message);
+      const over = `LiteAPI booked ${r.bookingId} at ${r.currency ?? b.currency} ${r.price}, above the held ${b.liteAmount}`;
+      const undone = await cancelBooking(r.bookingId).then((c) => /cancel/i.test(c.status ?? "")).catch(() => false);
+      if (undone) return refund(b.id, `The hotel's price went up before we could confirm (${over}), so we cancelled it.`);
+      await merchantAlert(b.number, `${over}, and cancelling it failed. Check it in the LiteAPI dashboard.`);
     }
     const booked = await prisma.hotelBooking.update({
       where: { id: b.id },

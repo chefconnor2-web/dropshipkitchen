@@ -12,9 +12,14 @@ import { isoPrice, payAtHotelLabel, uberLink, type HotelCard } from "../lib/flig
 const q = { cityName: "Tokyo", countryCode: "JP", checkin: "2030-05-01", checkout: "2030-05-04", adults: 2, childAges: [], currency: "USD", guestNationality: "US" };
 const room = (offerId: string, amount: number, tag = "RFN") => ({ offerId, offerRetailRate: { amount, currency: "USD" }, rates: [{ name: "Double Room", boardName: "Breakfast", cancellationPolicies: { refundableTag: tag } }] });
 
-test("stayWithFee adds $5 + 3% and rounds up to a whole dollar", () => {
-  assert.equal(stayWithFee(300), 31_400); // 300 × 1.03 + 5 = 314
-  assert.equal(stayWithFee(99.99, { fixedCents: 0, pct: 0 }), 10_000);
+test("stayWithFee adds $5 + 3%, never below cost, rounded up to a whole dollar", () => {
+  assert.equal(stayWithFee(100), 10_800); // 100 × 1.03 + 5 = 108
+  assert.equal(stayWithFee(300), 31_500); // 314 would lose money on an international card (4.4% + 30¢): floor 314.13 → 315
+  assert.equal(stayWithFee(1000), 104_700); // 1035 → floor (1000 + 0.30) / 0.956 = 1046.34 → 1047
+  assert.equal(stayWithFee(100, undefined, "CAD"), 10_900); // another currency: 3% conversion on our card lifts 108 to the floor (103 + 0.30) / 0.956 = 108.05 → 109
+  assert.equal(stayWithFee(1000, undefined, "CAD"), 107_800); // a big one: floor allows 3% conversion on our card: (1030 + 0.30) / 0.956 → 1078
+  assert.equal(stayWithFee(1000, undefined, "USD"), 104_700); // billed in the same currency: no conversion
+  assert.equal(stayWithFee(99.99, { fixedCents: 0, pct: 0 }), 10_500); // even with no fee set, never below cost: (99.99 + 0.30) / 0.956 → 105
 });
 
 test("toCards keeps each hotel's cheapest room, cheapest hotel first, with names and refundability", () => {
@@ -160,7 +165,7 @@ test("pay-at-hotel taxes are kept apart from the total, and the free-cancellatio
   assert.equal(freeCancelUntil({ cancellationPolicies: { refundableTag: "NRFN", cancelPolicyInfos: rfn.cancellationPolicies.cancelPolicyInfos } }), null);
   const [card] = toCards({ ...q, currency: "CAD" }, [{ hotelId: "h1", roomTypes: [{ offerId: "o1", offerRetailRate: { amount: 200, currency: "CAD" }, rates: [{ ...rates[0], ...rfn }] }] }], [{ id: "h1", name: "Quality Inn & Suites" }]);
   assert.equal(card.freeCancelUntil, "2030-10-14 16:00 GMT");
-  assert.equal(card.priceCents, stayWithFee(200)); // the CAD 49 is not in the total
+  assert.equal(card.priceCents, stayWithFee(200, undefined, "CAD")); // the CAD 49 is not in the total
   const d = describeHotel(card);
   assert.equal(d.currency, "CAD");
   assert.match(String(d.total), /^CAD \d/);
@@ -194,7 +199,7 @@ test("stars are capped for brands LiteAPI over-rates, and included taxes are sho
   assert.deepEqual(taxesInTotal(rates), { amountCents: 49_51, currency: "CAD" });
   const [card] = toCards({ ...q, currency: "CAD" }, [{ hotelId: "lp1fd31", roomTypes: [{ offerId: "o", rates }] }], [{ id: "lp1fd31", name: "Quality Inn & Suites", stars: 4 }]);
   assert.equal(card.stars, 3);
-  assert.equal(card.priceCents, stayWithFee(320.04));
+  assert.equal(card.priceCents, stayWithFee(320.04, undefined, "CAD"));
   assert.deepEqual(card.payAtHotel, []);
   assert.equal(describeHotel(card).taxes_in_total, "CAD 49.51");
 });
