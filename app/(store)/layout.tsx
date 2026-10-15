@@ -24,6 +24,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
           </Link>
           <nav className="header-nav" aria-label="Main">
             <Link href="/">Assistant</Link>
+            <Link href="/picks">Picks</Link>
             <Link href="/plans">Plans</Link>
           </nav>
           <Link href="/account" className="search-link account-link" aria-label="Your account">
@@ -59,6 +60,9 @@ export default async function StoreLayout({ children }: { children: React.ReactN
             <ul className="footer-links">
               <li>
                 <Link href="/">Chat to buy</Link>
+              </li>
+              <li>
+                <Link href="/picks">Vetted picks</Link>
               </li>
               <li>
                 <Link href="/plans">Plans</Link>
