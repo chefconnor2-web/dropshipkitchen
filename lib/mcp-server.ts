@@ -21,6 +21,7 @@ import { acting } from "@/lib/acting";
 import { assistantConfigured, catalogTool } from "@/lib/assistant";
 import { getCartId, getOrCreateCartId, loadCart } from "@/lib/cart";
 import { searchCatalog } from "@/lib/catalog-search";
+import { picksFor, SECTORS, SPECIALTY, type Sector } from "@/lib/curated";
 import { acceptRun, getRun, resumeRun } from "@/lib/runs";
 import { isActive } from "@/lib/run-shared";
 import { aiAllowance, limitMessage } from "@/lib/membership";
@@ -366,7 +367,25 @@ export function chitMcpServer(who: Who): McpServer {
     },
     guarded(who, "search_products", async ({ query, from_canada, page }) => {
       const { hits, total } = await searchCatalog(query, page, from_canada ? "CA" : undefined);
-      return txt({ total, products: hits.slice(0, 15).map((h) => ({ pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2) })), next: "Call get_product with a pid for its options, stock and shipping, then add_to_cart." });
+      return txt({ total, products: hits.slice(0, 15).map((h) => ({ pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2), ...(h.pick ? { vetted: h.pick } : {}) })), next: "Call get_product with a pid for its options, stock and shipping, then add_to_cart. Products marked vetted passed Chit's quality check." });
+    }),
+  );
+
+  server.registerTool(
+    "vetted_picks",
+    {
+      title: "Vetted picks",
+      description: `Chit's hand-checked products in its specialty (${SPECIALTY}): each one passed a quality check for realistic specs, named chips and models, and real stock. Optionally one sector. Returns pid, name and why it was picked; call get_product for live price, stock and shipping.`,
+      inputSchema: { sector: z.enum(Object.keys(SECTORS) as [Sector, ...Sector[]]).optional().describe(Object.entries(SECTORS).map(([k, v]) => `${k}: ${v}`).join("; ")) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    guarded(who, "vetted_picks", async ({ sector }) => {
+      const picks = picksFor(sector);
+      return txt({
+        sectors: SECTORS,
+        picks: picks.map((p) => ({ pid: p.pid, sector: p.sector, category: p.category, name: p.name, why: p.why, ...(p.verdict === "maybe" ? { note: "Good, with caveats: check the options before adding." } : {}) })),
+        next: "Call get_product with a pid for its live price, stock and whether it ships to the customer.",
+      });
     }),
   );
 
