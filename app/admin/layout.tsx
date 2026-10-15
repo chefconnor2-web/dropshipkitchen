@@ -31,6 +31,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   ];
   if (duffelConfigured()) tabs.splice(tabs.length - 1, 0, { href: "/admin/flights", label: "Flights", icon: "M2 16l20-6-20-6 3 6-3 6zm3-6h9" });
   if (liteapiConfigured()) tabs.splice(tabs.length - 1, 0, { href: "/admin/hotels", label: "Hotels", icon: "M3 20V6h8v4h10v10M3 14h18M7 10h.01" });
+  if (duffelConfigured() || liteapiConfigured()) tabs.splice(tabs.length - 1, 0, { href: "/admin/disputes", label: "Disputes", icon: "M12 3l9 4v5c0 5-4 8-9 9-5-1-9-4-9-9V7l9-4zm0 6v4m0 3h.01" });
   return (
     <div className="admin">
       <header className="admin-top">

@@ -81,6 +81,8 @@ export async function payBookingWithSavedCard(kind: "flight" | "hotel", bookingI
   const customer = await stripeCustomerFor(customerId);
   const b = kind === "flight" ? await prisma.flightBooking.findUnique({ where: { id: bookingId } }) : await prisma.hotelBooking.findUnique({ where: { id: bookingId } });
   if (!b || b.status !== "PENDING_PAYMENT") return { ok: false, error: "This booking isn't waiting for payment." };
+  const { BLOCKED_MESSAGE, isBlocked } = await import("@/lib/risk");
+  if (await isBlocked({ customerId, email: b.email, fingerprint: (await stripe().paymentMethods.retrieve(card.id).catch(() => null))?.card?.fingerprint })) return { ok: false, error: BLOCKED_MESSAGE };
   // The open checkout must not be payable too. Paid there already: just finish it.
   if (b.stripeSessionId?.startsWith("cs_")) {
     const s = await stripe().checkout.sessions.retrieve(b.stripeSessionId).catch(() => null);

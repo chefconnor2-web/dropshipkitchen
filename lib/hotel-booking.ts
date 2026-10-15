@@ -20,6 +20,8 @@ import { orderViewToken } from "@/lib/session";
 import { bookRate, cancelBooking, LiteapiError, prebook } from "@/lib/liteapi";
 import { hotelFxPct, liteOfferId, offerCard, stayWithFee } from "@/lib/hotels";
 import { checkoutExpiry } from "@/lib/margin";
+import { customerNotice, ownerAlert } from "@/lib/owner-alert";
+import { BLOCKED_MESSAGE, checkPaidBooking, isBlocked, openDispute, RISK_HOLD } from "@/lib/risk";
 import { checkoutNote, emailTerms, hotelTerms } from "@/lib/refund-terms";
 import { shortDate, stayPrice, type HotelCard } from "@/lib/flights-shared";
 import { normalizePhone } from "@/lib/flight-booking";
@@ -64,6 +66,7 @@ export async function startHotelCheckout(input: { offerId: string; shownCents: n
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return { error: "Enter a valid email for the confirmation." };
   const phone = normalizePhone(String(input.form.get("phone") ?? ""));
   if (!phone) return { error: "Enter a phone number with country code (the hotel may need to reach you)." };
+  if (await isBlocked({ customerId: input.customerId, email })) return { error: BLOCKED_MESSAGE };
 
   let held;
   try {
@@ -129,6 +132,42 @@ export async function completeHotelBooking(session: Pick<Stripe.Checkout.Session
   });
   if (locked.count === 0) return prisma.hotelBooking.findUnique({ where: { id } });
   const b = await prisma.hotelBooking.findUniqueOrThrow({ where: { id } });
+  // Before we pay the hotel: refuse anyone who disputed before, hold a payment that looks like a stolen card.
+  const risk = await checkPaidBooking(intent, [`${b.firstName} ${b.lastName}`], { customerId: b.customerId, email: b.email });
+  if (risk.action === "refuse") return refund(b.id, BLOCKED_MESSAGE);
+  if (risk.action === "hold") return holdForOwner(b, risk.reason);
+  return bookPaid(b);
+}
+
+async function holdForOwner(b: { id: string; number: string; email: string; cardJson: string; priceCents: number; currency: string }, reason: string) {
+  const r = await prisma.hotelBooking.update({ where: { id: b.id }, data: { status: HOTEL_STATUS.NEEDS_REVIEW, error: RISK_HOLD + reason } });
+  const card = JSON.parse(b.cardJson) as HotelCard;
+  const price = stayPrice({ priceCents: b.priceCents, currency: b.currency });
+  await ownerAlert(
+    "hotel_risk_hold",
+    `Approve or decline hotel ${b.number} (${price})`,
+    `A paid hotel stay is waiting for your OK before we book it.\n\n${stayLabel(card)} · ${price} · ${b.email}\nWhy: ${reason}\n\nApprove to book it, or decline to refund the customer in full: ${config.siteUrl}/admin/hotels\n\nDecide soon: the hotel's price hold can expire (if it does, approving refunds the customer automatically).`,
+  );
+  await customerNotice(b.email, "hotel_checking", `We're confirming your stay at ${card.name}`, `Thanks, your payment went through. We're doing a quick check before we confirm your room; you'll get your confirmation, or a full refund, by email shortly.\n\n${config.storeName}`);
+  return r;
+}
+
+/** The owner approved a held stay: book it now. */
+export async function approveHeldStay(bookingId: string) {
+  const locked = await prisma.hotelBooking.updateMany({ where: { id: bookingId, status: HOTEL_STATUS.NEEDS_REVIEW, error: { startsWith: RISK_HOLD } }, data: { status: HOTEL_STATUS.BOOKING, error: null } });
+  if (!locked.count) return { error: "This booking isn't waiting for approval." };
+  return bookPaid(await prisma.hotelBooking.findUniqueOrThrow({ where: { id: bookingId } }));
+}
+
+/** The owner declined a held stay: refund the customer in full; nothing is booked with the hotel. */
+export async function declineHeldStay(bookingId: string) {
+  const locked = await prisma.hotelBooking.updateMany({ where: { id: bookingId, status: HOTEL_STATUS.NEEDS_REVIEW, error: { startsWith: RISK_HOLD } }, data: { status: HOTEL_STATUS.BOOKING } });
+  if (!locked.count) return { error: "This booking isn't waiting for approval." };
+  return refund(bookingId, "We couldn't confirm this payment, so we didn't book the stay.");
+}
+
+/** Books a paid stay (status BOOKING) with LiteAPI. */
+async function bookPaid(b: Awaited<ReturnType<typeof prisma.hotelBooking.findUniqueOrThrow>>) {
   try {
     const r = await bookRate(b.prebookId, { firstName: b.firstName, lastName: b.lastName, email: b.email }, b.number);
     // The account card pays LiteAPI's price for the hold: it must not be more than the shopper paid for. If it
@@ -193,9 +232,7 @@ async function sendStayEmail(bookingId: string, kind: "confirmation" | "refunded
 }
 
 async function merchantAlert(number: string, message: string) {
-  if (!config.email.storeEmail) return;
-  const text = `Hotel booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/hotels`;
-  await sendEmail({ to: config.email.storeEmail, kind: "hotel_needs_review", subject: `Hotel booking ${number} needs review`, text, html: `<pre>${esc(text)}</pre>` });
+  await ownerAlert("hotel_needs_review", `Hotel booking ${number} needs review`, `Hotel booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/hotels`);
 }
 
 // ---------- cancelling ----------
@@ -208,10 +245,13 @@ export function canCancelStay(b: { status: string }, card: Pick<HotelCard, "chec
   return b.status === HOTEL_STATUS.BOOKED && card.refundable !== false && card.checkin > today;
 }
 
-export async function cancelStay(bookingId: string): Promise<{ ok: true; refundCents: number } | { error: string }> {
+export async function cancelStay(bookingId: string, opts: { disputed?: boolean } = {}): Promise<{ ok: true; refundCents: number } | { error: string }> {
   const b = await prisma.hotelBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  // While a dispute is open the bank already holds the customer's money: a refund now would pay them twice.
+  if (!opts.disputed && (await openDispute(b.stripePaymentIntent))) return { error: "This payment is disputed with your bank, so it can't be cancelled here. Contact us." };
   const card = JSON.parse(b.cardJson) as HotelCard;
-  if (!canCancelStay(b, card) || !b.liteBookingId) return { error: card.refundable === false ? "This rate is non-refundable, so it can't be cancelled." : "This booking can't be cancelled online any more." };
+  // A disputed stay may be cancelled even on a non-refundable rate (nothing comes back, but nobody stays for free).
+  if (!canCancelStay(b, opts.disputed ? { ...card, refundable: true } : card) || !b.liteBookingId) return { error: card.refundable === false ? "This rate is non-refundable, so it can't be cancelled." : "This booking can't be cancelled online any more." };
   const locked = await prisma.hotelBooking.updateMany({ where: { id: b.id, status: HOTEL_STATUS.BOOKED }, data: { status: "CANCELLING" } });
   if (!locked.count) return { error: "This booking is already being changed. Refresh the page." };
   let r;
@@ -230,7 +270,8 @@ export async function cancelStay(bookingId: string): Promise<{ ok: true; refundC
   }
   const liteCents = Math.round(Number(b.liteAmount) * 100);
   const sameCurrency = !r.currency || r.currency.toUpperCase() === b.currency.toUpperCase();
-  const back = sameCurrency ? Math.max(0, Math.min(Math.round(Number(r.refund_amount ?? 0) * 100), liteCents)) : 0;
+  // Disputed: the hotel's refund stays with us (the bank returned the customer's money through the dispute).
+  const back = !opts.disputed && sameCurrency ? Math.max(0, Math.min(Math.round(Number(r.refund_amount ?? 0) * 100), liteCents)) : 0;
   let refundError = "";
   let refundId: string | null = null;
   if (back > 0 && b.stripePaymentIntent) {
@@ -240,13 +281,14 @@ export async function cancelStay(bookingId: string): Promise<{ ok: true; refundC
       refundError = `The refund of ${stayPrice({ priceCents: back, currency: b.currency })} failed (${e instanceof Error ? e.message : e}): refund it in Stripe.`;
     }
   }
-  if (!sameCurrency) refundError = `LiteAPI refunded ${r.currency} ${r.refund_amount}, not in ${b.currency}: refund the guest by hand.`;
+  if (!sameCurrency && !opts.disputed) refundError = `LiteAPI refunded ${r.currency} ${r.refund_amount}, not in ${b.currency}: refund the guest by hand.`;
   await prisma.hotelBooking.update({
     where: { id: b.id },
     data: { status: "CANCELLED", cancelledAt: new Date(), refundCents: back, stripeRefundId: refundId ?? b.stripeRefundId, error: refundError || null },
   });
   if (refundError) await merchantAlert(b.number, `The guest cancelled. ${refundError}`);
-  await sendCancelEmail(b.id);
+  if (opts.disputed) await customerNotice(b.email, "hotel_cancelled_dispute", `Stay ${b.number} cancelled: payment disputed`, `Your hotel booking ${b.number} at ${card.name} has been cancelled because its payment was disputed with your bank. Your bank handles the money through the dispute.\n\nIf this is a mistake, reply to this email.\n\n${config.storeName}`);
+  else await sendCancelEmail(b.id);
   return { ok: true, refundCents: back };
 }
 

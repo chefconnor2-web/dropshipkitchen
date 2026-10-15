@@ -930,3 +930,38 @@ model McpCall {
 
   @@index([customerId, createdAt])
 }
+
+/// A card dispute (chargeback) on one of our payments, from Stripe (webhook or the background sync). Chit sends the
+/// evidence by itself, offers the owner a one-tap cancel while the trip can still be cancelled, and blocks the
+/// customer, email and card from booking again.
+model Dispute {
+  id                String    @id // Stripe's dispute id (dp_…)
+  chargeId          String
+  paymentIntent     String?
+  amountCents       Int
+  currency          String
+  /// Stripe's reason: fraudulent, product_not_received, credit_not_processed, general, duplicate…
+  reason            String
+  /// Stripe's status: warning_needs_response, needs_response, under_review, won, lost…
+  status            String
+  dueBy             DateTime?
+  /// flight | hotel | order | other
+  kind              String
+  bookingNumber     String?
+  customerId        String?
+  email             String?
+  cardFingerprint   String?
+  /// Whether the payment passed 3-D Secure (the bank then carries fraud losses).
+  threeDs           Boolean   @default(false)
+  evidenceSubmitted DateTime?
+  /// The owner cancelled the booking and accepted the dispute instead of contesting it.
+  cancelledAt       DateTime?
+  alertedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([email])
+  @@index([cardFingerprint])
+  @@index([paymentIntent])
+}

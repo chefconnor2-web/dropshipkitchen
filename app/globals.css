@@ -2461,3 +2461,6 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .co-actions { display: flex; gap: 8px; margin-top: 16px; }
 .co-access { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--nx-line, #e7e6f0); }
 .co-access label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.4; }
+/* Owner decisions on a booking or dispute card (admin). */
+.a-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.a-actions form { margin: 0; }
