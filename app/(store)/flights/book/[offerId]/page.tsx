@@ -1,3 +1,4 @@
+import { flightTerms } from "@/lib/refund-terms";
 import Link from "next/link";
 import { canHold } from "@/lib/flight-booking";
 import { flexPayTypes } from "@/lib/flex-pay";
@@ -54,9 +55,8 @@ export default async function BookFlightPage({ params, searchParams }: { params:
       {trip && <p className="trip-joining">✈ {tripTitle(JSON.parse(trip.cardJson) as Card, trip.hostName)}</p>}
       <div className="fl-summary">
         <FlightCard f={card} bookable={false} />
-        <p className="muted small">
-          {card.refundable === true ? "Refundable fare. " : card.refundable === false ? "Non-refundable fare. " : ""}
-          {card.changeable === true ? "Changes allowed (the airline may charge a fee)." : card.changeable === false ? "No changes allowed." : ""}
+        <p className="muted small refund-terms">
+          <b>Refunds:</b> {flightTerms(card)} <Link href="/refunds">Refund policy</Link>
         </p>
       </div>
       {flexNote(flexPayTypes(card.priceCents, Math.round(Number(offer.total_amount) * 100), card.currency))}

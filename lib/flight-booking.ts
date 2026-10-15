@@ -16,6 +16,7 @@ import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
 import { checkoutExpiry, flight3ds } from "@/lib/margin";
+import { checkoutNote, emailTerms, flightTerms } from "@/lib/refund-terms";
 import { confirmOrderCancellation, createHoldOrder, createOrder, DuffelError, getOffer, getOrder, payOrder, quoteOrderCancellation, type DuffelOffer, type DuffelOrderCancellation, type DuffelOrderPassenger } from "@/lib/duffel";
 import { priceWithFee, toCard } from "@/lib/flights";
 import { checkoutWithFlexPay, flexPayTypes } from "@/lib/flex-pay";
@@ -226,7 +227,8 @@ export async function startFlightCheckout(input: BookInput): Promise<StartResult
       },
     ],
     metadata: { flightBookingId: booking.id, bookingNumber: booking.number },
-    payment_intent_data: { metadata: { flightBookingId: booking.id } },
+    payment_intent_data: { metadata: { flightBookingId: booking.id }, statement_descriptor_suffix: "FLIGHT" },
+    custom_text: { submit: { message: checkoutNote(flightTerms(card)) } },
     success_url: `${config.siteUrl}/flights/trip/${booking.number}?s={CHECKOUT_SESSION_ID}${chatParam(input.form)}`,
     cancel_url: `${config.siteUrl}/flights/book/${encodeURIComponent(offer.id)}${trip ? `?trip=${trip.slug}` : ""}`,
     expires_at: checkoutExpiry(offer.expires_at),
@@ -311,7 +313,8 @@ export async function payHeldFlight(bookingId: string): Promise<StartResult> {
       customer_email: b.email,
       line_items: [{ quantity: 1, price_data: { currency: order.total_currency.toLowerCase(), unit_amount: price, product_data: { name: `Flight ${routeLabel(card)}`, description: `Held fare · ${card.airline}` } } }],
       metadata: { flightBookingId: b.id, bookingNumber: b.number },
-      payment_intent_data: { metadata: { flightBookingId: b.id } },
+      payment_intent_data: { metadata: { flightBookingId: b.id }, statement_descriptor_suffix: "FLIGHT" },
+      custom_text: { submit: { message: checkoutNote(flightTerms(card)) } },
       success_url: `${config.siteUrl}/flights/trip/${b.number}?s={CHECKOUT_SESSION_ID}`,
       cancel_url: await tripUrl(b),
       expires_at: checkoutExpiry(order.payment_status?.price_guarantee_expires_at ?? order.payment_status?.payment_required_by ?? b.holdUntil),
@@ -459,7 +462,7 @@ ${config.storeName}`,
       : kind === "confirmation"
       ? {
           subject: `Booked: ${routeLabel(card)} · confirmation ${b.bookingReference}`,
-          text: `Your flight is booked.\n\nAirline confirmation (PNR): ${b.bookingReference}\nPassengers: ${names}\n\n${lines}\n\nPaid: ${price}\n\nYour trip: ${url}\n\nUse the confirmation code to check in with ${card.airline}.${invite}\n\n${config.storeName}`,
+          text: `Your flight is booked.\n\nAirline confirmation (PNR): ${b.bookingReference}\nPassengers: ${names}\n\n${lines}\n\nPaid: ${price}\n\nYour trip: ${url}\n\nUse the confirmation code to check in with ${card.airline}.${invite}\n\n${emailTerms(flightTerms(card), url)}\n\n${config.storeName}`,
         }
       : {
           subject: `We couldn't book your flight, refunded ${price}`,

@@ -86,7 +86,7 @@ export default async function ConnectPage() {
         </section>
       )}
       <p className="muted small">
-        <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link>
+        <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · <Link href="/refunds">Refunds</Link>
       </p>
       <p>
         <Link href="/">← Back to Neon</Link>

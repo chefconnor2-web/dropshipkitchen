@@ -1,4 +1,5 @@
 import { payAtHotelLabel } from "@/lib/flights-shared";
+import { hotelTerms } from "@/lib/refund-terms";
 import Link from "next/link";
 import { liteapiConfigured, liteapiTestMode } from "@/lib/liteapi";
 import { offerCard } from "@/lib/hotels";
@@ -35,7 +36,7 @@ export default async function BookHotelPage({ params, searchParams }: { params: 
       <div className="fl-summary">
         <HotelCard h={card} bookable={false} />
         <p className="muted small">
-          {guests} guest{guests > 1 ? "s" : ""} · check-in {card.checkin} · check-out {card.checkout}. {card.refundable === false ? "This rate is non-refundable." : card.refundable ? `Free cancellation on this rate${card.freeCancelUntil ? ` until ${card.freeCancelUntil}` : ""} (see the hotel's policy in your confirmation).` : ""}
+          {guests} guest{guests > 1 ? "s" : ""} · check-in {card.checkin} · check-out {card.checkout}. <b>Refunds:</b> {hotelTerms(card)} <Link href="/refunds">Refund policy</Link>
           {payAtHotelLabel(card) ? ` The total doesn't include ${payAtHotelLabel(card)} in local taxes the hotel collects at check-in.` : ""}
         </p>
       </div>
