@@ -3,6 +3,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
+import { noLossCents } from "@/lib/margin";
 import { searchRates, type LiteHotel, type LiteRate, type LiteRoomType, type RatesQuery } from "@/lib/liteapi";
 import type { HotelCard } from "@/lib/flights-shared";
 
@@ -13,10 +14,22 @@ export function hotelFee(): { fixedCents: number; pct: number } {
   return { fixedCents: Number.isFinite(fixed) && fixed >= 0 ? fixed : 5_00, pct: Number.isFinite(pct) && pct >= 0 ? pct : 3 };
 }
 
-/** LiteAPI's total plus our fee, rounded up to a whole unit of the currency. */
-export function stayWithFee(total: number, fee = hotelFee()): number {
+/**
+ * What LiteAPI bills our account card in (LITEAPI_BILLING_CURRENCY, default USD). A stay priced in another
+ * currency costs us the card's conversion on top (HOTEL_FX_PCT, default 3%), so the floor allows for it.
+ */
+export function hotelFxPct(currency?: string): number {
+  const billing = (process.env.LITEAPI_BILLING_CURRENCY?.trim() || "USD").toUpperCase();
+  if (!currency || currency.toUpperCase() === billing) return 0;
+  const pct = Number(process.env.HOTEL_FX_PCT);
+  return Number.isFinite(pct) && pct >= 0 ? pct : 3;
+}
+
+/** LiteAPI's total plus our fee, never below cost, rounded up to a whole unit of the currency. */
+export function stayWithFee(total: number, fee = hotelFee(), currency?: string): number {
   const cents = Math.round(total * 100);
-  return Math.ceil((cents * (1 + fee.pct / 100) + fee.fixedCents) / 100) * 100;
+  const floor = noLossCents(cents, { extraPct: hotelFxPct(currency) });
+  return Math.ceil(Math.max(cents * (1 + fee.pct / 100) + fee.fixedCents, floor) / 100) * 100;
 }
 
 /** A short, stable id for a LiteAPI offer (used in the booking link). */
@@ -133,7 +146,7 @@ export function toCards(q: RatesQuery, data: Array<{ hotelId: string; roomTypes?
       nights,
       adults: q.adults,
       childAges: q.childAges,
-      priceCents: stayWithFee(best.total.amount, fee),
+      priceCents: stayWithFee(best.total.amount, fee, best.total.currency),
       currency: best.total.currency,
     });
   }

@@ -2,6 +2,7 @@
 // shopper asked for and ranked (best, cheapest, fastest). Several searches run in parallel; results are
 // remembered for a few minutes so a follow-up question answers at once.
 
+import { noLossCents } from "@/lib/margin";
 import { processSingleton } from "@/lib/singleton";
 import { getOffer, searchOffers, type DuffelOffer, type OfferRequestInput } from "@/lib/duffel";
 import { itineraryKey, type FareOption, type FareRule, type FlightCard, type FlightSlice } from "@/lib/flights-shared";
@@ -28,7 +29,10 @@ export function flightFee(): { fixedCents: number; pct: number } {
 /** Duffel's total plus our fee, rounded up to a whole unit of the currency. */
 export function priceWithFee(totalAmount: string | number, fee = flightFee()): number {
   const cents = Math.round(Number(totalAmount) * 100);
-  return Math.ceil((cents * (1 + fee.pct / 100) + fee.fixedCents) / 100) * 100;
+  // Never below cost: Duffel's per-order fee (DUFFEL_ORDER_FEE_CENTS, default $3) and worst-case card processing.
+  const duffelFee = Number(process.env.DUFFEL_ORDER_FEE_CENTS);
+  const floor = noLossCents(cents, { fixedCostCents: Number.isFinite(duffelFee) && duffelFee >= 0 ? duffelFee : 3_00 });
+  return Math.ceil(Math.max(cents * (1 + fee.pct / 100) + fee.fixedCents, floor) / 100) * 100;
 }
 
 /** "PT11H30M" or "P1DT2H" → minutes. */
