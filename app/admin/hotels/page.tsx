@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { RISK_HOLD } from "@/lib/risk";
+import { heldStayAction } from "../money-actions";
 import { timeAgo } from "@/components/admin";
 import { stayLabel, stayUrl } from "@/lib/hotel-booking";
 import { liteapiTestMode } from "@/lib/liteapi";
@@ -62,6 +64,20 @@ export default async function HotelsAdminPage() {
                 {r.stripeRefundId ? ` · refund ${r.stripeRefundId}` : ""}
               </p>
               {r.error && <p className="notice err small">{r.error}</p>}
+              {r.status === "NEEDS_REVIEW" && r.error?.startsWith(RISK_HOLD) && (
+                <div className="a-actions">
+                  <form action={heldStayAction}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <input type="hidden" name="decision" value="approve" />
+                    <button className="btn primary">Approve: book it</button>
+                  </form>
+                  <form action={heldStayAction}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <input type="hidden" name="decision" value="decline" />
+                    <button className="btn">Decline: refund in full</button>
+                  </form>
+                </div>
+              )}
               <p className="small">
                 <a href={links.get(r.id)} target="_blank" rel="noreferrer">
                   Customer&apos;s stay page ↗

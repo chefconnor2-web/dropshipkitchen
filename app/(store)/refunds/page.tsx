@@ -72,6 +72,12 @@ export default function RefundsPage() {
         <li>Every refund is confirmed by email.</li>
       </ul>
 
+      <h2>Disputed payments</h2>
+      <ul>
+        <li>If you dispute a payment with your bank instead of contacting us, we may cancel the booking while the dispute is open. Your bank handles the money through the dispute, so nothing is refunded twice.</li>
+        <li>We send the bank the booking details and these terms. Accounts with a disputed payment can&rsquo;t make new bookings.</li>
+      </ul>
+
       <h2>Something wrong? Talk to us first</h2>
       <p>
         {email ? (

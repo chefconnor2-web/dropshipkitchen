@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { RISK_HOLD } from "@/lib/risk";
+import { heldFlightAction } from "../money-actions";
 import { timeAgo } from "@/components/admin";
 import { routeLabel, tripUrl, type PassengerInput } from "@/lib/flight-booking";
 import { duffelTestMode } from "@/lib/duffel";
@@ -63,6 +65,20 @@ export default async function FlightsAdminPage() {
                 {r.stripeRefundId ? ` · refund ${r.stripeRefundId}` : ""}
               </p>
               {r.error && <p className="notice err small">{r.error}</p>}
+              {r.status === "NEEDS_REVIEW" && r.error?.startsWith(RISK_HOLD) && (
+                <div className="a-actions">
+                  <form action={heldFlightAction}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <input type="hidden" name="decision" value="approve" />
+                    <button className="btn primary">Approve: ticket it</button>
+                  </form>
+                  <form action={heldFlightAction}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <input type="hidden" name="decision" value="decline" />
+                    <button className="btn">Decline: refund in full</button>
+                  </form>
+                </div>
+              )}
               <p className="small">
                 <a href={links.get(r.id)} target="_blank" rel="noreferrer">
                   Customer&apos;s trip page ↗

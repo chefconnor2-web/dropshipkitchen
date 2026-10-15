@@ -16,6 +16,8 @@ import { sendEmail } from "@/lib/email";
 import { newOrderNumber } from "@/lib/orders";
 import { orderViewToken } from "@/lib/session";
 import { checkoutExpiry, flight3ds } from "@/lib/margin";
+import { customerNotice, ownerAlert } from "@/lib/owner-alert";
+import { BLOCKED_MESSAGE, checkPaidBooking, isBlocked, openDispute, RISK_HOLD } from "@/lib/risk";
 import { checkoutNote, emailTerms, flightTerms } from "@/lib/refund-terms";
 import { confirmOrderCancellation, createHoldOrder, createOrder, DuffelError, getOffer, getOrder, payOrder, quoteOrderCancellation, type DuffelOffer, type DuffelOrderCancellation, type DuffelOrderPassenger } from "@/lib/duffel";
 import { priceWithFee, toCard } from "@/lib/flights";
@@ -175,6 +177,7 @@ async function prepareBooking(input: BookInput) {
   const phone = normalizePhone(String(input.form.get("phone") ?? ""));
   if (!phone) return { error: "Enter a phone number with country code (airlines text about delays)." };
 
+  if (await isBlocked({ customerId: input.customerId, email })) return { error: BLOCKED_MESSAGE };
   const card = toCard(offer);
   // Joining a friend's shared trip (from /trips/<slug>): the booking is listed on that trip.
   const tripSlug = String(input.form.get("trip") ?? "");
@@ -340,6 +343,43 @@ export async function completeFlightBooking(session: Pick<Stripe.Checkout.Sessio
   });
   if (locked.count === 0) return prisma.flightBooking.findUnique({ where: { id } });
   const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id } });
+  // Before we pay the airline: refuse anyone who disputed before, hold a payment that looks like a stolen card.
+  const travellers = (JSON.parse(b.passengersJson) as PassengerInput[]).map((p) => `${p.given_name} ${p.family_name}`);
+  const risk = await checkPaidBooking(intent, travellers, { customerId: b.customerId, email: b.email });
+  if (risk.action === "refuse") return refund(b.id, BLOCKED_MESSAGE);
+  if (risk.action === "hold") return holdForOwner(b, risk.reason);
+  return ticketPaid(b);
+}
+
+async function holdForOwner(b: { id: string; number: string; email: string; cardJson: string; priceCents: number; currency: string }, reason: string) {
+  const r = await prisma.flightBooking.update({ where: { id: b.id }, data: { status: FLIGHT_STATUS.NEEDS_REVIEW, error: RISK_HOLD + reason } });
+  const card = JSON.parse(b.cardJson) as FlightCard;
+  const price = flightPrice({ priceCents: b.priceCents, currency: b.currency });
+  await ownerAlert(
+    "flight_risk_hold",
+    `Approve or decline flight ${b.number} (${price})`,
+    `A paid flight is waiting for your OK before we buy the ticket.\n\n${routeLabel(card)} · ${price} · ${b.email}\nWhy: ${reason}\n\nApprove to ticket it, or decline to refund the customer in full: ${config.siteUrl}/admin/flights\n\nDecide soon: the airline's fare can expire (if it does, approving refunds the customer automatically).`,
+  );
+  await customerNotice(b.email, "flight_checking", `We're confirming your flight ${routeLabel(card)}`, `Thanks, your payment went through. We're doing a quick check before we issue your ticket; you'll get your ticket, or a full refund, by email shortly.\n\n${config.storeName}`);
+  return r;
+}
+
+/** The owner approved a held booking: ticket it now (the fare is re-checked first). */
+export async function approveHeldFlight(bookingId: string) {
+  const locked = await prisma.flightBooking.updateMany({ where: { id: bookingId, status: FLIGHT_STATUS.NEEDS_REVIEW, error: { startsWith: RISK_HOLD } }, data: { status: FLIGHT_STATUS.BOOKING, error: null } });
+  if (!locked.count) return { error: "This booking isn't waiting for approval." };
+  return ticketPaid(await prisma.flightBooking.findUniqueOrThrow({ where: { id: bookingId } }));
+}
+
+/** The owner declined a held booking: refund the customer in full; nothing is bought from the airline. */
+export async function declineHeldFlight(bookingId: string) {
+  const locked = await prisma.flightBooking.updateMany({ where: { id: bookingId, status: FLIGHT_STATUS.NEEDS_REVIEW, error: { startsWith: RISK_HOLD } }, data: { status: FLIGHT_STATUS.BOOKING } });
+  if (!locked.count) return { error: "This booking isn't waiting for approval." };
+  return refund(bookingId, "We couldn't confirm this payment, so we didn't book the flight.");
+}
+
+/** Buys the ticket for a paid booking (status BOOKING): pays a held fare, or re-checks and books the offer. */
+async function ticketPaid(b: Awaited<ReturnType<typeof prisma.flightBooking.findUniqueOrThrow>>) {
   if (b.duffelOrderId) return payHeldOrder(b);
 
   let offer: DuffelOffer;
@@ -478,9 +518,7 @@ async function balanceAlert(number: string, e: DuffelError) {
 }
 
 async function merchantAlert(number: string, message: string) {
-  if (!config.email.storeEmail) return;
-  const text = `Flight booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/flights`;
-  await sendEmail({ to: config.email.storeEmail, kind: "flight_needs_review", subject: `Flight booking ${number} needs review`, text, html: `<pre>${esc(text)}</pre>` });
+  await ownerAlert("flight_needs_review", `Flight booking ${number} needs review`, `Flight booking ${number} needs you:\n\n${message}\n\n${config.siteUrl}/admin/flights`);
 }
 
 // ---------- cancelling ----------
@@ -523,8 +561,10 @@ export async function quoteFlightCancel(bookingId: string): Promise<CancelQuote 
   }
 }
 
-export async function confirmFlightCancel(bookingId: string, quoteId: string): Promise<{ ok: true; refundCents: number } | { error: string }> {
+export async function confirmFlightCancel(bookingId: string, quoteId: string, opts: { disputed?: boolean } = {}): Promise<{ ok: true; refundCents: number } | { error: string }> {
   const b = await prisma.flightBooking.findUniqueOrThrow({ where: { id: bookingId } });
+  // While a dispute is open the bank already holds the customer's money: a refund now would pay them twice.
+  if (!opts.disputed && (await openDispute(b.stripePaymentIntent))) return { error: "This payment is disputed with your bank, so it can't be cancelled here. Contact us." };
   if (!canCancelFlight(b, JSON.parse(b.cardJson) as FlightCard)) return { error: "This flight can't be cancelled online any more." };
   if (!/^ore_[A-Za-z0-9]+$/.test(quoteId)) return { error: "Get a new cancellation quote and try again." };
   const locked = await prisma.flightBooking.updateMany({ where: { id: b.id, status: FLIGHT_STATUS.BOOKED }, data: { status: "CANCELLING" } });
@@ -542,7 +582,8 @@ export async function confirmFlightCancel(bookingId: string, quoteId: string): P
     await merchantAlert(b.number, message);
     return { error: "We've asked the airline to cancel and are confirming it. We'll email you shortly." };
   }
-  const back = moneyBack(c, b);
+  // Disputed: the airline's refund stays with us (the bank returned the customer's money through the dispute).
+  const back = opts.disputed ? 0 : moneyBack(c, b);
   let refundId: string | null = null;
   let refundError = "";
   if (back > 0 && b.stripePaymentIntent) {
@@ -557,7 +598,8 @@ export async function confirmFlightCancel(bookingId: string, quoteId: string): P
     data: { status: "CANCELLED", cancelledAt: new Date(), refundCents: back, stripeRefundId: refundId ?? b.stripeRefundId, error: refundError || null },
   });
   if (refundError) await merchantAlert(b.number, `The passenger cancelled. ${refundError}`);
-  await sendCancelEmail(b.id, !MONEY_BACK.has(c.refund_to));
+  if (opts.disputed) await customerNotice(b.email, "flight_cancelled_dispute", `Flight ${b.number} cancelled: payment disputed`, `Your flight booking ${b.number} (confirmation ${b.bookingReference}) has been cancelled because its payment was disputed with your bank. Your bank handles the money through the dispute.\n\nIf this is a mistake, reply to this email.\n\n${config.storeName}`);
+  else await sendCancelEmail(b.id, !MONEY_BACK.has(c.refund_to));
   return { ok: true, refundCents: back };
 }
 

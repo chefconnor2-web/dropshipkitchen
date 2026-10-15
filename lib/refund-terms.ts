@@ -9,14 +9,14 @@ import { ruleLabel, type FlightCard, type HotelCard } from "@/lib/flights-shared
 export const refundPolicyUrl = () => `${config.siteUrl}/refunds`;
 
 /** The fare's refund and change rules in one line ("Refundable · Changes USD 75"), or how to read unknown ones. */
-export function fareRulesLine(card: Pick<FlightCard, "refundRule" | "changeRule" | "refundable" | "changeable">): string {
+export function fareRulesLine(card: Partial<Pick<FlightCard, "refundRule" | "changeRule" | "refundable" | "changeable">>): string {
   const refund = ruleLabel(card.refundRule, "refund") ?? (card.refundable === true ? "Refundable" : card.refundable === false ? "No refund" : "Refund rules not stated by the airline: treat it as non-refundable");
   const changes = ruleLabel(card.changeRule, "changes") ?? (card.changeable === true ? "Changes allowed (the airline may charge)" : card.changeable === false ? "No changes" : null);
   return [refund, changes].filter(Boolean).join(" · ");
 }
 
 /** The terms for a flight, a sentence or two. */
-export function flightTerms(card: Pick<FlightCard, "refundRule" | "changeRule" | "refundable" | "changeable">): string {
+export function flightTerms(card: Partial<Pick<FlightCard, "refundRule" | "changeRule" | "refundable" | "changeable">>): string {
   const r = card.refundRule?.kind;
   const cancel =
     r === "no" || (!card.refundRule && card.refundable !== true)
@@ -26,7 +26,7 @@ export function flightTerms(card: Pick<FlightCard, "refundRule" | "changeRule" |
 }
 
 /** The terms for a hotel stay, a sentence or two. */
-export function hotelTerms(card: Pick<HotelCard, "refundable" | "freeCancelUntil">): string {
+export function hotelTerms(card: Partial<Pick<HotelCard, "refundable" | "freeCancelUntil">>): string {
   const cancel =
     card.refundable === false
       ? "Non-refundable: nothing is refunded if you cancel."

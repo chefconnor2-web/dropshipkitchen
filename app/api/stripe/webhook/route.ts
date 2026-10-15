@@ -34,6 +34,12 @@ export async function POST(req: Request) {
     const invoice = event.data.object as Stripe.Invoice;
     if (invoice.id && invoice.parent?.subscription_details) await orderForInvoice(invoice.id);
   }
+  // Disputes: recorded, owners alerted, the customer blocked, evidence sent (lib/disputes.ts; also synced every 15 min).
+  if (event.type.startsWith("charge.dispute.")) {
+    const { recordDispute, processDisputes } = await import("@/lib/disputes");
+    await recordDispute(event.data.object as Stripe.Dispute);
+    after(() => processDisputes().catch((e) => console.error("[disputes] process:", e)));
+  }
   if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
     await updateSubscriptionFromStripe(event.data.object as Stripe.Subscription);
   }
