@@ -675,7 +675,8 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
       content: JSON.stringify({
         items: items.map((i) => ({ title: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total_usd: ((unit(i) * i.quantity) / 100).toFixed(2) })),
         subtotal: formatMoney(subtotal),
-        bulk_savings: priced.savingsCents ? formatMoney(priced.savingsCents) : null,
+        bulk_savings: priced.savingsCents && !priced.owner ? formatMoney(priced.savingsCents) : null,
+        ...(priced.owner ? { owner_price: `Owner pricing: CJ's cost plus the card fee (${formatMoney(priced.savingsCents)} under retail)` } : {}),
         shipping: await cartShipping(cart),
       }),
     };
