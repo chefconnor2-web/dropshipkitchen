@@ -195,6 +195,9 @@ export const browserApi = {
       "POST",
       signal,
     ),
+  /** Reads any public page in its own fresh, signed-out browser: final URL, title, text and up to 3 screenshots. */
+  read: (url: string, signal?: AbortSignal) =>
+    call<{ url: string; title: string; text: string; truncated: boolean; screenshots: string[] }>(`/read`, { url }, "POST", signal, 45_000),
   /** Opens a link in a fresh, signed-out browser (as the shopper's own would) and says where it lands. */
   probe: (id: string, url: string, signal?: AbortSignal) =>
     call<{ url: string; title: string; kind: "confirmed" | "payment" | "driver" | "offer" | "search" | "other"; number: string | null }>(`/sessions/${id}/probe`, { url }, "POST", signal),
