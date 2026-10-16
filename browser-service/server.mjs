@@ -31,6 +31,7 @@ import { deliver as deliverFrame, stopDelivery } from "./frames.mjs";
 import { runPool } from "./pool.mjs";
 import { SMART, settle, smartAction } from "./forms.mjs";
 import { runBrowserTool } from "./browser-tool.mjs";
+import { parseResidentialProxy } from "./proxy.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 const SECRET = process.env.BROWSER_SERVICE_SECRET || "";
@@ -42,6 +43,7 @@ const FRAME_QUEUE_BYTES = Number(process.env.FRAME_QUEUE_BYTES) || 48 * 1024;
 const QUALITY = Math.max(20, Math.min(90, Number(process.env.SCREENCAST_QUALITY) || 60));
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
 const INPUT_QUEUE = 64;
+const RESIDENTIAL_PROXY = parseResidentialProxy(process.env.RESIDENTIAL_PROXY_URL);
 // A session nobody is watching and Neon isn't using is closed after this (Chrome is the memory hog: the
 // service has 1 GB, and each Amazon tab takes 250-450 MB).
 const UNWATCHED_MS = (Number(process.env.UNWATCHED_MINUTES) || 3) * 60_000;
@@ -131,6 +133,7 @@ async function getBrowser() {
     executablePath: CHROME,
     headless: true,
     args: [
+      ...(RESIDENTIAL_PROXY ? [`--proxy-server=${RESIDENTIAL_PROXY.server}`] : []),
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
@@ -199,6 +202,12 @@ async function createSession() {
 
 async function setUpSession(ctx) {
   const page = await ctx.newPage();
+  if (RESIDENTIAL_PROXY?.username) {
+    await page.authenticate({
+      username: RESIDENTIAL_PROXY.username,
+      password: RESIDENTIAL_PROXY.password,
+    });
+  }
   await page.setUserAgent(UA);
   await page.setViewport(VIEW);
   // No request interception (it slows every request down); instead the main page is pulled back if it ever
