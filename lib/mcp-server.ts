@@ -380,7 +380,7 @@ export function chitMcpServer(who: Who): McpServer {
         "Builds carts on other online stores from product pages on the store's own site (Shopify, WooCommerce, BigCommerce and others): reads each page, picks the option, gets the live price, and returns each store's own add-to-cart link. The customer opens the link and the items land in their own cart there; nothing is bought here.",
       inputSchema: {
         items: z
-          .array(z.object({ url: z.string().url().max(500), quantity: z.coerce.number().int().min(1).max(999).default(1), option: z.string().max(120).optional() }))
+          .array(z.object({ url: z.string().url().max(500), quantity: z.coerce.number().int().min(1).max(999).default(1), option: z.string().max(120).optional(), title: z.string().max(120).optional() }))
           .min(1)
           .max(40),
       },

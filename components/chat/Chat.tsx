@@ -17,6 +17,7 @@ import {
   DownIcon,
   EXAMPLES,
   HOTEL_EMAIL_TEST,
+  EV_BUILD_TEST,
   KitCard,
   Markdown,
   MicIcon,
@@ -1039,6 +1040,12 @@ export default function Chat({
                   🧪
                 </span>
                 <span>{HOTEL_EMAIL_TEST.label.replace(/^🧪\s*/, "")}</span>
+              </button>
+              <button type="button" className="cx-example cx-example-test" onClick={() => send(EV_BUILD_TEST.prompt)} disabled={!configured}>
+                <span className="cx-example-icon" aria-hidden>
+                  🧪
+                </span>
+                <span>{EV_BUILD_TEST.label.replace(/^🧪\s*/, "")}</span>
               </button>
             </div>
             <ShareButton className="cx-share share-center" url="/" text={`${storeName}: Neon finds, books and buys for you, right in a chat`} label={`Share ${storeName}`} />

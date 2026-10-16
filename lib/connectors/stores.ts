@@ -9,6 +9,8 @@
 //                https://store/cart/<variant>:<qty>,<variant>:<qty>
 //   WooCommerce  ?add-to-cart=<id>&quantity=<n>: one link per product (simple products only)
 //   BigCommerce  /cart.php?action=add&product_id=<id>&qty=<n>: one link per product
+//   Amazon       product links (/dp/<ASIN>) become Amazon's own add-to-cart link, without reading the page (Amazon
+//                blocks page readers); Amazon shows the prices when the shopper opens it.
 //   Anything else: the product page itself, priced from its schema.org data, added by hand.
 
 import { lookup } from "node:dns/promises";
@@ -16,8 +18,9 @@ import { isIP } from "node:net";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { StoreCartCard } from "@/lib/flights-shared";
 import type { Connector, ConnectorContext, ToolResult } from "./types";
+import { amazonCartLink } from "./amazon";
 
-export type Platform = "shopify" | "woocommerce" | "bigcommerce" | "other";
+export type Platform = "shopify" | "woocommerce" | "bigcommerce" | "amazon" | "other";
 
 export interface StoreLine {
   url: string;
@@ -283,12 +286,42 @@ export async function resolveProduct(raw: string, quantity: number, option?: str
   return { origin, platform, line: { ...line, note: platform === "other" ? "This store has no cart link: add it on its page." : undefined } };
 }
 
+/** The Amazon site and ASIN of an Amazon product link (/dp/<ASIN>, /gp/product/<ASIN>), else null. */
+export function amazonProduct(raw: string): { domain: "amazon.ca" | "amazon.com"; asin: string } | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  const m = u.hostname.toLowerCase().match(/(?:^|\.)(amazon\.(?:ca|com))$/);
+  const asin = u.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?]|$)/i)?.[1];
+  return m && asin ? { domain: m[1] as "amazon.ca" | "amazon.com", asin: asin.toUpperCase() } : null;
+}
+
+/** Amazon carts from Amazon product links: one add-to-cart link per Amazon site. */
+export function amazonCarts(items: Array<{ url: string; quantity?: number; title?: string }>): StoreCart[] {
+  const bySite = new Map<"amazon.ca" | "amazon.com", StoreLine[]>();
+  for (const it of items) {
+    const a = amazonProduct(it.url);
+    if (!a) continue;
+    const lines = bySite.get(a.domain) ?? [];
+    lines.push({ url: `https://www.${a.domain}/dp/${a.asin}`, title: it.title?.trim() || a.asin, quantity: clampQty(it.quantity), priceCents: null, currency: null, available: null, id: a.asin, note: "Amazon shows the price when the link opens." });
+    bySite.set(a.domain, lines);
+  }
+  return [...bySite].map(([domain, lines]) => {
+    const link = amazonCartLink(domain, lines.map((l) => ({ asin: l.id!, quantity: l.quantity })));
+    return { store: domain, platform: "amazon" as const, lines, links: link ? [{ label: `Open your ${domain} cart`, url: link.url }] : [], subtotalCents: null, currency: null };
+  });
+}
+
 /** Builds one cart per store from product pages. */
-export async function buildStoreCarts(items: Array<{ url: string; quantity?: number; option?: string }>): Promise<{ carts: StoreCart[]; failed: Array<{ url: string; reason: string }> }> {
+export async function buildStoreCarts(items: Array<{ url: string; quantity?: number; option?: string; title?: string }>): Promise<{ carts: StoreCart[]; failed: Array<{ url: string; reason: string }> }> {
   const byOrigin = new Map<string, { platform: Platform; lines: StoreLine[] }>();
   const failed: Array<{ url: string; reason: string }> = [];
+  const amazon = amazonCarts(items);
   const resolved = await Promise.all(
-    items.slice(0, 40).map((it) =>
+    items.filter((it) => !amazonProduct(String(it.url))).slice(0, 40).map((it) =>
       resolveProduct(String(it.url), it.quantity ?? 1, it.option).catch((e: unknown) => {
         failed.push({ url: String(it.url), reason: e instanceof Error ? e.message : "Couldn't read the page." });
         return null;
@@ -306,7 +339,7 @@ export async function buildStoreCarts(items: Array<{ url: string; quantity?: num
     const total = subtotal(s.lines);
     return { store: new URL(origin).hostname.replace(/^www\./, ""), platform: s.platform, lines: s.lines, links: cartLinks(origin, s.platform, s.lines), subtotalCents: total.cents, currency: total.currency };
   });
-  return { carts, failed };
+  return { carts: [...carts, ...amazon], failed };
 }
 
 /* ---------- The connector ---------- */
@@ -328,6 +361,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
               url: { type: "string", description: "The product page on the store's own site (https), from your web_search or web_fetch results" },
               quantity: { type: "integer", minimum: 1, maximum: 999 },
               option: { type: "string", description: "The option to pick when the product has several (size, voltage, colour), in the store's words" },
+              title: { type: "string", description: "A short name for the line (used for Amazon links, whose pages aren't read)" },
             },
             required: ["url"],
           },
@@ -379,7 +413,7 @@ export function cartSummary(r: { carts: StoreCart[]; failed: Array<{ url: string
 
 async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorContext): Promise<ToolResult> {
   if (tool !== "store_cart") return { content: `Unknown tool ${tool}`, isError: true };
-  const items = (Array.isArray(input.items) ? input.items : []) as Array<{ url: string; quantity?: number; option?: string }>;
+  const items = (Array.isArray(input.items) ? input.items : []) as Array<{ url: string; quantity?: number; option?: string; title?: string }>;
   if (!items.length) return { content: "Give at least one product page URL.", isError: true };
   ctx.progress(`Building carts on ${new Set(items.map((i) => { try { return new URL(i.url).hostname; } catch { return i.url; } })).size} store(s)…`);
   const r = await buildStoreCarts(items);
@@ -393,6 +427,7 @@ export const storesConnector: Connector = {
   enabled: () => true,
   prompt: () => `
 Other online stores:
+- Amazon product links (amazon.ca/dp/ASIN or amazon.com/dp/ASIN) can go in the same store_cart call, with a short title each: they become one Amazon add-to-cart link with no browser needed (Amazon shows the prices when it opens). Use this when the shopper gives ASINs or Amazon links.
 - When the shopper wants things this catalog and Amazon don't carry well (specialist parts, a brand's own store), find the product on the seller's own site with web_search and web_fetch, then call store_cart with the product page URLs and quantities, all in one call. It reads each page, picks the option you name, gets the live price and returns each store's own cart link; the shopper opens it and the items land in their own cart there, where they check out.
 - Pass the option in the store's words when a product has several (voltage, size). If a line comes back with options, pick the one that matches what the shopper needs and call store_cart again for it.
 - Quote only the prices store_cart returns, in that store's currency, and say shipping and taxes are added at each store's checkout. Never buy, sign in or type payment details anywhere.`,
