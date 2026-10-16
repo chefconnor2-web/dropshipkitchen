@@ -5,7 +5,7 @@ import { listProductsV2 } from "@/lib/cj/client";
 import { parseListV2, suggestTitle } from "@/lib/cj/normalize";
 import { retailCents } from "@/lib/money";
 import { processSingleton } from "@/lib/singleton";
-import { curatedPick, impossibleClaim, picksFirst } from "@/lib/curated";
+import { curatedPick, impossibleClaim, picksFirst, picksNamed } from "@/lib/curated";
 
 /** Listings we won't sell: brand names that are almost always counterfeit on wholesale sites, and restricted goods. */
 const BLOCKED =
@@ -47,6 +47,10 @@ export async function searchCatalog(q: string, page: number, from?: string): Pro
     const pick = curatedPick(r.pid);
     hits.push({ pid: r.pid, title: suggestTitle(r.name), fromCents: retailCents(r.priceCents), ...(pick ? { pick: pick.why } : {}) });
   }
+  // Vetted picks named in the search join the first page even when CJ's own title doesn't match ("UT61D").
+  if (page === 1 && !from)
+    for (const p of picksNamed(q).reverse())
+      if (!hits.some((h) => h.pid === p.pid)) hits.unshift({ pid: p.pid, title: p.name, fromCents: Math.round(Number(p.fromUsd) * 100), pick: p.why });
   const out = { at: Date.now(), hits: picksFirst(hits), total };
   resultCache.set(key, out);
   if (resultCache.size > 500) resultCache.delete(resultCache.keys().next().value!);

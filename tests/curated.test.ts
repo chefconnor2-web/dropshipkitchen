@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CURATED_PICKS, SECTORS, curatedPick, impossibleClaim, picksFirst, picksFor } from "../lib/curated";
+import { CURATED_PICKS, SECTORS, curatedPick, impossibleClaim, picksFirst, picksFor, picksNamed } from "../lib/curated";
 import { blockedListing } from "../lib/catalog-search";
 
 test("impossible claims are caught", () => {
@@ -51,4 +51,13 @@ test("picks rank first, stock before maybe", () => {
   assert.ok(curatedPick(pick.pid));
   const ev = picksFor("ev");
   assert.ok(ev.findIndex((p) => p.verdict === "maybe") > ev.findLastIndex((p) => p.verdict === "stock"));
+});
+
+test("picks are found by their own names", () => {
+  assert.equal(picksNamed("UNI-T UT61D multimeter")[0]?.pid, "2505180301331600100");
+  assert.equal(picksNamed("ut61d")[0]?.pid, "2505180301331600100");
+  assert.equal(picksNamed("DS3225 servo")[0]?.pid, "1507640895695499264");
+  assert.ok(picksNamed("heat shrink").length >= 1);
+  assert.deepEqual(picksNamed("servo"), []);
+  assert.deepEqual(picksNamed("garden hose"), []);
 });
