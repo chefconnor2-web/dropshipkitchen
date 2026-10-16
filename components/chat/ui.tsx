@@ -135,6 +135,24 @@ export const HOTEL_EMAIL_TEST = {
     "Book me a flight from Toronto to Miami next Friday, then a hotel in Miami that I can check into when I land, and once the hotel is booked, a rental car at Miami airport from an hour after I land until I check out. Recommend the most economical car.",
 };
 
+/**
+ * A one-tap test of a whole multi-store build: the 48V Silverado EV conversion. Neon fills the Chit cart from the
+ * catalog, and store_cart builds the Golden Motor, battery-store and Amazon.ca carts as their own cart links.
+ */
+export const EV_BUILD_TEST = {
+  label: "🧪 Test: source my 48V Silverado EV build (every cart)",
+  prompt: [
+    "Build every cart for my 2015 Chevy Silverado 4x4 EV conversion: 48V (16S LiFePO4), a 10 kW motor driving the transfer case in 4LO, shipping to Churchill, MB R0B 0E0. Do all of it in this turn, then give me one summary with each cart's link and subtotal.",
+    "1. Chit catalog: find these and add them to my Chit cart: 1 UNI-T UT61D multimeter, 1 DC voltmeter/ammeter with a 300A shunt (0-300V), 1 Anderson-style 175A battery connector pair, 2 × 12V 40A automotive relays, 1 heat shrink tube kit.",
+    "2. Store carts: call store_cart once with all of these:",
+    "- https://goldenmotor.bike/collections/all/products/10kw-bldc-motor-air-cooled × 1 (option: 48V)",
+    "- https://goldenmotor.bike/products/ezkontrol-48-volt-universal-bldc-controller × 1 (option: 1000A)",
+    "- https://www.18650batterystore.com/products/eve-mb31-grade-a-cells-3-2v-lifepo4-314ah-battery × 4 (option: pack of 4)",
+    "- https://www.amazon.ca/dp/B0FVWZBC6Q × 1 (JK 16S 200A smart BMS)\n- https://www.amazon.ca/dp/B0D7ZNXWGP × 1 (58.4V 20A LiFePO4 charger)\n- https://www.amazon.ca/dp/B07DQ5H3T2 × 1 (Victron 48-12V 30A DC-DC)\n- https://www.amazon.ca/dp/B0B14WGCVR × 1 (48V 200A contactor)\n- https://www.amazon.ca/dp/B000XBGT3S × 1 (300A Class T fuse)\n- https://www.amazon.ca/dp/B0753HYKVQ × 1 (Class T fuse block (pick 5502, 225-400A))\n- https://www.amazon.ca/dp/B0BMTDKSSX × 1 (12V brake vacuum pump)\n- https://www.amazon.ca/dp/B08QMLQC4C × 1 (Vacuum pump switch)\n- https://www.amazon.ca/dp/B0FVLNMHMQ × 2 (12V 100W battery heater pad)\n- https://www.amazon.ca/dp/B092ZKJGYV × 1 (2/0 AWG copper lugs 10-pack)\n- https://www.amazon.ca/dp/B0B7H1S9PR × 1 (Hammer lug crimper)\n- https://www.amazon.ca/dp/B07KBDWKXL × 1 (2/0 cable 10 ft red + 10 ft black)",
+    "3. Last, list what still needs a custom part: the transfer-case adapter plate and coupler (it needs the transfer case tag, MP3023 or MP3024).",
+  ].join("\n"),
+};
+
 /** iMessage-style timestamp: "Today 2:14 PM", "Yesterday 9:02 AM", "Monday 9:02 AM", "Oct 3, 2026 at 9:02 AM". */
 export function stampLabel(iso: string, now = new Date()): string {
   const d = new Date(iso);

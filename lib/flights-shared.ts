@@ -207,7 +207,7 @@ export interface StoreCartCard {
   /** "sc_" + the store's domain; a later cart for the same store replaces it. */
   id: string;
   store: string;
-  platform: "shopify" | "woocommerce" | "bigcommerce" | "other";
+  platform: "shopify" | "woocommerce" | "bigcommerce" | "amazon" | "other";
   /** One link fills the cart (Shopify), or one per product. Empty when every line is added by hand. */
   links: Array<{ label: string; url: string }>;
   subtotal: string | null;

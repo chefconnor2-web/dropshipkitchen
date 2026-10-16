@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { metaProduct, bigcommerceProductId, cartLinks, detectPlatform, isPrivateAddress, jsonLdProduct, pickOption, shopifyHandle, subtotal, wooProductId, type StoreLine } from "../lib/connectors/stores";
+import { amazonCarts, amazonProduct, metaProduct, bigcommerceProductId, cartLinks, detectPlatform, isPrivateAddress, jsonLdProduct, pickOption, shopifyHandle, subtotal, wooProductId, type StoreLine } from "../lib/connectors/stores";
 
 const line = (over: Partial<StoreLine>): StoreLine => ({ url: "https://s.test/p", title: "Thing", quantity: 1, priceCents: 1000, currency: "USD", available: true, id: "1", ...over });
 
@@ -68,4 +68,20 @@ test("name and price from page tags when there's no schema.org data", () => {
   assert.deepEqual(metaProduct('<title>Inertia Switch</title><span itemprop="price" content="15.00"></span>'), { name: "Inertia Switch", priceCents: 1500, currency: undefined });
   assert.equal(metaProduct("<p>nothing</p>").priceCents, undefined);
   assert.equal(metaProduct('<h1>DC/DC Converter</h1><div class="product-price"><span>$549.00</span></div>').priceCents, 54900);
+});
+
+test("Amazon product links become one Amazon cart link per site, with no page read", () => {
+  assert.deepEqual(amazonProduct("https://www.amazon.ca/dp/b0fvwzbc6q?th=1"), { domain: "amazon.ca", asin: "B0FVWZBC6Q" });
+  assert.deepEqual(amazonProduct("https://amazon.com/Some-Title/dp/B07DQ5H3T2/ref=x"), { domain: "amazon.com", asin: "B07DQ5H3T2" });
+  assert.equal(amazonProduct("https://www.amazon.ca/s?k=bms"), null);
+  assert.equal(amazonProduct("https://evil-amazon.ca.example.com/dp/B07DQ5H3T2"), null);
+  const carts = amazonCarts([
+    { url: "https://www.amazon.ca/dp/B0FVWZBC6Q", quantity: 1, title: "JK BMS" },
+    { url: "https://www.amazon.ca/dp/B0FVLNMHMQ", quantity: 2, title: "Heater pad" },
+    { url: "https://shop.example.com/products/x" },
+  ]);
+  assert.equal(carts.length, 1);
+  assert.equal(carts[0].store, "amazon.ca");
+  assert.equal(carts[0].links[0].url, "https://www.amazon.ca/gp/aws/cart/add.html?ASIN.1=B0FVWZBC6Q&Quantity.1=1&ASIN.2=B0FVLNMHMQ&Quantity.2=2");
+  assert.equal(carts[0].lines[1].title, "Heater pad");
 });
