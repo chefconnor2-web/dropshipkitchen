@@ -22,6 +22,7 @@ import { assistantConfigured, catalogTool } from "@/lib/assistant";
 import { getCartId, getOrCreateCartId, loadCart } from "@/lib/cart";
 import { searchCatalog } from "@/lib/catalog-search";
 import { picksFor, SECTORS, SPECIALTY, type Sector } from "@/lib/curated";
+import { buildStoreCarts, cartSummary } from "@/lib/connectors/stores";
 import { acceptRun, getRun, resumeRun } from "@/lib/runs";
 import { isActive } from "@/lib/run-shared";
 import { aiAllowance, limitMessage } from "@/lib/membership";
@@ -368,6 +369,26 @@ export function chitMcpServer(who: Who): McpServer {
     guarded(who, "search_products", async ({ query, from_canada, page }) => {
       const { hits, total } = await searchCatalog(query, page, from_canada ? "CA" : undefined);
       return txt({ total, products: hits.slice(0, 15).map((h) => ({ pid: h.pid, title: h.title, from_price_usd: (h.fromCents / 100).toFixed(2), ...(h.pick ? { vetted: h.pick } : {}) })), next: "Call get_product with a pid for its options, stock and shipping, then add_to_cart. Products marked vetted passed Chit's quality check." });
+    }),
+  );
+
+  server.registerTool(
+    "store_cart",
+    {
+      title: "Carts on other stores",
+      description:
+        "Builds carts on other online stores from product pages on the store's own site (Shopify, WooCommerce, BigCommerce and others): reads each page, picks the option, gets the live price, and returns each store's own add-to-cart link. The customer opens the link and the items land in their own cart there; nothing is bought here.",
+      inputSchema: {
+        items: z
+          .array(z.object({ url: z.string().url().max(500), quantity: z.coerce.number().int().min(1).max(999).default(1), option: z.string().max(120).optional() }))
+          .min(1)
+          .max(40),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    guarded(who, "store_cart", async ({ items }) => {
+      const r = await buildStoreCarts(items);
+      return txt(cartSummary(r), !r.carts.length);
     }),
   );
 

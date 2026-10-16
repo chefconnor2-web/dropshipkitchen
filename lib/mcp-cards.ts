@@ -129,6 +129,17 @@ export function viewCards(items: ConnectorItem[], chatId?: string): ViewCard[] {
             actions: [{ label: `Check out on ${it.site}`, url: it.url, primary: true }],
           },
         ];
+      case "store-cart":
+        return [
+          {
+            kind: "amazon",
+            id: it.id,
+            title: `${it.store} cart`,
+            subtitle: it.subtotal ? `${it.subtotal} before shipping and tax` : undefined,
+            lines: it.lines.slice(0, 12).map((l) => `${l.quantity} × ${l.title}${l.option ? ` (${l.option})` : ""}${l.price ? ` · ${l.price}` : ""}${l.needsHand ? " · add on its page" : ""}`),
+            actions: it.links.length ? it.links.map((k, i) => ({ label: it.links.length === 1 ? `Open ${it.store} cart` : `${i + 1}. ${k.label}`, url: k.url, primary: i === 0 })) : [{ label: `Open ${it.store}`, url: it.lines[0]?.url ?? `https://${it.store}`, primary: true }],
+          },
+        ];
       case "email-draft":
         return [
           {

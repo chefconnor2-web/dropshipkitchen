@@ -2476,3 +2476,13 @@ p.cx-kit-err { margin: 0; padding: 0 14px 12px; }
 .picks-tag.top { background: #e8f5ec; border-color: #b9dfc6; color: #1d6b3a; }
 .picks-tag.warn { background: #fff4e0; border-color: #f0d49a; color: #8a5a00; }
 .picks-why { font-size: 13px; line-height: 1.45; color: var(--muted, #555); margin: 4px 0 8px; }
+
+/* Store carts (cart links on other stores) */
+.cx-storecart { display: grid; gap: 10px; width: min(100%, 420px); padding: 14px 16px; border-radius: 16px; border: 1px solid var(--line, #e3e1dc); background: var(--card, #fff); }
+.cx-storecart-head { display: flex; justify-content: space-between; gap: 12px; font-weight: 700; }
+.cx-storecart-total { font-variant-numeric: tabular-nums; }
+.cx-storecart-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.cx-storecart-lines li { display: flex; justify-content: space-between; gap: 12px; }
+.cx-storecart-lines li > span:first-child { min-width: 0; }
+.cx-storecart-links { display: grid; gap: 8px; }
+.cx-storecart-links .cx-cartlink { width: 100%; }
