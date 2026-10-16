@@ -20,6 +20,20 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   },
 ];
 
+// Google answers datacenter browsers with a robot check ("unusual traffic") instead of the page. When that
+// happens, pull the question out of the link so Neon can answer it from a web search instead of stopping.
+export function robotCheck(finalUrl: string, text: string): { blocked: boolean; question: string | null } {
+  let question: string | null = null;
+  try {
+    const u = new URL(finalUrl);
+    const inner = u.searchParams.get("continue");
+    const q = u.searchParams.get("q") ?? (inner ? new URL(inner).searchParams.get("q") : null);
+    question = q?.trim() || null;
+  } catch {}
+  const blocked = /\/sorry\//.test(finalUrl) || /unusual traffic from your computer network|i'm not a robot|verify you are human|are you a robot/i.test(text.slice(0, 4000));
+  return { blocked, question };
+}
+
 async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorContext): Promise<ToolResult> {
   if (tool !== "read_link") return { content: `Unknown tool ${tool}`, isError: true };
   const url = String(input.url ?? "").trim();
@@ -33,6 +47,12 @@ async function run(tool: string, input: Record<string, unknown>, ctx: ConnectorC
   ctx.progress(`Opening ${host} in a browser to read it…`);
   try {
     const r = await browserApi.read(url, ctx.signal);
+    const check = robotCheck(r.url, `${r.title}\n${r.text}`);
+    if (check.blocked) {
+      return {
+        content: `The site showed a robot check instead of the page, so its content couldn't be read.${check.question ? ` The link is a search for: "${check.question}".` : ""} Don't stop here: ${check.question ? "run web_search on that question" : "work out what the link is about and run web_search on it"}, read the best sources with web_fetch, and answer from them. Tell the shopper the shared page itself was blocked, so this answer comes from a fresh search.`,
+      };
+    }
     const head = `Page: ${r.title || "(no title)"}\nURL: ${r.url}\n${r.truncated ? "(text cut at 40,000 characters)\n" : ""}\n`;
     const blocks: Array<Anthropic.Beta.BetaTextBlockParam | Anthropic.Beta.BetaImageBlockParam> = [
       { type: "text", text: `${head}${r.text || "(the page showed no text; see the screenshots)"}` },
