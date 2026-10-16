@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bigcommerceProductId, cartLinks, detectPlatform, isPrivateAddress, jsonLdProduct, pickOption, shopifyHandle, subtotal, wooProductId, type StoreLine } from "../lib/connectors/stores";
+import { metaProduct, bigcommerceProductId, cartLinks, detectPlatform, isPrivateAddress, jsonLdProduct, pickOption, shopifyHandle, subtotal, wooProductId, type StoreLine } from "../lib/connectors/stores";
 
 const line = (over: Partial<StoreLine>): StoreLine => ({ url: "https://s.test/p", title: "Thing", quantity: 1, priceCents: 1000, currency: "USD", available: true, id: "1", ...over });
 
@@ -57,4 +57,12 @@ test("subtotal only when every line is priced in one currency", () => {
   assert.deepEqual(subtotal([line({ priceCents: 39900, quantity: 12 }), line({ priceCents: 1000 })]), { cents: 479800, currency: "USD" });
   assert.equal(subtotal([line({}), line({ priceCents: null })]).cents, null);
   assert.equal(subtotal([line({}), line({ currency: "CAD" })]).cents, null);
+});
+
+test("name and price from page tags when there's no schema.org data", () => {
+  const html = `<head><title>Fuse | EV West</title><meta property="og:title" content="High Voltage Fuse 500 Volt 400 Amp &amp; holder"><meta property="product:price:amount" content="69.00"><meta property="product:price:currency" content="USD"></head>`;
+  assert.deepEqual(metaProduct(html), { name: "High Voltage Fuse 500 Volt 400 Amp & holder", priceCents: 6900, currency: "USD" });
+  assert.deepEqual(metaProduct('<title>Inertia Switch</title><span itemprop="price" content="15.00"></span>'), { name: "Inertia Switch", priceCents: 1500, currency: undefined });
+  assert.equal(metaProduct("<p>nothing</p>").priceCents, undefined);
+  assert.equal(metaProduct('<h1>DC/DC Converter</h1><div class="product-price"><span>$549.00</span></div>').priceCents, 54900);
 });
