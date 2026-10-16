@@ -4,6 +4,8 @@ import { acting } from "@/lib/acting";
 import { catalogTool } from "@/lib/assistant";
 import { cartView } from "@/lib/mcp-server";
 import { getCartId, getOrCreateCartId } from "@/lib/cart";
+import { openCjProduct } from "@/lib/open-product";
+import { stockStatus } from "@/lib/inventory";
 import { publishableKey, isEmbedded } from "@/lib/stripe-customer";
 import { stripe } from "@/lib/stripe";
 import { config } from "@/lib/config";
@@ -33,18 +35,17 @@ async function viewFor(cartId: string | null): Promise<Cart> {
   return normalize((await cartView(cartId)).summary);
 }
 
-/** Pick a buyable variant for a pid: the first in-stock option, else the first. */
+/** Pick a buyable variant for a pid: the first in-stock option, else the first enabled one. */
 async function variantForPid(pid: string): Promise<string | null> {
-  const r = await catalogTool("get_product", { pid }, "");
-  if (r.isError) return null;
-  try {
-    const data = JSON.parse(String(r.content)) as { variants?: Array<{ variant_id?: string; stock?: string }> };
-    const vs = data.variants ?? [];
-    const ok = vs.find((v) => v.variant_id && v.stock && !/out of stock|unavailable/i.test(v.stock));
-    return (ok ?? vs.find((v) => v.variant_id))?.variant_id ?? null;
-  } catch {
-    return null;
-  }
+  const product = await openCjProduct(pid);
+  if (!product) return null;
+  const vs = await prisma.productVariant.findMany({
+    where: { productId: product.id, enabled: true },
+    orderBy: { position: "asc" },
+    select: { id: true, offer: { select: { cjSupplierVariant: { select: { inventoryTotal: true } } } } },
+  });
+  const inStock = vs.find((v) => v.offer && stockStatus(v.offer.cjSupplierVariant.inventoryTotal) !== "UNAVAILABLE");
+  return (inStock ?? vs[0])?.id ?? null;
 }
 
 export async function POST(req: Request) {
