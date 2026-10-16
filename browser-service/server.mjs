@@ -11,6 +11,7 @@
 //   POST   /sessions/:id/amazon/search     { domain, query }
 //   POST   /sessions/:id/amazon/add        { domain, asin, quantity }
 //   POST   /sessions/:id/amazon/cart       { domain }
+//   POST   /read                           { url } → { url, title, text, screenshots[] } (read-only, any public page)
 //   GET    /health
 // WebSocket /live?id=…&exp=…&token=… (token = HMAC of "live.<id>.<exp>", minted by the storefront for the
 // chat's owner, valid until exp): binary JPEG frames out, newest first (a slow phone skips frames, never
@@ -22,6 +23,8 @@
 
 import http from "node:http";
 import crypto from "node:crypto";
+import { lookup } from "node:dns/promises";
+import net from "node:net";
 import puppeteer from "puppeteer-core";
 import { WebSocketServer } from "ws";
 import { deliver as deliverFrame, stopDelivery } from "./frames.mjs";
@@ -394,6 +397,93 @@ async function probeUrl(url) {
   }
 }
 
+/* ---------- Reading a shared link: any public page, read-only ---------- */
+
+// A link the shopper shares (a Google AI Mode answer, an article, a list): opened in its own fresh, signed-out
+// context with no input at all, fully rendered, then read as text plus a few screenshots. Every document load
+// (the page, its redirects and frames) must resolve to a public address, so a link can't reach this service's
+// private network. Never more than READ_MS, and at most READ_MAX at once so the live browser stays responsive.
+const READ_MS = 35_000;
+const READ_MAX = 2;
+let reading = 0;
+
+const privateIp = (ip) => {
+  if (net.isIP(ip) === 6) {
+    const v = ip.toLowerCase();
+    if (v === "::1" || v === "::") return true;
+    if (v.startsWith("::ffff:")) return privateIp(v.slice(7));
+    return /^f[cd]/.test(v) || /^fe[89ab]/.test(v);
+  }
+  const [a, b] = ip.split(".").map(Number);
+  return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
+};
+const publicHostCache = new Map();
+async function publicHost(host) {
+  const h = host.replace(/^\[|\]$/g, "");
+  if (TEST_ALLOW?.test(h)) return true;
+  if (!h || PRIVATE_HOST.test(h)) return false;
+  if (net.isIP(h)) return !privateIp(h);
+  if (publicHostCache.has(h)) return publicHostCache.get(h);
+  const ok = await lookup(h, { all: true }).then((as) => as.length > 0 && !as.some((x) => privateIp(x.address)), () => false);
+  if (publicHostCache.size > 500) publicHostCache.clear();
+  publicHostCache.set(h, ok);
+  return ok;
+}
+
+async function readPage(raw) {
+  let target;
+  try {
+    target = new URL(String(raw));
+  } catch {
+    throw Object.assign(new Error("That isn't a link."), { status: 400 });
+  }
+  if (!/^https?:$/.test(target.protocol) || !(await publicHost(target.hostname))) throw Object.assign(new Error("Only public web pages can be read."), { status: 400 });
+  if (reading >= READ_MAX) throw Object.assign(new Error("Reading another link right now. Try again in a moment."), { status: 429 });
+  reading++;
+  const b = await getBrowser();
+  const ctx = await b.createBrowserContext();
+  const cap = setTimeout(() => void ctx.close().catch(() => {}), READ_MS);
+  try {
+    const page = await ctx.newPage();
+    await page.setUserAgent(UA);
+    await page.setViewport(VIEW);
+    await page.setRequestInterception(true);
+    page.on("request", (r) => {
+      (async () => {
+        if (r.resourceType() === "media") return r.abort();
+        let host = "";
+        try {
+          host = new URL(r.url()).hostname;
+        } catch {
+          return r.abort();
+        }
+        // Documents (the page, redirects, frames) are checked by DNS; other requests by name.
+        const ok = r.resourceType() === "document" ? await publicHost(host) : !PRIVATE_HOST.test(host);
+        return ok ? r.continue() : r.abort();
+      })().catch(() => {});
+    });
+    await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 20000 });
+    // Pages that build themselves with scripts (AI Mode streams its answer): wait for the network to go quiet.
+    await page.waitForNetworkIdle({ idleTime: 1200, timeout: 12000 }).catch(() => {});
+    await settle(page, 1500);
+    const text = await page.evaluate(() => (document.body?.innerText || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim()).catch(() => "");
+    const height = await page.evaluate(() => document.documentElement.scrollHeight).catch(() => VIEW.height);
+    // Up to three screens, top to bottom, so tables and cards the text loses are still seen.
+    const screenshots = [];
+    for (let y = 0, i = 0; i < 3 && y < height; i++, y += VIEW.height) {
+      await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), y).catch(() => {});
+      await pause(250);
+      const shot = await page.screenshot({ type: "jpeg", quality: 60, captureBeyondViewport: false }).catch(() => null);
+      if (shot) screenshots.push(Buffer.from(shot).toString("base64"));
+    }
+    return { url: page.url(), title: await page.title().catch(() => ""), text: text.slice(0, 40000), truncated: text.length > 40000, screenshots };
+  } finally {
+    clearTimeout(cap);
+    reading--;
+    await ctx.close().catch(() => {});
+  }
+}
+
 async function runAction(s, a) {
   const page = s.page;
   // Smart form actions (fill / select / date / click_text): the page finds the field itself. forms.mjs.
@@ -707,6 +797,13 @@ const server = http.createServer(async (req, res) => {
   const given = String(req.headers["x-browser-secret"] || "");
   if (!SECRET || !safeEq(given, SECRET)) return send(res, 401, { error: "Unauthorized" });
   try {
+    if (url.pathname === "/read" && req.method === "POST") {
+      const body = await readJson(req);
+      const t0 = Date.now();
+      const r = await readPage(body.url);
+      log("read", hostOf(r.url), `${r.text.length} chars`, `${r.screenshots.length} shots`, `${Date.now() - t0}ms`);
+      return send(res, 200, r);
+    }
     const m = url.pathname.match(/^\/sessions(?:\/([a-f0-9]{24}))?(\/.*)?$/);
     if (!m) return send(res, 404, { error: "Not found" });
     const [, id, rest = ""] = m;
