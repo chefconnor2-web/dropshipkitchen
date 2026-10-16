@@ -5,6 +5,7 @@
 // as they arrive.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { ownerPricing } from "@/lib/membership";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
@@ -667,7 +668,7 @@ async function runTool(name: string, input: Record<string, unknown>, ctx: Ctx): 
     const cart = await loadCart(ctx.cartId);
     const items = cart?.items ?? [];
     if (!items.length) return { content: "The cart is empty." };
-    const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
+    const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })), { owner: await ownerPricing() });
     const unit = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
     const subtotal = priced.totalCents;
     return {

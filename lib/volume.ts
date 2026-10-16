@@ -29,6 +29,8 @@ export interface PriceLine {
   quantity: number;
 }
 
+import { noLossCents } from "@/lib/margin";
+
 export interface PricedOrder {
   /** Unit price per line, same order as the input. */
   unitCents: number[];
@@ -37,6 +39,8 @@ export interface PricedOrder {
   savingsCents: number;
   /** Markup applied to the order (before quantity bonuses), or null at list price. */
   markup: number | null;
+  /** Priced for a store owner: CJ's cost plus the card fee, so owners buy at cost without the store losing money. */
+  owner?: boolean;
 }
 
 export function orderMarkup(costCents: number): number {
@@ -48,8 +52,14 @@ export function bulkDiscountsOn(): boolean {
 }
 
 /** Prices a whole cart/order. Lines without a known supplier cost always pay list price. */
-export function priceOrder(lines: PriceLine[]): PricedOrder {
+export function priceOrder(lines: PriceLine[], opts: { owner?: boolean } = {}): PricedOrder {
   const listTotalCents = lines.reduce((n, l) => n + l.listCents * l.quantity, 0);
+  if (opts.owner) {
+    // Owners (OWNER_EMAILS) buy at CJ's cost, lifted only by the worst-case card fee on it: never above list.
+    const unitCents = lines.map((l) => (l.costCents == null ? l.listCents : Math.min(l.listCents, noLossCents(l.costCents))));
+    const totalCents = lines.reduce((n, l, i) => n + unitCents[i] * l.quantity, 0);
+    return { unitCents, listTotalCents, totalCents, savingsCents: listTotalCents - totalCents, markup: null, owner: true };
+  }
   const costed = lines.filter((l) => l.costCents != null);
   const costTotal = costed.reduce((n, l) => n + l.costCents! * l.quantity, 0);
   const units = costed.reduce((n, l) => n + l.quantity, 0);

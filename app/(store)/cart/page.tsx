@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { ownerPricing } from "@/lib/membership";
 import Link from "next/link";
 import { withCjPriority } from "@/lib/cj/lanes";
 import { designLabel } from "@/lib/personalize";
@@ -19,7 +20,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const cart = await loadCart(await getCartId());
   const items = cart?.items ?? [];
   // The whole cart is priced as one transaction: bigger orders pay a lower margin.
-  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
+  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })), { owner: await ownerPricing() });
   const unit = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
   const boxes = cart?.boxes ?? [];
   const boxTotal = boxes.reduce((n, b) => n + b.box.priceCents, 0);
@@ -174,6 +175,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
               </div>
               <button className="btn small">Update shipping</button>
             </form>
+            {priced.owner && <p className="notice small">Owner pricing: you pay CJ&rsquo;s cost plus the card fee, so the store doesn&rsquo;t lose money on your order.</p>}
             <Suspense key={quoteKey} fallback={<ShippingPending subtotal={subtotal} units={units} savings={savings} estimate={estimate} />}>
               <ShippingSummary quote={quote} shipToTier={shipTo.tier} subtotal={subtotal} units={units} savings={savings} offerFreight={showFreightBase} freightSent={freight === "sent"} />
             </Suspense>

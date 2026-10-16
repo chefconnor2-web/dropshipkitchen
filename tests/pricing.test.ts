@@ -74,3 +74,14 @@ test("profit check: what an order keeps after CJ and the worst card fee", () => 
   // CJ's price jumped to $20 + $5: keeps 145, below the minimum, so the order is refunded instead
   assert.ok(orderKeepCents(2799, 2500) < MIN_KEEP_CENTS);
 });
+
+test("owners pay CJ's cost plus the worst-case card fee, never above list", () => {
+  delete process.env.BULK_DISCOUNTS;
+  const r = priceOrder([{ listCents: 2299, costCents: 1000, quantity: 2 }, { listCents: 500, costCents: null, quantity: 1 }], { owner: true });
+  // 1000 cost: ceil((1000 + 30) / (1 - 0.044)) = 1078
+  assert.deepEqual(r.unitCents, [1078, 500]);
+  assert.equal(r.totalCents, 1078 * 2 + 500);
+  assert.equal(r.owner, true);
+  assert.ok(r.savingsCents > 0);
+  assert.equal(priceOrder([{ listCents: 1000, costCents: 990, quantity: 1 }], { owner: true }).unitCents[0], 1000);
+});
