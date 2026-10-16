@@ -142,7 +142,7 @@ export const HOTEL_EMAIL_TEST = {
 export const EV_BUILD_TEST = {
   label: "🧪 Test: source my 48V Silverado EV build (every cart)",
   prompt: [
-    "Build every cart for my 2015 Chevy Silverado 4x4 EV conversion: 48V (16S LiFePO4), a 10 kW motor driving the transfer case in 4LO, shipping to Churchill, MB R0B 0E0. Do all of it in this turn, then give me one summary with each cart's link and subtotal.",
+    "Build every cart for my 2015 Chevy Silverado 4x4 EV conversion: 48V (16S LiFePO4), a 10 kW motor driving the transfer case in 4LO, shipping to Churchill, MB R0B 0E0. The truck keeps its own 12V battery and throttle pedal, and the cells come with busbars. Do all of it in this turn, then give me one summary with each cart's link and subtotal.",
     "1. Chit catalog: find these and add them to my Chit cart: 1 UNI-T UT61D multimeter, 1 DC voltmeter/ammeter with a 300A shunt (0-300V), 1 Anderson-style 175A battery connector pair, 2 × 12V 40A automotive relays, 1 heat shrink tube kit.",
     "2. Store carts: call store_cart once with all of these:",
     "- https://goldenmotor.bike/collections/all/products/10kw-bldc-motor-air-cooled × 1 (option: 48V)",

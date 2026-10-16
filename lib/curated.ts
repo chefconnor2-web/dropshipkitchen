@@ -53,6 +53,22 @@ export function impossibleClaim(name: string): boolean {
   return false;
 }
 
+const nameWords = (t: string) => t.toLowerCase().replace(/[^a-z0-9.]+/g, " ").split(" ").filter((w) => w.length > 1);
+
+/**
+ * Picks whose own name holds every word of the search (at least one of them a model-like token with a digit, or
+ * two words or more), so "UT61D multimeter" or "DS3225 servo" finds the pick even when CJ titles it "Digital
+ * Multimeter". Best matches first.
+ */
+export function picksNamed(query: string, limit = 4): CuratedPick[] {
+  const q = nameWords(query);
+  if (!q.length || (q.length < 2 && !/\d/.test(q[0]))) return [];
+  return CURATED_PICKS.filter((p) => {
+    const n = nameWords(`${p.name} ${p.category}`);
+    return q.every((w) => n.some((x) => x === w || (w.length > 3 && x.startsWith(w))));
+  }).slice(0, limit);
+}
+
 /** Puts curated picks first, keeping each group's own order. */
 export function picksFirst<T extends { pid: string }>(hits: T[]): T[] {
   return [...hits.filter((h) => byPid.has(h.pid)), ...hits.filter((h) => !byPid.has(h.pid))];
