@@ -13,7 +13,7 @@ import { useRunContext } from "./run-context";
 
 /** Book buttons in the chat carry the chat's id, so after paying the shopper lands back in this chat. */
 const chatQ = (id: string | null, sep = "?") => (id && /^[A-Za-z0-9_-]{1,40}$/.test(id) ? `${sep}chat=${encodeURIComponent(id)}` : "");
-import { clock, dayShift, durationLabel, flightPrice, ruleLabel, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type EmailDraftCard, type SupplierCard as Supplier, payAtHotelLabel, stayPrice, uberLink } from "@/lib/flights-shared";
+import { clock, dayShift, durationLabel, flightPrice, ruleLabel, shortDate, stopsLabel, type ConnectorItem, type FlightCard as Flight, type HotelCard as Hotel, type CarRentalCard, type CartLinkCard, type StoreCartCard, type EmailDraftCard, type SupplierCard as Supplier, payAtHotelLabel, stayPrice, uberLink } from "@/lib/flights-shared";
 
 export interface Card {
   pid: string;
@@ -521,6 +521,8 @@ export function ConnectorCards({ items }: { items: ConnectorItem[] }) {
                 <BrowserView key={it.id} b={it} />
               ) : it.kind === "cart-link" ? (
                 <CartLink key={it.id} c={it} />
+              ) : it.kind === "store-cart" ? (
+                <StoreCart key={it.id} c={it} />
               ) : it.kind === "email-draft" ? (
                 <EmailDraft key={it.id} e={it} />
               ) : (
@@ -550,6 +552,47 @@ function CartLink({ c }: { c: CartLinkCard }) {
         ↗
       </span>
     </a>
+  );
+}
+
+/** A cart on another store: its own add-to-cart link(s), what's in it and the subtotal the store's pages show. */
+function StoreCart({ c }: { c: StoreCartCard }) {
+  const one = c.links.length === 1;
+  return (
+    <div className="cx-storecart">
+      <div className="cx-storecart-head">
+        <span className="cx-storecart-title">{c.store}</span>
+        {c.subtotal && <span className="cx-storecart-total">{c.subtotal}</span>}
+      </div>
+      <ul className="cx-storecart-lines">
+        {c.lines.map((l, i) => (
+          <li key={i}>
+            <span>
+              {l.quantity} × {l.title}
+              {l.option ? ` (${l.option})` : ""}
+            </span>
+            {l.needsHand ? (
+              <a href={l.url} target="_blank" rel="noopener noreferrer">
+                Add on page ↗
+              </a>
+            ) : (
+              <span className="muted">{l.price ?? ""}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="cx-storecart-links">
+        {c.links.map((k, i) => (
+          <a key={i} className="cx-cartlink" href={k.url} target="_blank" rel="noopener noreferrer">
+            <span className="cx-cartlink-title">{one ? `Open your ${c.store} cart` : `${i + 1}. ${k.label}`}</span>
+            <span className="cx-cartlink-sub">{one ? "Adds everything to your own cart there" : "Opens in turn in the same browser"}</span>
+            <span className="cx-cartlink-go" aria-hidden>
+              ↗
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
   );
 }
 

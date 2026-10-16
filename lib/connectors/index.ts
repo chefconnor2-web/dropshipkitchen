@@ -7,8 +7,9 @@ import { discoverCarsConnector } from "./discovercars";
 import { amazonConnector } from "./amazon";
 import { tripsConnector } from "./trips";
 import { companyConnector } from "./company";
+import { storesConnector } from "./stores";
 
-export const CONNECTORS: Connector[] = [duffelConnector, liteapiConnector, discoverCarsConnector, amazonConnector, tripsConnector, companyConnector];
+export const CONNECTORS: Connector[] = [duffelConnector, liteapiConnector, discoverCarsConnector, amazonConnector, storesConnector, tripsConnector, companyConnector];
 
 export function enabledConnectors(): Connector[] {
   return CONNECTORS.filter((c) => c.enabled());
