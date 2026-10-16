@@ -624,7 +624,7 @@ type NeonResult =
 const ASK_WAIT_MS = 8_000;
 const STATUS_WAIT_MS = 45_000;
 
-async function askNeon(who: Who, message: string, chatId: string | undefined): Promise<NeonResult> {
+export async function askNeon(who: Who, message: string, chatId: string | undefined): Promise<NeonResult> {
   if (!assistantConfigured()) return { state: "error", message: "Neon isn't switched on." };
   const allowance = await aiAllowance({ customerId: who.customerId, visitorId: null });
   if (allowance.remaining <= 0) return { state: "error", message: `${limitMessage(allowance)} Plans: ${config.siteUrl}/plans` };
@@ -644,7 +644,7 @@ async function askNeon(who: Who, message: string, chatId: string | undefined): P
 }
 
 /** Waits for the run to finish or stop on a step, up to `ms`. */
-async function waitNeon(runId: string, ms = STATUS_WAIT_MS): Promise<NeonResult> {
+export async function waitNeon(runId: string, ms = STATUS_WAIT_MS): Promise<NeonResult> {
   const t0 = Date.now();
   for (;;) {
     const r = await getRun(runId);
