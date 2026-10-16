@@ -585,7 +585,7 @@ async function cartView(cartId: string) {
   const totals = await catalogTool("view_cart", {}, cartId);
   const parsed = (() => {
     try {
-      return JSON.parse(String(totals.content)) as { subtotal?: string; shipping?: string; bulk_savings?: string | null };
+      return JSON.parse(String(totals.content)) as { subtotal?: string; shipping?: string; bulk_savings?: string | null; owner_price?: string };
     } catch {
       return {};
     }
@@ -593,7 +593,7 @@ async function cartView(cartId: string) {
   const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })), { owner: await ownerPricing() });
   const lines = items.map((i, n) => ({ line_id: i.id, product: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total: formatMoney(priced.unitCents[n] * i.quantity) }));
   const checkout = `${config.siteUrl}/cart`;
-  const summary = { items: lines, boxes: cart?.boxes.length ?? 0, subtotal: parsed.subtotal ?? formatMoney(priced.totalCents), bulk_savings: parsed.bulk_savings ?? undefined, shipping: parsed.shipping, checkout_url: checkout, note: "The customer checks out on Chit (signed in with the same account) and pays there." };
+  const summary = { items: lines, boxes: cart?.boxes.length ?? 0, subtotal: parsed.subtotal ?? formatMoney(priced.totalCents), bulk_savings: parsed.bulk_savings ?? undefined, owner_price: parsed.owner_price, shipping: parsed.shipping, checkout_url: checkout, note: "The customer checks out on Chit (signed in with the same account) and pays there." };
   const cards: ViewCard[] = lines.length
     ? [
         {
@@ -604,7 +604,7 @@ async function cartView(cartId: string) {
           lines: lines.map((l) => `${l.quantity} × ${l.product}${l.option && l.option !== "Default" ? ` (${l.option})` : ""} · ${l.line_total}`),
           price: summary.subtotal,
           priceNote: "subtotal",
-          badges: parsed.bulk_savings ? [`Bulk savings ${parsed.bulk_savings}`] : [],
+          badges: parsed.owner_price ? ["Owner price (at cost)"] : parsed.bulk_savings ? [`Bulk savings ${parsed.bulk_savings}`] : [],
           cartLines: lines.map((l) => ({ id: l.line_id, label: `${l.product}${l.option && l.option !== "Default" ? ` (${l.option})` : ""}`, quantity: l.quantity, total: l.line_total })),
           actions: [{ label: "Check out", tool: { name: "checkout_cart", args: {} }, primary: true }, { label: "Open cart in Chit", url: checkout }],
         },

@@ -255,7 +255,7 @@ function SummaryRows({ subtotal, units, savings, shipping, tierLabel }: { subtot
       <dd>{formatMoney(subtotal)}</dd>
       {savings > 0 && (
         <>
-          <dt className="vol-save">Bulk savings</dt>
+          <dt className="vol-save">Savings</dt>
           <dd className="vol-save">−{formatMoney(savings)}</dd>
         </>
       )}
