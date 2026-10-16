@@ -122,6 +122,26 @@ export function jsonLdProduct(html: string): { name?: string; priceCents?: numbe
   return null;
 }
 
+const attr = (html: string, re: RegExp) => html.match(re)?.[1]?.trim();
+const decode = (s: string) => s.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+
+/**
+ * The product's name and price from ordinary page tags, for stores without schema.org data: Open Graph and
+ * product meta tags, microdata (itemprop="price"), then the page's heading or title.
+ */
+export function metaProduct(html: string): { name?: string; priceCents?: number; currency?: string } {
+  const meta = (key: string) =>
+    attr(html, new RegExp(`<meta[^>]+(?:property|name|itemprop)=["']${key}["'][^>]*content=["']([^"']+)["']`, "i")) ??
+    attr(html, new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name|itemprop)=["']${key}["']`, "i"));
+  const name = meta("og:title") ?? attr(html, /<h1[^>]*>([^<]{3,200})<\/h1>/i) ?? attr(html, /<title[^>]*>([^<]{3,200})<\/title>/i);
+  const rawPrice = meta("product:price:amount") ?? meta("og:price:amount") ?? meta("price") ?? attr(html, /itemprop=["']price["'][^>]*content=["']([\d.,]+)["']/i) ?? attr(html, /content=["']([\d.,]+)["'][^>]*itemprop=["']price["']/i);
+  // Last resort: the first amount shown in an element whose class names a price.
+  const shown = rawPrice ?? attr(html, /class=["'][^"']*price[^"']*["'][^>]*>\s*(?:<[^>]+>\s*)*(?:US|CA|C)?\$\s*([\d,]+\.\d{2})/i);
+  const price = shown ? Number(shown.replace(/,/g, "")) : NaN;
+  const currency = meta("product:price:currency") ?? meta("og:price:currency") ?? meta("priceCurrency") ?? attr(html, /itemprop=["']priceCurrency["'][^>]*content=["']([A-Z]{3})["']/i);
+  return { name: name ? decode(name) : undefined, priceCents: Number.isFinite(price) && price > 0 ? Math.round(price * 100) : undefined, currency };
+}
+
 /** WooCommerce simple product id (the add-to-cart button's value). Null for variable products. */
 export function wooProductId(html: string): string | null {
   if (/variations_form/.test(html)) return null;
@@ -226,7 +246,8 @@ export async function resolveProduct(raw: string, quantity: number, option?: str
   if (page.status >= 400) return { origin, platform: "other", line: { ...base, note: `The page answered ${page.status}.` } };
   const platform = detectPlatform(page.body);
   const ld = jsonLdProduct(page.body);
-  const line: StoreLine = { ...base, title: ld?.name ?? base.title, priceCents: ld?.priceCents ?? null, currency: ld?.currency ?? null, available: ld?.available ?? null };
+  const tags = metaProduct(page.body);
+  const line: StoreLine = { ...base, title: ld?.name ?? tags.name ?? base.title, priceCents: ld?.priceCents ?? tags.priceCents ?? null, currency: ld?.currency ?? tags.currency ?? null, available: ld?.available ?? null };
 
   if (platform === "shopify") {
     const handle = shopifyHandle(page.url);
