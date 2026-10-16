@@ -613,11 +613,23 @@ async function cartView(cartId: string) {
   return { summary, cards };
 }
 
+/** A catalog product for the companion app (from the reply's product cards, which ride beside `items`). */
+type NeonCard = { pid: string; title: string; fromCents: number };
+export type NeonProduct = { pid: string; title: string; priceCents: number; currency: string; url: string };
+
+function neonProducts(cards: NeonCard[] | undefined): NeonProduct[] {
+  if (!Array.isArray(cards)) return [];
+  return cards
+    .filter((c) => c && typeof c.pid === "string" && typeof c.title === "string")
+    .slice(0, 30)
+    .map((c) => ({ pid: c.pid, title: c.title, priceCents: c.fromCents, currency: "USD", url: `${config.siteUrl}/search/item/${encodeURIComponent(c.pid)}` }));
+}
+
 type NeonResult =
   | { state: "error"; message: string }
   | { state: "working"; runId: string; chatId: string; note: string; session?: string | null }
-  | { state: "waiting"; runId: string; chatId: string; step: { id: string; kind: string; message: string; inBrowser: boolean; session?: string }; partial: string; items: ConnectorItem[] }
-  | { state: "done"; runId: string; chatId: string; text: string; items: ConnectorItem[] }
+  | { state: "waiting"; runId: string; chatId: string; step: { id: string; kind: string; message: string; inBrowser: boolean; session?: string }; partial: string; items: ConnectorItem[]; products: NeonProduct[] }
+  | { state: "done"; runId: string; chatId: string; text: string; items: ConnectorItem[]; products: NeonProduct[] }
   | { state: "failed"; runId: string; chatId: string; message: string };
 
 /** ask_neon answers after this (the card keeps streaming); neon_status waits up to the longer one. */
@@ -650,9 +662,9 @@ export async function waitNeon(runId: string, ms = STATUS_WAIT_MS): Promise<Neon
     const r = await getRun(runId);
     if (!r) return { state: "error", message: "Unknown run." };
     const { run, done, chatId } = r;
-    if (run.status === "completed" && done) return { state: "done", runId, chatId, text: done.entry.text, items: ((done.entry as { items?: ConnectorItem[] }).items ?? []) };
+    if (run.status === "completed" && done) return { state: "done", runId, chatId, text: done.entry.text, items: ((done.entry as { items?: ConnectorItem[] }).items ?? []), products: neonProducts((done.entry as { cards?: NeonCard[] }).cards) };
     if (run.status === "waiting" && run.pending)
-      return { state: "waiting", runId, chatId, step: { id: run.pending.id, kind: run.pending.kind, message: run.pending.message, inBrowser: !!run.pending.browser, session: run.pending.browser?.sessionId }, partial: run.partial.text, items: (run.partial as { items?: ConnectorItem[] }).items ?? [] };
+      return { state: "waiting", runId, chatId, step: { id: run.pending.id, kind: run.pending.kind, message: run.pending.message, inBrowser: !!run.pending.browser, session: run.pending.browser?.sessionId }, partial: run.partial.text, items: (run.partial as { items?: ConnectorItem[] }).items ?? [], products: neonProducts((run.partial as { cards?: NeonCard[] }).cards) };
     if (!isActive(run.status)) return { state: "failed", runId, chatId, message: run.error ?? `Neon stopped (${run.status}).` };
     if (Date.now() - t0 > ms) {
       const session = (await prisma.assistantChat.findUnique({ where: { id: chatId }, select: { browserSessionId: true } }))?.browserSessionId;
