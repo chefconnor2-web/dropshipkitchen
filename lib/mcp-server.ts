@@ -579,7 +579,7 @@ export function chitMcpServer(who: Who): McpServer {
 /* ---------- Cart and Neon helpers ---------- */
 
 /** The cart as a summary for the model (with line ids) and a card for the view. */
-async function cartView(cartId: string) {
+export async function cartView(cartId: string) {
   const cart = await loadCart(cartId);
   const items = cart?.items ?? [];
   const totals = await catalogTool("view_cart", {}, cartId);
