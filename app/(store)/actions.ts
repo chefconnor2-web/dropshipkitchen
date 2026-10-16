@@ -17,7 +17,10 @@ import { withCjPriority } from "@/lib/cj/lanes";
 /** Checkout charges a CJ quote at most this old (the cart page refreshes quotes older than 30 minutes). */
 const CHECKOUT_QUOTE_MAX_AGE_MS = 2 * 60 * 60_000;
 import { ensureFreshInventory, stockStatus } from "@/lib/inventory";
+import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
+import { actingAs } from "@/lib/acting";
+import { forCustomer, checkoutUrl } from "@/lib/stripe-customer";
 import { newOrderNumber, ORDER_STATUS } from "@/lib/orders";
 import { designLabel } from "@/lib/personalize";
 import { prewarmCartQuote } from "@/lib/cart-quote";
@@ -212,7 +215,7 @@ async function placeCheckout() {
   });
 
   // Stripe only ever sees OUR product names and prices.
-  const session = await stripe().checkout.sessions.create({
+  const checkoutParams: Stripe.Checkout.SessionCreateParams = {
     mode: "payment",
     line_items: [
       ...items.map((i) => ({
@@ -253,9 +256,13 @@ async function placeCheckout() {
     metadata: { orderId: order.id, orderNumber: order.number },
     success_url: `${config.siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${config.siteUrl}/cart`,
-  });
+  };
+  // Neon Browser (and the Chit card) check out with Stripe's embedded form in the chat; the storefront is
+  // unchanged (no acting context → raw hosted session, as before).
+  const act = actingAs();
+  const session = await stripe().checkout.sessions.create(act?.embedded ? await forCustomer(checkoutParams, act.customerId ?? null, true) : checkoutParams);
   await prisma.order.update({ where: { id: order.id }, data: { stripeSessionId: session.id } });
-  redirect(session.url!);
+  redirect(checkoutUrl(session));
 }
 
 export type WaitlistState = { ok: boolean; message: string } | null;
