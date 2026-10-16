@@ -13,6 +13,10 @@ check (or a choice only they can make) opens this browser full screen on their p
   - `BROWSER_SERVICE_SECRET`: a long random string, the same value as on the Chit service.
   - `MAX_SESSIONS` (default 3): browsers at once, about 400–600 MB of RAM each.
   - `IDLE_MINUTES` (default 15): close a browser nobody has used for this long.
+  - `RESIDENTIAL_PROXY_URL` (optional): route browser traffic through an HTTP residential proxy. Accepts
+    `host:port`, `username:password@host:port`, or `http://username:password@host:port`. URL-encode reserved
+    characters in credentials. Use a rotating gateway from your proxy provider if you need changing exit IPs;
+    this service keeps one proxy endpoint for all browser sessions. Credentials are not logged.
   - Optional: `SCREENCAST_QUALITY` (JPEG quality of the live view, default 60), `FRAME_QUEUE_BYTES` (per viewer,
     default 49152: no new frame is sent while a viewer's socket holds more), `ALLOWED_ORIGINS` (comma list of
     storefront origins allowed to open the live view, e.g. `https://storefront-preview-debc.up.railway.app`),
