@@ -75,7 +75,15 @@ export function shopifyHandle(url: URL): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-const words = (s: string) => s.toLowerCase().split(/[^a-z0-9.]+/).filter(Boolean);
+const UNITS: Record<string, string> = { volt: "v", volts: "v", amp: "a", amps: "a", ampere: "a", amperes: "a", watt: "w", watts: "w", kilowatt: "kw", kilowatts: "kw", inch: "in", inches: "in" };
+/** Lowercase words with "48V" split into "48" + "v" and unit names shortened ("48 Volts" → "48", "v"). */
+const words = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/(\d)([a-z]+)/g, "$1 $2")
+    .split(/[^a-z0-9.]+/)
+    .filter(Boolean)
+    .map((w) => UNITS[w] ?? w);
 
 /** The option matching every word the shopper asked for, else the only one, else null (ask which). */
 export function pickOption<T extends { title: string }>(options: T[], want?: string): T | null {

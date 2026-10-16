@@ -29,6 +29,9 @@ test("option picking: every asked word, the only option, or ask", () => {
   assert.equal(pickOption(opts, undefined), null);
   assert.equal(pickOption(opts, "pack of 8"), null);
   assert.equal(pickOption([{ title: "Default" }], "anything")?.title, "Default");
+  const volts = [{ title: "48 Volts" }, { title: "72 Volts" }];
+  assert.equal(pickOption(volts, "48V")?.title, "48 Volts");
+  assert.equal(pickOption([{ title: "800 Amps (5-8 KW)" }, { title: "1000 Amps (6-10 KW)" }], "1000A")?.title, "1000 Amps (6-10 KW)");
 });
 
 test("schema.org product data, including @graph and offer arrays", () => {
