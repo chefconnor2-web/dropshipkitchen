@@ -109,6 +109,12 @@ export function isOwnerEmail(email: string | null | undefined): boolean {
   return !!email && owners.includes(email.trim().toLowerCase());
 }
 
+/** Whether whoever is signed in (or the MCP customer being acted for) is an owner, who buys at cost. */
+export async function ownerPricing(): Promise<boolean> {
+  const { getMember } = await import("@/lib/session");
+  return isOwnerEmail((await getMember())?.email);
+}
+
 /** How many AI messages this person may still send. */
 export async function aiAllowance(who: { customerId: string | null; visitorId: string | null }): Promise<Allowance> {
   const limits = await getLimits();

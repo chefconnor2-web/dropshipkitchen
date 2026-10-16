@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { ownerPricing } from "@/lib/membership";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { config, stripeKeyProblem } from "@/lib/config";
@@ -113,7 +114,7 @@ async function placeCheckout() {
   const svCost = new Map(
     (await prisma.cjSupplierVariant.findMany({ where: { id: { in: items.map((i) => i.variant.offer!.cjSupplierVariantId) } }, select: { id: true, supplierPriceCents: true } })).map((v) => [v.id, v.supplierPriceCents]),
   );
-  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: svCost.get(i.variant.offer!.cjSupplierVariantId), quantity: i.quantity })));
+  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: svCost.get(i.variant.offer!.cjSupplierVariantId), quantity: i.quantity })), { owner: await ownerPricing() });
   const unitPrice = (i: (typeof items)[number]) => priced.unitCents[items.indexOf(i)];
 
   // Shipping is CJ's quote for these exact VIDs to the shopper's country, charged at cost: a recent one

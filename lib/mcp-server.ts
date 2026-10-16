@@ -25,7 +25,7 @@ import { picksFor, SECTORS, SPECIALTY, type Sector } from "@/lib/curated";
 import { buildStoreCarts, cartSummary } from "@/lib/connectors/stores";
 import { acceptRun, getRun, resumeRun } from "@/lib/runs";
 import { isActive } from "@/lib/run-shared";
-import { aiAllowance, limitMessage } from "@/lib/membership";
+import { aiAllowance, limitMessage, ownerPricing } from "@/lib/membership";
 import { priceOrder } from "@/lib/volume";
 import { formatMoney } from "@/lib/money";
 import { VIEW_URI, viewHtml } from "@/lib/mcp-view";
@@ -590,7 +590,7 @@ async function cartView(cartId: string) {
       return {};
     }
   })();
-  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })));
+  const priced = priceOrder(items.map((i) => ({ listCents: i.variant.priceCents, costCents: i.variant.offer?.cjSupplierVariant.supplierPriceCents, quantity: i.quantity })), { owner: await ownerPricing() });
   const lines = items.map((i, n) => ({ line_id: i.id, product: i.variant.product.title, option: i.variant.name, quantity: i.quantity, line_total: formatMoney(priced.unitCents[n] * i.quantity) }));
   const checkout = `${config.siteUrl}/cart`;
   const summary = { items: lines, boxes: cart?.boxes.length ?? 0, subtotal: parsed.subtotal ?? formatMoney(priced.totalCents), bulk_savings: parsed.bulk_savings ?? undefined, shipping: parsed.shipping, checkout_url: checkout, note: "The customer checks out on Chit (signed in with the same account) and pays there." };

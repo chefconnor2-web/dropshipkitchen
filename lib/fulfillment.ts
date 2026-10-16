@@ -10,6 +10,7 @@ import { priceToCents } from "@/lib/money";
 import { worstCardFeeCents } from "@/lib/margin";
 import { stripe } from "@/lib/stripe";
 import { ownerAlert } from "@/lib/owner-alert";
+import { isOwnerEmail } from "@/lib/membership";
 import { ORDER_STATUS } from "@/lib/orders";
 import { sendOrderEmail } from "@/lib/order-emails";
 import { canShipFrom } from "@/lib/warehouses";
@@ -247,8 +248,9 @@ async function refundForLoss(orderId: string, why: string) {
 }
 
 /** Throws (after refunding) when paying CJ `cjCostCents` would leave less than MIN_KEEP_CENTS. */
-async function guardProfit(order: { id: string; subtotalCents: number; shippingCents: number; stripePaymentIntent: string | null; stripeInvoiceId: string | null }, cjCostCents: number | null, stage: string) {
-  if (!soldAtCheckout(order) || cjCostCents == null) return;
+async function guardProfit(order: { id: string; email: string | null; subtotalCents: number; shippingCents: number; stripePaymentIntent: string | null; stripeInvoiceId: string | null }, cjCostCents: number | null, stage: string) {
+  // Owners buy at cost on purpose (lib/volume.ts priceOrder): their orders carry no margin to protect.
+  if (!soldAtCheckout(order) || cjCostCents == null || isOwnerEmail(order.email)) return;
   const paid = order.subtotalCents + order.shippingCents;
   const keep = orderKeepCents(paid, cjCostCents);
   if (keep >= MIN_KEEP_CENTS) return;
