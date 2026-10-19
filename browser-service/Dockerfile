@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
-COPY server.mjs frames.mjs pool.mjs forms.mjs browser-tool.mjs ./
+COPY server.mjs frames.mjs pool.mjs forms.mjs browser-tool.mjs proxy.mjs ./
 ENV NODE_ENV=production CHROME_PATH=/usr/bin/chromium PORT=8080
 EXPOSE 8080
 # Chromium runs as a non-root user.
