@@ -338,6 +338,7 @@ async function streamFullArchive(res: any) {
   );
 
   const records = rows.rows;
+  const totalBytes = records.reduce((sum: number, record: any) => sum + Number(record.byte_length || 0), 0);
   const archive = archiver("zip", {
     zlib: { level: 0 },
     forceZip64: true
@@ -360,6 +361,8 @@ async function streamFullArchive(res: any) {
     "content-disposition": `attachment; filename="forage-atlas-full-corpus-${stamp}.zip"`,
     "cache-control": "no-store",
     "x-archive-record-count": String(records.length),
+    "x-archive-total-bytes": String(totalBytes),
+    "access-control-expose-headers": "x-archive-record-count,x-archive-total-bytes,content-disposition",
     "access-control-allow-origin": "*"
   });
 
