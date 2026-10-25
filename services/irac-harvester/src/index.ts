@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { S3Client, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, HeadObjectCommand, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createServer } from "node:http";
 import pg from "pg";
 import { createHash } from "node:crypto";
 
@@ -190,6 +192,162 @@ async function capture(item: any, robotsCache: Map<string,string>) {
   }
 }
 
+
+function json(res: any, status: number, body: unknown) {
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,OPTIONS",
+    "access-control-allow-headers": "content-type",
+    "cache-control": status === 200 ? "public, max-age=30" : "no-store",
+  });
+  res.end(JSON.stringify(body));
+}
+
+function safeLimit(value: string | null, fallback = 50) {
+  const n = Number(value || fallback);
+  return Number.isFinite(n) ? Math.max(1, Math.min(100, Math.floor(n))) : fallback;
+}
+
+function safeOffset(value: string | null) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+function normalizeMime(mime: string | null | undefined) {
+  const m = (mime || "application/octet-stream").toLowerCase().split(";")[0].trim();
+  return /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(m) ? m : "application/octet-stream";
+}
+
+async function archiveStats() {
+  const [queue, objects] = await Promise.all([
+    pool.query(`SELECT status,count(*)::int AS count,coalesce(sum(byte_length),0)::bigint AS bytes
+                FROM archive_queue GROUP BY status ORDER BY status`),
+    pool.query(`SELECT count(*)::int AS objects,coalesce(sum(byte_length),0)::bigint AS bytes
+                FROM archive_objects`)
+  ]);
+  return { queue: queue.rows, objects: objects.rows[0] || { objects: 0, bytes: 0 } };
+}
+
+async function listRecords(url: URL) {
+  const q = (url.searchParams.get("q") || "").trim();
+  const status = (url.searchParams.get("status") || "captured").trim();
+  const host = (url.searchParams.get("host") || "").trim();
+  const kind = (url.searchParams.get("kind") || "").trim();
+  const limit = safeLimit(url.searchParams.get("limit"));
+  const offset = safeOffset(url.searchParams.get("offset"));
+
+  const where: string[] = [];
+  const values: any[] = [];
+  const add = (sql: string, value: any) => {
+    values.push(value);
+    where.push(sql.replace("?", "$" + values.length));
+  };
+
+  if (status) add("q.status = ?", status);
+  if (host) add("q.host = ?", host);
+  if (kind) add("q.kind = ?", kind);
+  if (q) {
+    values.push("%" + q + "%");
+    const p = "$" + values.length;
+    where.push(`(
+      q.url ILIKE ${p}
+      OR coalesce(q.department,'') ILIKE ${p}
+      OR coalesce(q.classification->>'record_type','') ILIKE ${p}
+      OR coalesce(q.classification->>'department','') ILIKE ${p}
+      OR coalesce(q.classification->>'docket','') ILIKE ${p}
+      OR coalesce(q.classification->>'summary','') ILIKE ${p}
+    )`);
+  }
+
+  values.push(limit, offset);
+  const limitP = "$" + (values.length - 1);
+  const offsetP = "$" + values.length;
+  const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
+
+  const rows = await pool.query(
+    `SELECT q.url,q.host,q.kind,q.department,q.status,q.sha256,q.byte_length,q.mime,
+            q.classification,q.first_seen_at,q.last_checked_at,
+            o.storage_key,o.stored_at
+       FROM archive_queue q
+       LEFT JOIN archive_objects o ON o.sha256=q.sha256
+       ${whereSql}
+       ORDER BY coalesce(q.last_checked_at,q.first_seen_at) DESC
+       LIMIT ${limitP} OFFSET ${offsetP}`,
+    values
+  );
+
+  return { records: rows.rows, limit, offset };
+}
+
+async function getRecord(sha256: string) {
+  const r = await pool.query(
+    `SELECT q.url,q.host,q.kind,q.department,q.status,q.sha256,q.byte_length,q.mime,
+            q.classification,q.first_seen_at,q.last_checked_at,
+            o.storage_key,o.stored_at
+       FROM archive_queue q
+       LEFT JOIN archive_objects o ON o.sha256=q.sha256
+       WHERE q.sha256=$1
+       ORDER BY q.last_checked_at DESC NULLS LAST
+       LIMIT 1`,
+    [sha256]
+  );
+  return r.rows[0] || null;
+}
+
+async function getInlineUrl(record: any) {
+  if (!record?.storage_key) return null;
+  const mime = normalizeMime(record.mime);
+  const command = new GetObjectCommand({
+    Bucket: process.env.S3_BUCKET!,
+    Key: record.storage_key,
+    ResponseContentType: mime,
+    ResponseContentDisposition: `inline; filename="archive-${record.sha256.slice(0,12)}"`,
+  });
+  return getSignedUrl(s3, command, { expiresIn: 300 });
+}
+
+function startApi() {
+  const port = Number(process.env.PORT || 3000);
+  const server = createServer(async (req, res) => {
+    try {
+      if (req.method === "OPTIONS") return json(res, 204, {});
+      if (req.method !== "GET") return json(res, 405, { error: "method_not_allowed" });
+
+      const url = new URL(req.url || "/", "http://localhost");
+      if (url.pathname === "/health") {
+        return json(res, 200, { ok: true, service: "irac-harvester", claudeModel: CLAUDE_MODEL, concurrency });
+      }
+      if (url.pathname === "/api/archive/stats") {
+        return json(res, 200, await archiveStats());
+      }
+      if (url.pathname === "/api/archive/records") {
+        return json(res, 200, await listRecords(url));
+      }
+
+      const m = /^\/api\/archive\/records\/([a-f0-9]{64})(?:\/(view))?$/.exec(url.pathname);
+      if (m) {
+        const record = await getRecord(m[1]);
+        if (!record) return json(res, 404, { error: "record_not_found" });
+        if (m[2] === "view") {
+          const signedUrl = await getInlineUrl(record);
+          if (!signedUrl) return json(res, 404, { error: "object_not_found" });
+          return json(res, 200, { sha256: record.sha256, mime: normalizeMime(record.mime), expiresIn: 300, url: signedUrl });
+        }
+        return json(res, 200, { record });
+      }
+
+      return json(res, 404, { error: "not_found" });
+    } catch (error) {
+      console.error("api error", error);
+      return json(res, 500, { error: "internal_error" });
+    }
+  });
+  server.listen(port, "0.0.0.0", () => {
+    console.log(JSON.stringify({ stage: "api", port }));
+  });
+}
+
 async function run() {
   await initDb();
   console.log(JSON.stringify({ stage: "config", claudeModel: CLAUDE_MODEL, concurrency }));
@@ -237,11 +395,9 @@ async function run() {
 
   const stats = await pool.query(`SELECT status,count(*)::int AS count,coalesce(sum(byte_length),0)::bigint AS bytes FROM archive_queue GROUP BY status ORDER BY status`);
   console.log(JSON.stringify({ stage: "complete", stats: stats.rows }));
-  await pool.end();
 }
 
-run().catch(async error => {
-  console.error(error);
-  try { await pool.end(); } catch {}
-  process.exit(1);
+startApi();
+run().catch(error => {
+  console.error("harvest error", error);
 });
