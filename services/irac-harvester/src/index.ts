@@ -4,6 +4,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createServer } from "node:http";
 import pg from "pg";
 import { createHash } from "node:crypto";
+import archiver from "archiver";
 
 const { Pool } = pg;
 const UA = "PEI-Public-Record-Archive/1.0";
@@ -295,6 +296,115 @@ async function getRecord(sha256: string) {
   return r.rows[0] || null;
 }
 
+function extForMime(mime: string | null | undefined) {
+  const m = normalizeMime(mime);
+  const map: Record<string,string> = {
+    "application/pdf": ".pdf",
+    "text/html": ".html",
+    "text/plain": ".txt",
+    "application/json": ".json",
+    "application/xml": ".xml",
+    "text/xml": ".xml",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/wav": ".wav",
+    "video/mp4": ".mp4"
+  };
+  return map[m] || "";
+}
+
+function safeArchiveName(value: string) {
+  return value
+    .replace(/^https?:\/\//i, "")
+    .replace(/[?#].*$/, "")
+    .replace(/[^a-z0-9._-]+/gi, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120) || "record";
+}
+
+async function streamFullArchive(res: any) {
+  const rows = await pool.query(
+    `SELECT q.url,q.host,q.kind,q.department,q.status,q.sha256,q.byte_length,q.mime,
+            q.classification,q.first_seen_at,q.last_checked_at,
+            o.storage_key,o.stored_at
+       FROM archive_queue q
+       JOIN archive_objects o ON o.sha256=q.sha256
+      WHERE q.status='captured' AND q.sha256 IS NOT NULL
+      ORDER BY coalesce(q.last_checked_at,q.first_seen_at),q.url`
+  );
+
+  const records = rows.rows;
+  const archive = archiver("zip", {
+    zlib: { level: 0 },
+    forceZip64: true
+  });
+
+  archive.on("warning", (error) => console.warn("bulk archive warning", error));
+  archive.on("error", (error) => {
+    console.error("bulk archive error", error);
+    if (!res.headersSent) {
+      res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ error: "archive_stream_failed" }));
+    } else {
+      res.destroy(error);
+    }
+  });
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.writeHead(200, {
+    "content-type": "application/zip",
+    "content-disposition": `attachment; filename="forage-atlas-full-corpus-${stamp}.zip"`,
+    "cache-control": "no-store",
+    "x-archive-record-count": String(records.length),
+    "access-control-allow-origin": "*"
+  });
+
+  archive.pipe(res);
+
+  const manifest: any[] = [];
+  let index = 0;
+  for (const record of records) {
+    index++;
+    const ext = extForMime(record.mime);
+    const base = safeArchiveName(record.url);
+    const internalName = `records/${String(index).padStart(5,"0")}-${base}-${record.sha256.slice(0,12)}${ext}`;
+    manifest.push({
+      index,
+      path: internalName,
+      url: record.url,
+      host: record.host,
+      kind: record.kind,
+      department: record.department,
+      mime: normalizeMime(record.mime),
+      byteLength: Number(record.byte_length || 0),
+      sha256: record.sha256,
+      firstSeenAt: record.first_seen_at,
+      capturedAt: record.last_checked_at,
+      storedAt: record.stored_at
+    });
+
+    const object = await s3.send(new GetObjectCommand({
+      Bucket: process.env.S3_BUCKET!,
+      Key: record.storage_key
+    }));
+    if (!object.Body) throw new Error("Missing S3 body for " + record.sha256);
+    archive.append(object.Body as any, { name: internalName });
+  }
+
+  archive.append(JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    recordCount: records.length,
+    archive: "Forage Atlas preserved corpus",
+    records: manifest
+  }, null, 2), { name: "manifest.json" });
+
+  await archive.finalize();
+}
+
 async function getInlineUrl(record: any) {
   if (!record?.storage_key) return null;
   const mime = normalizeMime(record.mime);
@@ -323,6 +433,10 @@ function startApi() {
       }
       if (url.pathname === "/api/archive/records") {
         return json(res, 200, await listRecords(url));
+      }
+      if (url.pathname === "/api/archive/download-all.zip") {
+        await streamFullArchive(res);
+        return;
       }
 
       const m = /^\/api\/archive\/records\/([a-f0-9]{64})(?:\/(view))?$/.exec(url.pathname);
