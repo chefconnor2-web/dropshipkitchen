@@ -5,3 +5,4 @@ COPY package.json package-lock.json ./
 RUN npm install
 COPY scripts/irac-archive-harvester.ts ./scripts/irac-archive-harvester.ts
 CMD ["npm","run","irac:archive"]
+# force fresh Railway build
