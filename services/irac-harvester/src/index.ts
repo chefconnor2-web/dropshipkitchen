@@ -42,6 +42,8 @@ async function initDb() {
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_checked_at TIMESTAMPTZ
   )`);
+  await pool.query(`ALTER TABLE archive_queue ADD COLUMN IF NOT EXISTS links_swept_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE archive_queue ADD COLUMN IF NOT EXISTS discovered_from_url TEXT`);
   await pool.query(`CREATE TABLE IF NOT EXISTS archive_objects (
     sha256 TEXT PRIMARY KEY,
     storage_key TEXT NOT NULL UNIQUE,
@@ -128,6 +130,126 @@ async function seedHost(base: string) {
   return seeded;
 }
 
+
+const DOWNLOAD_EXTENSIONS = /\.(?:pdf|docx?|xlsx?|xlsm|xlsb|csv|zip|rar|7z|xml|json|rtf|txt|odt|ods|pptx?|jpg|jpeg|png|gif|webp|tiff?|svg|mp3|wav|m4a|aac|ogg|mp4|mov|webm)(?:$|[?#])/i;
+const OFFICIAL_DOWNLOAD_HOSTS = [
+  "irac.pe.ca",
+  "peirentaloffice.ca",
+  "princeedwardisland.ca",
+  "www.princeedwardisland.ca",
+  "gov.pe.ca",
+  "www.gov.pe.ca"
+];
+
+function officialDownloadHost(host: string, sourceHost: string) {
+  const h = host.toLowerCase();
+  const s = sourceHost.toLowerCase();
+  if (h === s) return true;
+  return OFFICIAL_DOWNLOAD_HOSTS.some(allowedHost => h === allowedHost || h.endsWith("." + allowedHost));
+}
+
+function decodeHtmlAttribute(value: string) {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&#38;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
+}
+
+function downloadableCandidate(rawUrl: string, sourceUrl: string, tag: string) {
+  try {
+    const resolved = new URL(decodeHtmlAttribute(rawUrl.trim()), sourceUrl);
+    if (!["http:","https:"].includes(resolved.protocol)) return null;
+    if (!officialDownloadHost(resolved.hostname, new URL(sourceUrl).hostname)) return null;
+    resolved.hash = "";
+    const looksLikeFile = DOWNLOAD_EXTENSIONS.test(resolved.href);
+    const explicitDownload = /\bdownload(?:\s|=|>|$)/i.test(tag);
+    const mediaUpload = /\/wp-content\/uploads\//i.test(resolved.pathname);
+    if (!looksLikeFile && !explicitDownload && !mediaUpload) return null;
+    return resolved.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractDownloadLinks(html: string, sourceUrl: string) {
+  const found = new Set<string>();
+  const tagPattern = /<(?:a|area|iframe|embed|object|source)\b[^>]*>/gi;
+  for (const match of html.matchAll(tagPattern)) {
+    const tag = match[0];
+    const attr = /\b(?:href|src|data|data-href)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i.exec(tag);
+    const raw = attr?.[1] || attr?.[2] || attr?.[3];
+    if (!raw) continue;
+    const target = downloadableCandidate(raw, sourceUrl, tag);
+    if (target) found.add(target);
+  }
+  return [...found];
+}
+
+async function queueDownloadLinks(html: string, sourceUrl: string) {
+  const links = extractDownloadLinks(html, sourceUrl);
+  let inserted = 0;
+  for (const url of links) {
+    const host = new URL(url).hostname;
+    const result = await pool.query(
+      \`INSERT INTO archive_queue(url,host,kind,department,discovered_from_url)
+       VALUES($1,$2,'discovered_download','Provincial site download',$3)
+       ON CONFLICT(url) DO UPDATE
+         SET discovered_from_url=coalesce(archive_queue.discovered_from_url,EXCLUDED.discovered_from_url)
+       RETURNING (xmax = 0) AS inserted\`,
+      [url, host, sourceUrl]
+    );
+    if (result.rows[0]?.inserted === true || result.rows[0]?.inserted === "true") inserted++;
+  }
+  return { discovered: links.length, inserted };
+}
+
+async function sweepExistingHtmlDownloads() {
+  let swept = 0;
+  let discovered = 0;
+  let inserted = 0;
+
+  while (true) {
+    const batch = await pool.query(
+      \`SELECT q.url,q.sha256,q.mime,o.storage_key
+         FROM archive_queue q
+         JOIN archive_objects o ON o.sha256=q.sha256
+        WHERE q.status='captured'
+          AND q.links_swept_at IS NULL
+          AND (
+            lower(coalesce(q.mime,'')) LIKE 'text/html%'
+            OR lower(coalesce(q.mime,''))='application/xhtml+xml'
+          )
+        ORDER BY coalesce(q.last_checked_at,q.first_seen_at)
+        LIMIT 100\`
+    );
+    if (!batch.rows.length) break;
+
+    for (const row of batch.rows) {
+      try {
+        const object = await s3.send(new GetObjectCommand({
+          Bucket: process.env.S3_BUCKET!,
+          Key: row.storage_key
+        }));
+        if (!object.Body) throw new Error("Missing body for HTML sweep " + row.sha256);
+        const html = await (object.Body as any).transformToString("utf-8");
+        const result = await queueDownloadLinks(html, row.url);
+        discovered += result.discovered;
+        inserted += result.inserted;
+        await pool.query("UPDATE archive_queue SET links_swept_at=now() WHERE url=$1", [row.url]);
+        swept++;
+      } catch (error) {
+        console.error("download-link sweep error", row.url, error);
+        await pool.query("UPDATE archive_queue SET links_swept_at=now() WHERE url=$1", [row.url]);
+      }
+    }
+
+    console.log(JSON.stringify({ stage: "download_link_sweep", swept, discovered, inserted }));
+  }
+
+  return { swept, discovered, inserted };
+}
+
 async function classify(item: any) {
   if (!anthropic) return null;
   try {
@@ -193,12 +315,27 @@ async function capture(item: any, robotsCache: Map<string,string>) {
       [sha256, key, bytes.byteLength, mime]
     );
 
+    let linksSwept = false;
+    if (mime.toLowerCase() === "text/html" || mime.toLowerCase() === "application/xhtml+xml") {
+      try {
+        const html = new TextDecoder("utf-8").decode(bytes);
+        const links = await queueDownloadLinks(html, item.url);
+        linksSwept = true;
+        if (links.discovered) {
+          console.log(JSON.stringify({ stage: "download_links_discovered", source: item.url, ...links }));
+        }
+      } catch (error) {
+        console.error("download link discovery error", item.url, error);
+      }
+    }
+
     const classification = await classify(item);
     await pool.query(
       `UPDATE archive_queue
-       SET status='captured',sha256=$2,byte_length=$3,mime=$4,classification=$5::jsonb
+       SET status='captured',sha256=$2,byte_length=$3,mime=$4,classification=$5::jsonb,
+           links_swept_at=CASE WHEN $6 THEN now() ELSE links_swept_at END
        WHERE url=$1`,
-      [item.url, sha256, bytes.byteLength, mime, classification ? JSON.stringify(classification) : null]
+      [item.url, sha256, bytes.byteLength, mime, classification ? JSON.stringify(classification) : null, linksSwept]
     );
     return "captured";
   } catch {
@@ -656,6 +793,9 @@ async function run() {
   } else {
     console.log(JSON.stringify({ stage: "resume", existingCount }));
   }
+
+  const sweep = await sweepExistingHtmlDownloads();
+  console.log(JSON.stringify({ stage: "download_link_backfill_complete", ...sweep }));
 
   const robotsCache = new Map<string,string>();
   let totalCaptured = 0;
