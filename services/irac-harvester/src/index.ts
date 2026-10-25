@@ -192,11 +192,11 @@ async function queueDownloadLinks(html: string, sourceUrl: string) {
   for (const url of links) {
     const host = new URL(url).hostname;
     const result = await pool.query(
-      \`INSERT INTO archive_queue(url,host,kind,department,discovered_from_url)
+      `INSERT INTO archive_queue(url,host,kind,department,discovered_from_url)
        VALUES($1,$2,'discovered_download','Provincial site download',$3)
        ON CONFLICT(url) DO UPDATE
          SET discovered_from_url=coalesce(archive_queue.discovered_from_url,EXCLUDED.discovered_from_url)
-       RETURNING (xmax = 0) AS inserted\`,
+       RETURNING (xmax = 0) AS inserted`,
       [url, host, sourceUrl]
     );
     if (result.rows[0]?.inserted === true || result.rows[0]?.inserted === "true") inserted++;
@@ -211,7 +211,7 @@ async function sweepExistingHtmlDownloads() {
 
   while (true) {
     const batch = await pool.query(
-      \`SELECT q.url,q.sha256,q.mime,o.storage_key
+      `SELECT q.url,q.sha256,q.mime,o.storage_key
          FROM archive_queue q
          JOIN archive_objects o ON o.sha256=q.sha256
         WHERE q.status='captured'
@@ -221,7 +221,7 @@ async function sweepExistingHtmlDownloads() {
             OR lower(coalesce(q.mime,''))='application/xhtml+xml'
           )
         ORDER BY coalesce(q.last_checked_at,q.first_seen_at)
-        LIMIT 100\`
+        LIMIT 100`
     );
     if (!batch.rows.length) break;
 
