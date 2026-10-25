@@ -12,6 +12,7 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "@aws-sdk/s3-request-presigner": "^3.922.0",
-    "archiver": "^7.0.1"
+    "archiver": "^7.0.1",
+    "@aws-sdk/lib-storage": "^3.922.0"
   }
 }
