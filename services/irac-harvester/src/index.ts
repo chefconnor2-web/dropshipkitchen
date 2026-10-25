@@ -3,8 +3,10 @@ import { S3Client, HeadObjectCommand, PutObjectCommand, GetObjectCommand } from 
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createServer } from "node:http";
 import pg from "pg";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import archiver from "archiver";
+import { PassThrough } from "node:stream";
+import { Upload } from "@aws-sdk/lib-storage";
 
 const { Pool } = pg;
 const UA = "PEI-Public-Record-Archive/1.0";
@@ -46,6 +48,18 @@ async function initDb() {
     byte_length BIGINT NOT NULL,
     mime TEXT,
     stored_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS archive_exports (
+    export_id UUID PRIMARY KEY,
+    status TEXT NOT NULL,
+    record_count INTEGER NOT NULL DEFAULT 0,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    total_bytes BIGINT NOT NULL DEFAULT 0,
+    processed_bytes BIGINT NOT NULL DEFAULT 0,
+    storage_key TEXT,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
   )`);
 }
 
@@ -326,6 +340,154 @@ function safeArchiveName(value: string) {
     .slice(0, 120) || "record";
 }
 
+async function createTrackedExport(exportId: string) {
+  const rows = await pool.query(
+    `SELECT q.url,q.host,q.kind,q.department,q.status,q.sha256,q.byte_length,q.mime,
+            q.classification,q.first_seen_at,q.last_checked_at,
+            o.storage_key,o.stored_at
+       FROM archive_queue q
+       JOIN archive_objects o ON o.sha256=q.sha256
+      WHERE q.status='captured' AND q.sha256 IS NOT NULL
+      ORDER BY coalesce(q.last_checked_at,q.first_seen_at),q.url`
+  );
+  const records = rows.rows;
+  const totalBytes = records.reduce((sum: number, record: any) => sum + Number(record.byte_length || 0), 0);
+  const zipKey = `exports/${exportId}/forage-atlas-full-corpus.zip`;
+
+  await pool.query(
+    `UPDATE archive_exports
+        SET status='building',record_count=$2,total_bytes=$3
+      WHERE export_id=$1`,
+    [exportId, records.length, totalBytes]
+  );
+
+  const archive = archiver("zip", { zlib: { level: 0 }, forceZip64: true });
+  const pass = new PassThrough();
+  const uploader = new Upload({
+    client: s3,
+    params: {
+      Bucket: process.env.S3_BUCKET!,
+      Key: zipKey,
+      Body: pass,
+      ContentType: "application/zip",
+      ContentDisposition: 'attachment; filename="forage-atlas-full-corpus.zip"'
+    },
+    queueSize: 4,
+    partSize: 10 * 1024 * 1024,
+    leavePartsOnError: false
+  });
+
+  archive.on("warning", (error) => console.warn("tracked export warning", error));
+  archive.on("error", (error) => pass.destroy(error));
+  archive.pipe(pass);
+
+  const manifest: any[] = [];
+  let processedCount = 0;
+  let processedBytes = 0;
+
+  try {
+    for (const record of records) {
+      processedCount++;
+      processedBytes += Number(record.byte_length || 0);
+      const ext = extForMime(record.mime);
+      const base = safeArchiveName(record.url);
+      const internalName = `records/${String(processedCount).padStart(5,"0")}-${base}-${record.sha256.slice(0,12)}${ext}`;
+      manifest.push({
+        index: processedCount,
+        path: internalName,
+        url: record.url,
+        host: record.host,
+        kind: record.kind,
+        department: record.department,
+        mime: normalizeMime(record.mime),
+        byteLength: Number(record.byte_length || 0),
+        sha256: record.sha256,
+        firstSeenAt: record.first_seen_at,
+        capturedAt: record.last_checked_at,
+        storedAt: record.stored_at
+      });
+
+      const object = await s3.send(new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET!,
+        Key: record.storage_key
+      }));
+      if (!object.Body) throw new Error("Missing S3 body for " + record.sha256);
+      archive.append(object.Body as any, { name: internalName });
+
+      if (processedCount === records.length || processedCount % 25 === 0) {
+        await pool.query(
+          `UPDATE archive_exports
+              SET processed_count=$2,processed_bytes=$3
+            WHERE export_id=$1`,
+          [exportId, processedCount, processedBytes]
+        );
+      }
+    }
+
+    archive.append(JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      recordCount: records.length,
+      archive: "Forage Atlas preserved corpus",
+      records: manifest
+    }, null, 2), { name: "manifest.json" });
+
+    await archive.finalize();
+    await uploader.done();
+
+    await pool.query(
+      `UPDATE archive_exports
+          SET status='ready',processed_count=record_count,processed_bytes=total_bytes,
+              storage_key=$2,completed_at=now()
+        WHERE export_id=$1`,
+      [exportId, zipKey]
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("tracked export failed", error);
+    try { archive.abort(); } catch {}
+    await pool.query(
+      `UPDATE archive_exports SET status='failed',error=$2 WHERE export_id=$1`,
+      [exportId, message.slice(0, 1000)]
+    );
+  }
+}
+
+async function startTrackedExport() {
+  const existing = await pool.query(
+    `SELECT * FROM archive_exports
+      WHERE status IN ('queued','building')
+      ORDER BY created_at DESC LIMIT 1`
+  );
+  if (existing.rows[0]) return existing.rows[0];
+
+  const exportId = randomUUID();
+  await pool.query(
+    `INSERT INTO archive_exports(export_id,status) VALUES($1,'queued')`,
+    [exportId]
+  );
+  void createTrackedExport(exportId);
+  return (await pool.query(`SELECT * FROM archive_exports WHERE export_id=$1`, [exportId])).rows[0];
+}
+
+async function getTrackedExport(exportId: string) {
+  const r = await pool.query(`SELECT * FROM archive_exports WHERE export_id=$1`, [exportId]);
+  return r.rows[0] || null;
+}
+
+async function getExportDownloadUrl(record: any) {
+  if (!record?.storage_key || record.status !== "ready") return null;
+  return getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: process.env.S3_BUCKET!,
+      Key: record.storage_key,
+      ResponseContentType: "application/zip",
+      ResponseContentDisposition: 'attachment; filename="forage-atlas-full-corpus.zip"'
+    }),
+    { expiresIn: 300 }
+  );
+}
+
 async function streamFullArchive(res: any) {
   const rows = await pool.query(
     `SELECT q.url,q.host,q.kind,q.department,q.status,q.sha256,q.byte_length,q.mime,
@@ -440,6 +602,21 @@ function startApi() {
       if (url.pathname === "/api/archive/download-all.zip") {
         await streamFullArchive(res);
         return;
+      }
+      if (url.pathname === "/api/archive/export/start") {
+        return json(res, 200, await startTrackedExport());
+      }
+
+      const exportMatch = /^\/api\/archive\/export\/([a-f0-9-]{36})(?:\/(download))?$/.exec(url.pathname);
+      if (exportMatch) {
+        const record = await getTrackedExport(exportMatch[1]);
+        if (!record) return json(res, 404, { error: "export_not_found" });
+        if (exportMatch[2] === "download") {
+          const signedUrl = await getExportDownloadUrl(record);
+          if (!signedUrl) return json(res, 409, { error: "export_not_ready", status: record.status });
+          return json(res, 200, { url: signedUrl, expiresIn: 300, exportId: record.export_id });
+        }
+        return json(res, 200, { export: record });
       }
 
       const m = /^\/api\/archive\/records\/([a-f0-9]{64})(?:\/(view))?$/.exec(url.pathname);
