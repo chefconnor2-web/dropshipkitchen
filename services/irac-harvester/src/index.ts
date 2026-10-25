@@ -58,9 +58,26 @@ function allowed(url: string, robotsText: string) {
   return !rules.some(rule => rule !== "/" && path.startsWith(rule));
 }
 
+async function fetchWithRetry(url: string, init: RequestInit = {}, attempts = 4) {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timer);
+      return response;
+    } catch (error) {
+      last = error;
+      if (i < attempts - 1) await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
 async function seedHost(base: string) {
   const host = new URL(base).hostname;
-  const typesResp = await fetch(base + "/wp-json/wp/v2/types", { headers: { "user-agent": UA } });
+  const typesResp = await fetchWithRetry(base + "/wp-json/wp/v2/types", { headers: { "user-agent": UA } });
   if (!typesResp.ok) throw new Error("Cannot enumerate types for " + base + ": " + typesResp.status);
   const types: any = await typesResp.json();
   let seeded = 0;
@@ -70,7 +87,7 @@ async function seedHost(base: string) {
     if (!rest || ["wp_block","wp_template","wp_template_part","wp_navigation","nav_menu_item","wp_global_styles"].includes(type)) continue;
 
     for (let page = 1; page <= 200; page++) {
-      const r = await fetch(base + "/wp-json/wp/v2/" + rest + "?per_page=100&page=" + page + "&orderby=id&order=asc", { headers: { "user-agent": UA } });
+      const r = await fetchWithRetry(base + "/wp-json/wp/v2/" + rest + "?per_page=100&page=" + page + "&orderby=id&order=asc", { headers: { "user-agent": UA } });
       if (r.status === 400) break;
       if (!r.ok) break;
 
@@ -174,7 +191,10 @@ async function capture(item: any, robotsCache: Map<string,string>) {
 
 async function run() {
   await initDb();
-  const [iracSeeded, rentalSeeded] = await Promise.all([seedHost(IRAC), seedHost(RENTAL)]);
+  let iracSeeded = 0;
+  let rentalSeeded = 0;
+  try { iracSeeded = await seedHost(IRAC); } catch (error) { console.error("IRAC seed error", error); }
+  try { rentalSeeded = await seedHost(RENTAL); } catch (error) { console.error("Rental Office seed error", error); }
   console.log(JSON.stringify({ stage: "seeded", iracSeeded, rentalSeeded }));
 
   const robotsCache = new Map<string,string>();
