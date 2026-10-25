@@ -191,11 +191,17 @@ async function capture(item: any, robotsCache: Map<string,string>) {
 
 async function run() {
   await initDb();
-  let iracSeeded = 0;
-  let rentalSeeded = 0;
-  try { iracSeeded = await seedHost(IRAC); } catch (error) { console.error("IRAC seed error", error); }
-  try { rentalSeeded = await seedHost(RENTAL); } catch (error) { console.error("Rental Office seed error", error); }
-  console.log(JSON.stringify({ stage: "seeded", iracSeeded, rentalSeeded }));
+  const existing = await pool.query("SELECT count(*)::int AS count FROM archive_queue");
+  const existingCount = Number(existing.rows[0]?.count || 0);
+  if (existingCount < 10000) {
+    let iracSeeded = 0;
+    let rentalSeeded = 0;
+    try { iracSeeded = await seedHost(IRAC); } catch (error) { console.error("IRAC seed error", error); }
+    try { rentalSeeded = await seedHost(RENTAL); } catch (error) { console.error("Rental Office seed error", error); }
+    console.log(JSON.stringify({ stage: "seeded", iracSeeded, rentalSeeded }));
+  } else {
+    console.log(JSON.stringify({ stage: "resume", existingCount }));
+  }
 
   const robotsCache = new Map<string,string>();
   let totalCaptured = 0;
@@ -207,7 +213,7 @@ async function run() {
       `SELECT * FROM archive_queue
        WHERE status IN ('pending','retry') AND attempts < 5
        ORDER BY first_seen_at
-       LIMIT 1000`
+       LIMIT 2000`
     );
     if (!rows.length) break;
 
