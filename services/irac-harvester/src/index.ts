@@ -8,6 +8,7 @@ const UA = "PEI-Public-Record-Archive/1.0";
 const IRAC = "https://irac.pe.ca";
 const RENTAL = "https://peirentaloffice.ca";
 const concurrency = Math.max(1, Math.min(20, Number(process.env.ARCHIVE_CONCURRENCY || 12)));
+const CLAUDE_MODEL = "claude-haiku-5-5";
 
 const required = ["ARCHIVE_DATABASE_URL","S3_ENDPOINT","S3_BUCKET","S3_REGION","S3_ACCESS_KEY_ID","S3_SECRET_ACCESS_KEY"];
 for (const key of required) if (!process.env[key]) throw new Error("Missing environment variable: " + key);
@@ -114,7 +115,7 @@ async function classify(item: any) {
   if (!anthropic) return null;
   try {
     const message = await anthropic.messages.create({
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-5",
+      model: CLAUDE_MODEL,
       max_tokens: 400,
       messages: [{
         role: "user",
@@ -191,6 +192,7 @@ async function capture(item: any, robotsCache: Map<string,string>) {
 
 async function run() {
   await initDb();
+  console.log(JSON.stringify({ stage: "config", claudeModel: CLAUDE_MODEL, concurrency }));
   const existing = await pool.query("SELECT count(*)::int AS count FROM archive_queue");
   const existingCount = Number(existing.rows[0]?.count || 0);
   if (existingCount < 10000) {
