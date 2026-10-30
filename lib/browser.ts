@@ -242,6 +242,26 @@ export const browserApi = {
     ),
 };
 
+/**
+ * Dev sessions: Chit's browser as a development assistant for coding agents (Claude Code and others, via the
+ * MCP dev_* tools). Unlike shopping sessions they may open any PUBLIC site (never localhost or private
+ * addresses), and they record console errors, exceptions and failed requests for GET /sessions/:id/devlog.
+ */
+export interface DevLogEntry {
+  at: number;
+  kind: string;
+  text: string;
+  url: string;
+  source?: string;
+  resource?: string;
+  status?: number;
+}
+export const devBrowserApi = {
+  open: (signal?: AbortSignal) => call<{ id: string }>("/sessions", { mode: "dev" }, "POST", signal),
+  log: (id: string, signal?: AbortSignal) => call<{ url: string; title: string; entries: DevLogEntry[] }>(`/sessions/${id}/devlog`, undefined, "GET", signal),
+  close: (id: string, signal?: AbortSignal) => call<{ ok: boolean }>(`/sessions/${id}`, undefined, "DELETE", signal),
+};
+
 export interface AmazonResult {
   asin: string;
   title: string;

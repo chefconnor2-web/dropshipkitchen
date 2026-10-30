@@ -22,10 +22,11 @@ export const WRITE_TOOLS = new Set([
   "find_rental_car", "set_work_trip", "log_expense", "add_to_cart", "update_cart", "ask_neon", "approve_neon_step", "browser_done",
   "book_flight", "book_hotel", "hold_flight", "pay_held_flight", "checkout_cart", "cancel_flight", "cancel_hotel", "share_trip",
   "update_my_details", "subscribe", "invite_member", "edit_policy", "cart_change", "pay_with_saved_card",
+  "dev_browser_open", "dev_browser",
 ]);
 
 /** Per customer per day, across all their apps: a brake on runaway agents. */
-export const DAILY_CAPS: Record<string, number> = { book_flight: 20, book_hotel: 20, hold_flight: 10, checkout_cart: 20, cancel_flight: 5, cancel_hotel: 5, pay_with_saved_card: 10, invite_member: 30, ask_neon: 60 };
+export const DAILY_CAPS: Record<string, number> = { book_flight: 20, book_hotel: 20, hold_flight: 10, checkout_cart: 20, cancel_flight: 5, cancel_hotel: 5, pay_with_saved_card: 10, invite_member: 30, ask_neon: 60, dev_browser_open: 60, read_web_page: 200 };
 
 export interface Out {
   [key: string]: unknown;
