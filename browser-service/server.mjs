@@ -120,6 +120,9 @@ const NAV_ALLOWED = /(^|\.)(amazon\.(com|ca)|amazonpay\.com|amazon\.dev|media-am
 // Tests only: extra hosts the browser may open (e.g. a local fixture server). Never set in production.
 const TEST_ALLOW = process.env.BROWSER_TEST_ALLOW ? new RegExp(process.env.BROWSER_TEST_ALLOW) : null;
 const navOk = (host) => NAV_ALLOWED.test(host) || !!TEST_ALLOW?.test(host);
+// Dev sessions (Chit's development assistant, for coding agents) may open any PUBLIC site; private and internal
+// addresses stay blocked for every session.
+const devNavOk = (host) => !!host && (!PRIVATE_HOST.test(host) || !!TEST_ALLOW?.test(host));
 const PRIVATE_HOST = /^(localhost|.*\.internal|.*\.local|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|\[?::1\]?|\[?f[cd][0-9a-f]{2}:)/i;
 
 if (!SECRET) console.warn("[browser] BROWSER_SERVICE_SECRET is not set: every request will be refused.");
@@ -178,7 +181,7 @@ function hostOf(url) {
   }
 }
 
-async function createSession() {
+async function createSession({ dev = false } = {}) {
   for (const s of sessions.values()) if (Date.now() - s.lastUsed > IDLE_MS) await endSession(s, "Closed after being idle.");
   if (sessions.size >= MAX_SESSIONS) {
     // Make room by closing the session idle longest, unless the shopper is using it.
@@ -189,7 +192,7 @@ async function createSession() {
   const b = await getBrowser();
   const ctx = await b.createBrowserContext();
   try {
-    return await setUpSession(ctx);
+    return await setUpSession(ctx, dev);
   } catch (e) {
     // Nothing half-made is left behind.
     await ctx.close().catch(() => {});
@@ -197,8 +200,9 @@ async function createSession() {
   }
 }
 
-async function setUpSession(ctx) {
+async function setUpSession(ctx, dev = false) {
   const page = await ctx.newPage();
+  const allowNav = dev ? devNavOk : navOk;
   await page.setUserAgent(UA);
   await page.setViewport(VIEW);
   // No request interception (it slows every request down); instead the main page is pulled back if it ever
@@ -208,7 +212,7 @@ async function setUpSession(ctx) {
     if (f !== page.mainFrame()) return;
     const url = f.url();
     const host = hostOf(url);
-    if (url === "about:blank" || navOk(host)) {
+    if (url === "about:blank" || allowNav(host)) {
       lastOk = url;
       return;
     }
@@ -220,13 +224,33 @@ async function setUpSession(ctx) {
   page.on("popup", async (p) => {
     const url = p.url();
     await p.close().catch(() => {});
-    if (navOk(hostOf(url))) page.goto(url).catch(() => {});
+    if (allowNav(hostOf(url))) page.goto(url).catch(() => {});
   });
 
   const id = crypto.randomBytes(12).toString("hex");
   // urls: product links from the latest searches, by ASIN (opened exactly as the search result linked them).
   // controller: the one socket allowed to send input while the shopper has control. queue: their input, run in order.
-  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, controller: null, busy: false, urls: new Map(), mode: "desktop", queue: [], draining: false };
+  const s = { id, ctx, page, clients: new Set(), lastFrame: null, lastUsed: Date.now(), userControl: false, controller: null, busy: false, urls: new Map(), mode: "desktop", queue: [], draining: false, dev, devlog: [] };
+  if (dev) {
+    // What a developer needs to debug the page: console errors/warnings, uncaught exceptions, failed requests
+    // and 4xx/5xx responses. A ring buffer; read (and cleared) via GET /sessions/:id/devlog.
+    const note = (kind, text, extra = {}) => {
+      s.devlog.push({ at: Date.now(), kind, text: String(text).slice(0, 1200), url: page.url(), ...extra });
+      if (s.devlog.length > 300) s.devlog.splice(0, s.devlog.length - 300);
+    };
+    page.on("console", (m) => {
+      const t = m.type();
+      if (t === "error" || t === "warn" || t === "warning" || t === "assert") note(`console.${t === "warning" ? "warn" : t}`, m.text(), { source: m.location()?.url || undefined });
+    });
+    page.on("pageerror", (e) => note("exception", e?.stack || e?.message || e));
+    page.on("requestfailed", (r) => {
+      const why = r.failure()?.errorText || "failed";
+      if (!/ERR_ABORTED|BlockedByClient/.test(why)) note("request.failed", `${r.method()} ${r.url().slice(0, 300)} → ${why}`, { resource: r.resourceType() });
+    });
+    page.on("response", (r) => {
+      if (r.status() >= 400) note("response.error", `${r.request().method()} ${r.url().slice(0, 300)} → ${r.status()} ${r.statusText()}`, { resource: r.request().resourceType(), status: r.status() });
+    });
+  }
   page.on("error", () => {
     log("session", s.id.slice(0, 6), "page crashed");
     endSession(s, "The page crashed. Ask Neon to try again.");
@@ -256,7 +280,7 @@ async function setUpSession(ctx) {
     cdp.on("Fetch.requestPaused", ({ requestId, request, frameId }) => {
       const host = hostOf(request.url);
       const main = frameId === (page.mainFrame()._id ?? page.target()._targetId);
-      const blocked = !navOk(host) && (PRIVATE_HOST.test(host) || main);
+      const blocked = !allowNav(host) && (PRIVATE_HOST.test(host) || main);
       cdp.send(blocked ? "Fetch.failRequest" : "Fetch.continueRequest", blocked ? { requestId, errorReason: "BlockedByClient" } : { requestId }).catch(() => {});
     });
     await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
@@ -340,7 +364,11 @@ async function snapshot(s, extra = {}, page = s.page, withShot = true) {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function goto(s, url, page = s.page) {
-  if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon and Discover Cars pages can be opened."), { status: 400 });
+  if (s.dev) {
+    let u;
+    try { u = new URL(String(url)); } catch { throw Object.assign(new Error("That isn't a link."), { status: 400 }); }
+    if (!/^https?:$/.test(u.protocol) || !(await publicHost(u.hostname))) throw Object.assign(new Error("Only public web pages can be opened (no localhost or private addresses)."), { status: 400 });
+  } else if (!navOk(hostOf(url))) throw Object.assign(new Error("Only Amazon and Discover Cars pages can be opened."), { status: 400 });
   // Amazon gets the long wait (its first load is slow); other sites fail fast so Neon can fall back.
   const amazon = /(^|\.)amazon\./i.test(hostOf(url));
   try {
@@ -808,7 +836,8 @@ const server = http.createServer(async (req, res) => {
     if (!m) return send(res, 404, { error: "Not found" });
     const [, id, rest = ""] = m;
     if (!id && req.method === "POST") {
-      const s = await createSession();
+      const opts = await readJson(req).catch(() => ({}));
+      const s = await createSession({ dev: opts?.mode === "dev" });
       return send(res, 200, { id: s.id });
     }
     if (id && !rest && req.method === "DELETE") {
@@ -821,6 +850,14 @@ const server = http.createServer(async (req, res) => {
       if (!s) return send(res, 404, { error: "That browser session has closed." });
       s.lastUsed = Date.now();
       return send(res, 200, await snapshot(s));
+    }
+    if (id && rest === "/devlog" && req.method === "GET") {
+      const s = sessions.get(id);
+      if (!s) return send(res, 404, { error: "That browser session has closed." });
+      if (!s.dev) return send(res, 400, { error: "Not a dev session." });
+      s.lastUsed = Date.now();
+      const entries = s.devlog.splice(0);
+      return send(res, 200, { url: s.page.url(), title: await s.page.title().catch(() => ""), entries });
     }
     if (id && rest === "/release" && req.method === "POST") {
       const s = sessions.get(id);
