@@ -5,6 +5,7 @@
 // as they arrive.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropic } from "@/lib/ai-key";
 import { ownerPricing } from "@/lib/membership";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
@@ -52,8 +53,10 @@ export function showAiCost(): boolean {
   return (process.env.SHOW_AI_COST?.trim().toLowerCase() || "on") !== "off";
 }
 
+/** The chat always takes messages: each run uses the shopper's own key, else the store's (lib/ai-key.ts), and
+ *  a run with neither asks them to add one. Admin AI tools check platformKey() instead. */
 export function assistantConfigured(): boolean {
-  return !!process.env.ANTHROPIC_API_KEY?.trim();
+  return true;
 }
 
 export interface ProductCard {
@@ -183,7 +186,7 @@ function userMessageStart(messages: Anthropic.Beta.BetaMessageParam[], n: number
 export async function generateTitle(text: string, hasImage: boolean): Promise<string> {
   const fallback = text.trim().replace(/\s+/g, " ").slice(0, 48) || "Photo search";
   try {
-    const r = await new Anthropic().messages.create({
+    const r = await anthropic().messages.create({
       model: SCOUT_MODEL,
       max_tokens: 24,
       messages: [{ role: "user", content: `Write a 2-5 word title for a shopping chat that starts with this request${hasImage ? " (with a photo)" : ""}. Reply with the title only, no quotes or punctuation at the end.\n\n${text.slice(0, 500) || "(only a photo)"}` }],
@@ -215,7 +218,7 @@ export function parseReaction(raw: string): string | null {
 export async function pickReaction(text: string, hasImage: boolean): Promise<{ emoji: string | null; micros: number }> {
   if (!text.trim() && !hasImage) return { emoji: null, micros: 0 };
   try {
-    const r = await new Anthropic().messages.create({
+    const r = await anthropic().messages.create({
       model: SCOUT_MODEL,
       max_tokens: 8,
       system: `You are a friendly shopping assistant texting with a customer in iMessage. React to their latest message with ONE tapback emoji, the way a warm, upbeat person would. Pick from: ${REACTIONS.join(" ")}. Excited project or big order: 🔥 🙌 ⚡. Thanks or kind words: ❤️ 🙏. A clear request: 👍 🫡 🛠️ 📦. A photo: 👀 😍. A trip or flight: ✈️ 🌴. Reply with the emoji only. Reply "none" if a reaction would feel wrong (a complaint, a problem with an order, or anything sad or sensitive).`,
@@ -831,7 +834,7 @@ export async function chatTurn(
     else if (e.type === "break" && shownText && !shownText.endsWith("\n\n")) shownText += "\n\n";
     shown(e);
   };
-  const client = new Anthropic();
+  const client = anthropic();
   const usage = { in: 0, out: 0, micros: 0 };
   const webUse = { searches: 0, fetches: 0 };
   const known = new Map<string, ProductCard>();

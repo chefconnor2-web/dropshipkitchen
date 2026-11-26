@@ -15,6 +15,9 @@ export interface Who {
   clientName: string;
   /** Connected with read-only access: tools that buy, book, cancel or change anything refuse. */
   readOnly?: boolean;
+  /** The customer saved their own Anthropic key (lib/ai-key.ts): Neon's tools (ask_neon, rental cars) are offered.
+   *  Without one the connector is key-free: their own assistant does the thinking with Chit's direct tools. */
+  neon?: boolean;
 }
 
 /** Tools that change something (buy, book, cancel, edit): refused on read-only connections. */

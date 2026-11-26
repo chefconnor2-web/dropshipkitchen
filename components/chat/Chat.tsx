@@ -108,6 +108,8 @@ export default function Chat({
   const [cheer, setCheer] = useState(0);
   const [typing, setTyping] = useState(false);
   const [error, setError] = useState<{ message: string; retryIndex: number; limit?: { subscriber: boolean; signedIn: boolean } } | null>(null);
+  // Neon had no working AI key: the banner offers My details → AI key (lib/ai-key.ts NO_KEY_MESSAGE / OWN_KEY_REFUSED).
+  const needsKey = !!error && /AI key/.test(error.message);
   const [allowance, setAllowance] = useState<{ remaining: number; limit: number; subscriber: boolean } | null>(null);
   // The plans offered to this shopper (null for subscribers), and whether the plan sheet is open.
   const [plans, setPlans] = useState<PlanOffer | null>(null);
@@ -1272,6 +1274,15 @@ export default function Chat({
                         Sign in
                       </Link>
                     )}
+                  </span>
+                ) : needsKey ? (
+                  <span className="cx-error-actions">
+                    <button type="button" className="cx-btn cx-btn-primary" onClick={() => window.dispatchEvent(new Event("cx:open-details"))}>
+                      Add my AI key
+                    </button>
+                    <button type="button" className="cx-btn" onClick={() => regenerate(error.retryIndex)}>
+                      <RetryIcon /> Try again
+                    </button>
                   </span>
                 ) : (
                   <button type="button" className="cx-btn" onClick={() => regenerate(error.retryIndex)}>

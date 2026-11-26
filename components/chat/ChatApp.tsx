@@ -56,6 +56,12 @@ export default function ChatApp(props: { storeName: string; initials: string; co
   const closeTrips = useCallback(() => setTripsOpen(false), []);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
+  // "Add my AI key" on a chat error opens My details, where the key goes.
+  useEffect(() => {
+    const open = () => setDetailsOpen(true);
+    window.addEventListener("cx:open-details", open);
+    return () => window.removeEventListener("cx:open-details", open);
+  }, []);
   const [query, setQuery] = useState("");
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);

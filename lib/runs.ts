@@ -12,6 +12,7 @@ import { prisma } from "@/lib/db";
 import { processSingleton } from "@/lib/singleton";
 import { AssistantLimitError, chatTurn, generateTitle, type UiEntry } from "@/lib/assistant";
 import { aiAllowance, recordAiUse } from "@/lib/membership";
+import { NO_KEY_MESSAGE, OWN_KEY_REFUSED, resolveKey, withKey, type RunKey } from "@/lib/ai-key";
 import { releaseShopperControl } from "@/lib/browser";
 import { docInfo, type DocUpload } from "@/lib/docs-shared";
 import {
@@ -74,13 +75,17 @@ export function replayFrom(ring: readonly RunFrame[], after: number | null, curr
 /** Valid client request ids (CONTRACTS §2). */
 export const validRequestId = (s: unknown): s is string => typeof s === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(s);
 
-/** Shopper-facing message for a failed run. */
-export function runErrorMessage(e: unknown): string {
+/** Shopper-facing message for a failed run. `key`: the key it ran on (their own, or the store's). */
+export function runErrorMessage(e: unknown, key?: RunKey | null): string {
   if (e instanceof AssistantLimitError) return e.message;
+  // Their own Anthropic account is out of credit (a 400 from Anthropic), or the store's is.
+  if (e instanceof Anthropic.BadRequestError && /credit balance/i.test(e.message))
+    return key?.own ? "Your Anthropic account is out of credit. Add credit at console.anthropic.com, then try again." : NO_KEY_MESSAGE;
   if (e instanceof Anthropic.RateLimitError) return "The assistant is busy. Try again in a minute.";
   if (e instanceof Anthropic.BadRequestError && /too long|context|exceed/i.test(e.message))
     return "This chat has more than Neon can read at once. Start a new chat, or send a shorter message.";
-  if (e instanceof Anthropic.AuthenticationError) return "The assistant isn't set up correctly.";
+  // A refused key: theirs needs fixing in My details; the store's means they need their own (or the connector).
+  if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return key?.own ? OWN_KEY_REFUSED : NO_KEY_MESSAGE;
   return "Something went wrong. Please try again.";
 }
 
@@ -244,6 +249,8 @@ export interface AcceptInput {
   customerId: string | null;
   visitorId: string;
   cartId: string;
+  /** Run only on the shopper's own key, never the store's (runs started from the Chit connector). */
+  ownKeyOnly?: boolean;
 }
 
 export type AcceptResult =
@@ -352,6 +359,17 @@ async function execute(r: LiveRun, input: AcceptInput) {
   const who = { customerId: input.customerId, visitorId: input.visitorId };
   r.startedAt = new Date().toISOString();
   setStatus(r, "running");
+  // Every model call in this run uses the shopper's own key if they saved one, else the store's (web chat only).
+  const key = await resolveKey(who, { allowPlatform: !input.ownKeyOnly }).catch(() => null);
+  if (!key) {
+    await markUserFailed(r.chatId, r.id).catch(() => {});
+    await finish(r, "failed", NO_KEY_MESSAGE);
+    return;
+  }
+  return withKey(key, () => executeOn(r, input, who, key));
+}
+
+async function executeOn(r: LiveRun, input: AcceptInput, who: { customerId: string | null; visitorId: string }, key: RunKey) {
   // Name new chats (and chats whose first message was edited) while the answer is being written.
   const titling =
     input.isNew || input.editIndex === 0
@@ -372,10 +390,11 @@ async function execute(r: LiveRun, input: AcceptInput) {
     );
     // The transcript is saved: record that at once, so a restart in the next few seconds can't misread it.
     void write(r, { status: out.stopped ? "cancelled" : "completed", finishedAt: new Date() });
-    await recordAiUse({ ...who, chatId: r.chatId, costMicros: out.costMicros }).catch(() => {});
+    // On their own key the AI is billed to them: it doesn't count toward the plan allowance.
+    if (!key.own) await recordAiUse({ ...who, chatId: r.chatId, costMicros: out.costMicros }).catch(() => {});
     if (out.stopped) return await finish(r, "cancelled", null);
     await Promise.race([titling, new Promise((res) => setTimeout(res, 4000))]);
-    const after = await aiAllowance(who).catch(() => null);
+    const after = key.own ? null : await aiAllowance(who).catch(() => null);
     r.done = {
       entry: out.entry as RunDone["entry"],
       reaction: out.reaction,
@@ -385,10 +404,10 @@ async function execute(r: LiveRun, input: AcceptInput) {
     await finish(r, "completed", null);
   } catch (e) {
     const spent = (e as { costMicros?: unknown })?.costMicros;
-    if (typeof spent === "number" && spent > 0) await recordAiUse({ ...who, chatId: r.chatId, costMicros: spent }).catch(() => {});
-    if (!(e instanceof AssistantLimitError)) console.error("[runs] run failed:", e instanceof Error ? e.message : e);
+    if (!key.own && typeof spent === "number" && spent > 0) await recordAiUse({ ...who, chatId: r.chatId, costMicros: spent }).catch(() => {});
+    if (!(e instanceof AssistantLimitError)) console.error(`[runs] run failed (${key.own ? "own key" : "store key"}):`, e instanceof Error ? e.message : e);
     await markUserFailed(r.chatId, r.id).catch(() => {});
-    await finish(r, "failed", runErrorMessage(e));
+    await finish(r, "failed", runErrorMessage(e, key));
   }
 }
 

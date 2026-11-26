@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { bearer, READ_SCOPE, resourceMetadataUrl, SCOPE } from "@/lib/mcp-auth";
 import { cors, preflight } from "@/lib/mcp-http";
 import { chitMcpServer } from "@/lib/mcp-server";
+import { ownKeyHint } from "@/lib/ai-key";
 
 // The Chit MCP endpoint (Streamable HTTP, stateless: one server per request, JSON responses). Every request
 // needs an OAuth access token; without one, the 401 tells the app where to sign the customer in.
@@ -24,7 +25,9 @@ async function handle(req: Request): Promise<Response> {
   const who = await bearer(req.headers.get("authorization"));
   if (!who) return unauthorized("Sign in to Chit to use this connector.");
   const client = await prisma.mcpClient.findUnique({ where: { id: who.clientId }, select: { name: true } });
-  const server = chitMcpServer({ customerId: who.customerId, clientId: who.clientId, clientName: client?.name ?? "an app", readOnly: who.readOnly });
+  // Key-free by default: Neon's own tools appear only when the customer saved their own Anthropic key.
+  const neon = !!(await ownKeyHint({ customerId: who.customerId, visitorId: null }));
+  const server = chitMcpServer({ customerId: who.customerId, clientId: who.clientId, clientName: client?.name ?? "an app", readOnly: who.readOnly, neon });
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   try {

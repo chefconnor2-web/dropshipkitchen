@@ -809,6 +809,18 @@ model TravellerProfile {
   updatedAt  DateTime @updatedAt
 }
 
+/// A shopper's own Anthropic API key (bring your own key): Neon runs on it, so their chats bill their Anthropic
+/// account, not the store's. Per account, or this browser before sign-in. Encrypted; only the last 4 are shown.
+model AiKey {
+  id         String   @id @default(cuid())
+  customerId String?  @unique
+  visitorId  String?  @unique
+  keyEnc     String
+  hint       String // "…abcd", for the settings panel
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 /// A company using Chit for its team's travel (internal proof of concept): members, a travel policy in plain
 /// English that Neon follows, and expenses.
 model Company {

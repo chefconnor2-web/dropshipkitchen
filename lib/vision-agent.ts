@@ -6,6 +6,7 @@
 // page, and the prompt forbids card details, sign-in and final Book/Pay buttons.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropic } from "@/lib/ai-key";
 import { costMicros } from "@/lib/ai-cost";
 import { browserApi, inBrowser, type PageState } from "@/lib/browser";
 
@@ -52,7 +53,7 @@ type ToolUse = Anthropic.ToolUseBlock & { toolset_name?: string | null };
 /** Works toward `goal` in this chat's live browser. */
 export async function visionAgent(chatId: string, goal: string, opts: { signal: AbortSignal; start?: PageState; progress?: (note: string) => void; maxMs?: number }): Promise<VisionResult> {
   const { signal } = opts;
-  const client = new Anthropic();
+  const client = anthropic();
   const log: string[] = [];
   const t0 = Date.now();
   let micros = 0;

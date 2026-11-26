@@ -18,14 +18,15 @@ import { tripsFor } from "@/lib/trips";
 import { browserCard, viewCards, type ViewCard } from "@/lib/mcp-cards";
 import { randomBytes } from "node:crypto";
 import { acting } from "@/lib/acting";
-import { assistantConfigured, catalogTool } from "@/lib/assistant";
+import { catalogTool } from "@/lib/assistant";
+import { ownKey } from "@/lib/ai-key";
 import { getCartId, getOrCreateCartId, loadCart } from "@/lib/cart";
 import { searchCatalog } from "@/lib/catalog-search";
 import { picksFor, SECTORS, SPECIALTY, type Sector } from "@/lib/curated";
 import { buildStoreCarts, cartSummary } from "@/lib/connectors/stores";
 import { acceptRun, getRun, resumeRun } from "@/lib/runs";
 import { isActive } from "@/lib/run-shared";
-import { aiAllowance, limitMessage, ownerPricing } from "@/lib/membership";
+import { ownerPricing } from "@/lib/membership";
 import { priceOrder } from "@/lib/volume";
 import { formatMoney } from "@/lib/money";
 import { VIEW_URI, viewHtml } from "@/lib/mcp-view";
@@ -41,6 +42,16 @@ export const INSTRUCTIONS = `Chit is the signed-in customer's shopping and trave
 - If Neon waits on the customer: for a browser step they use the card (Take over, then I'm done); for an email draft, show it and only on their yes call approve_neon_step.
 - Payment always happens in the customer's own browser through the pay link. Never ask for card details.
 - The other tools are quick lookups and shortcuts (trips, cart, orders, bookings, details, plan, company). book_flight / book_hotel return a pay link with saved details; cancelling is always two calls with the customer's yes in between.
+- open_chit shows their whole Chit (trips, cart, orders, chats) in the chat.`;
+
+/** The key-free connector: the customer's own assistant (Claude, ChatGPT) does the thinking, Chit's tools do the work. */
+export const INSTRUCTIONS_DIRECT = `Chit is the signed-in customer's shopping and travel app. You do the planning and talking; Chit's tools do the searching, booking and buying for this customer, and every result also shows in their Chit.
+- Shopping (Chit's catalog, shipped from factories, many items with Canadian or US stock): search_products (1-3 word queries, several for different parts), then get_product for a product's options, stock and shipping, then add_to_cart. view_cart and update_cart change it; checkout_cart returns the pay link. vetted_picks and personalized_products suggest items; store_cart builds carts at other stores.
+- Flights: search_flights, get_flight for details, then book_flight (a pay link with the saved traveller details; pay_held_flight for a held one). Hotels: search_hotels, then book_hotel. find_places looks up places.
+- Trips and bookings: my_trips, get_booking, share_trip. Cancelling is always two calls (cancel_flight / cancel_hotel) with the customer's yes in between.
+- Orders: my_orders, track_order. Details: my_details, update_my_details. Company travel: company_policy, set_work_trip, log_expense, expense_report.
+- Rental cars and Neon's live browser need Chit's own assistant, which runs on the customer's own Anthropic API key. If they want a car here, tell them to add their key in My details at ${config.siteUrl} (then ask again), or book it in the Chit app.
+- Payment always happens in the customer's own browser through the pay link. Never ask for card details.
 - open_chit shows their whole Chit (trips, cart, orders, chats) in the chat.`;
 
 
@@ -88,7 +99,7 @@ const isDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
 
 /** One MCP server per request (stateless), acting for this customer. */
 export function chitMcpServer(who: Who): McpServer {
-  const server = new McpServer({ name: "chit", title: config.storeName, version: "1.0.0", websiteUrl: config.siteUrl }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: "chit", title: config.storeName, version: "1.0.0", websiteUrl: config.siteUrl }, { instructions: who.neon ? INSTRUCTIONS : INSTRUCTIONS_DIRECT });
   const ro = { readOnlyHint: true, openWorldHint: true } as const;
 
   server.registerResource(
@@ -240,7 +251,9 @@ export function chitMcpServer(who: Who): McpServer {
     );
   }
 
-  server.registerTool(
+  // Neon's own assistant: only on the customer's own Anthropic key (Who.neon), so the connector never bills the store.
+  if (who.neon)
+    server.registerTool(
     "find_rental_car",
     {
       title: "Find a rental car",
@@ -497,7 +510,9 @@ export function chitMcpServer(who: Who): McpServer {
     }),
   );
 
-  server.registerTool(
+  // Neon's own assistant: only on the customer's own Anthropic key (Who.neon), so the connector never bills the store.
+  if (who.neon)
+    server.registerTool(
     "ask_neon",
     {
       title: "Chit (Neon)",
@@ -510,7 +525,9 @@ export function chitMcpServer(who: Who): McpServer {
     guarded(who, "ask_neon", async ({ message, chat_id }) => neonOut(await askNeon(who, message, chat_id))),
   );
 
-  server.registerTool(
+  // Neon's own assistant: only on the customer's own Anthropic key (Who.neon), so the connector never bills the store.
+  if (who.neon)
+    server.registerTool(
     "neon_status",
     { title: "Neon's progress", description: "Wait for (up to about a minute) and get Neon's reply to an ask_neon run that was still working.", inputSchema: { run_id: z.string().max(40) }, annotations: { readOnlyHint: true, openWorldHint: false }, _meta: UI },
     guarded(who, "neon_status", async ({ run_id }) => {
@@ -551,7 +568,9 @@ export function chitMcpServer(who: Who): McpServer {
     },
   );
 
-  server.registerTool(
+  // Neon's own assistant: only on the customer's own Anthropic key (Who.neon), so the connector never bills the store.
+  if (who.neon)
+    server.registerTool(
     "approve_neon_step",
     {
       title: "Approve Neon's step",
@@ -637,9 +656,9 @@ const ASK_WAIT_MS = 8_000;
 const STATUS_WAIT_MS = 45_000;
 
 export async function askNeon(who: Who, message: string, chatId: string | undefined): Promise<NeonResult> {
-  if (!assistantConfigured()) return { state: "error", message: "Neon isn't switched on." };
-  const allowance = await aiAllowance({ customerId: who.customerId, visitorId: null });
-  if (allowance.remaining <= 0) return { state: "error", message: `${limitMessage(allowance)} Plans: ${config.siteUrl}/plans` };
+  // From the connector, Neon only ever runs on the customer's own key (never the store's).
+  if (!(await ownKey({ customerId: who.customerId, visitorId: null })))
+    return { state: "error", message: `Neon runs on the customer's own Anthropic API key, and none is saved. Use Chit's other tools directly, or the customer can add a key in My details at ${config.siteUrl}.` };
   let chat = chatId ? await prisma.assistantChat.findUnique({ where: { id: chatId } }) : null;
   if (chatId && chat?.customerId !== who.customerId) return { state: "error", message: "That chat isn't one of this customer's chats." };
   const isNew = !chat;
@@ -647,7 +666,7 @@ export async function askNeon(who: Who, message: string, chatId: string | undefi
   const theChat = chat;
   return acting.run({ customerId: who.customerId }, async () => {
     const cartId = await getOrCreateCartId();
-    const r = await acceptRun({ chat: theChat, isNew, clientRequestId: randomBytes(12).toString("base64url"), text: message, images: [], docs: [], voice: false, customerId: who.customerId, visitorId: "", cartId });
+    const r = await acceptRun({ chat: theChat, isNew, clientRequestId: randomBytes(12).toString("base64url"), text: message, images: [], docs: [], voice: false, customerId: who.customerId, visitorId: "", cartId, ownKeyOnly: true });
     if (!r.ok) return { state: "error", message: r.body.error } as NeonResult;
     // Runs in the background like a message sent in the app; the acting context follows it.
     if (r.start) void r.start();

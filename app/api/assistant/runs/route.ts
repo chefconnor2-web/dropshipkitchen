@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/db";
 import { getOrCreateCartId } from "@/lib/cart";
-import { assistantConfigured } from "@/lib/assistant";
+import { NO_KEY_MESSAGE, resolveKey } from "@/lib/ai-key";
 import { ensureVisitorId, findOwnChat, ownedBy } from "@/lib/chat-session";
 import { getMemberId } from "@/lib/session";
 import { aiAllowance, limitMessage } from "@/lib/membership";
@@ -18,7 +18,6 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   if (crossOrigin(req)) return Response.json({ error: "Not allowed." }, { status: 403 });
-  if (!assistantConfigured()) return Response.json({ error: "The assistant isn't switched on yet." }, { status: 503 });
   const body = (await req.json().catch(() => ({}))) as {
     clientRequestId?: unknown;
     message?: unknown;
@@ -53,9 +52,12 @@ export async function POST(req: Request) {
   const h = await headers();
   const ip = (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || "local";
   if (!allowTurn(ip)) return Response.json({ error: "You've sent a lot of messages. Please wait a bit and try again." }, { status: 429 });
-  // Subscribers get a monthly allowance; everyone else a free trial.
-  const allowance = await aiAllowance({ customerId: memberId, visitorId });
-  if (allowance.remaining <= 0) {
+  // Neon runs on the shopper's own Anthropic key, else the store's. Neither: they add one (or use the connector).
+  const key = await resolveKey({ customerId: memberId, visitorId });
+  if (!key) return Response.json({ error: NO_KEY_MESSAGE, needsKey: true }, { status: 503 });
+  // Subscribers get a monthly allowance; everyone else a free trial. Their own key: no allowance (they pay Anthropic).
+  const allowance = key.own ? null : await aiAllowance({ customerId: memberId, visitorId });
+  if (allowance && allowance.remaining <= 0) {
     const offer = await planOffer();
     const prices = { full: formatMoney(offer.full.priceCents), lite: offer.lite.enabled ? formatMoney(offer.lite.priceCents) : null };
     return Response.json(

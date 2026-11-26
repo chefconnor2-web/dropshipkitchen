@@ -1,13 +1,13 @@
 // Streams an AI box build (NDJSON). Under /admin, so the admin login protects it.
 import { buildBoxWithAI, type BuilderEvent } from "@/lib/box-builder";
-import { assistantConfigured } from "@/lib/assistant";
+import { platformKey } from "@/lib/ai-key";
 import { dollarsToCents } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600;
 
 export async function POST(req: Request) {
-  if (!assistantConfigured()) return Response.json({ error: "Set ANTHROPIC_API_KEY to design boxes with AI." }, { status: 503 });
+  if (!platformKey()) return Response.json({ error: "Set ANTHROPIC_API_KEY to design boxes with AI." }, { status: 503 });
   const b = (await req.json().catch(() => ({}))) as { brief?: string; price?: string; items?: number; guaranteed?: string };
   const brief = String(b.brief ?? "").trim().slice(0, 600);
   const priceCents = dollarsToCents(String(b.price ?? ""));
